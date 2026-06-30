@@ -92,3 +92,12 @@ test('幂等：已处理的轮不重复处理', async () => {
   await listener.reconcile({ driver });
   assert.equal(calls, 1, '只处理一次');
 });
+
+test('回归：静态目录请求 /render/ 回退到 index.html（不再 404）', async () => {
+  const r = await fetch(`http://127.0.0.1:${port}/render/`);
+  assert.equal(r.status, 200);
+  const html = await r.text();
+  assert.ok(html.includes('<!DOCTYPE') || html.includes('<html'), '应返回 index.html 而非 404 JSON');
+  const r2 = await fetch(`http://127.0.0.1:${port}/render/?session=x&round=1`);
+  assert.equal(r2.status, 200, '带查询的目录请求也应 200');
+});

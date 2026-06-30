@@ -447,3 +447,7 @@ body {
   .verdict-group { flex-direction: column; }
   .choice-option { flex-wrap: wrap; }
 }
+
+/* 叙述/图表内容区（AI 的思考）：可见、克制、不折叠 */
+.zone-context { margin: 8px 0 4px; }
+.zone-context .zone-blocks > * { background: var(--bg, #fff); }

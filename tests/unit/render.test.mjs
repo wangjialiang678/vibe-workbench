@@ -228,7 +228,8 @@ const mixedBlocks = [
   { id: 'b1', type: 'choice', needsDecision: true, hasRecommendation: true, importance: 'normal', _change: 'unchanged',
     options: [{ id: 'o1', label: 'Y' }], recommendation: 'o1' },
   { id: 'cr1', type: 'markdown', needsDecision: false, importance: 'high', default: '默认值', _change: 'unchanged', body: '重要默认' },
-  { id: 'cf1', type: 'markdown', needsDecision: false, importance: 'normal', _change: 'unchanged', body: '普通fyi' },
+  { id: 'cf1', type: 'markdown', needsDecision: false, importance: 'normal', default: '默认f', _change: 'unchanged', body: '普通fyi' },
+  { id: 'ctx1', type: 'markdown', needsDecision: false, importance: 'normal', _change: 'new', body: 'AI叙述内容' },
 ];
 
 test('renderZones: zone A content appears before zoneCFyi', () => {
@@ -275,4 +276,13 @@ test('renderZones: no zoneCFyi blocks means no fyi collapse rendered', () => {
   // We check that cf1 is not in output since there's no such block
   assert.ok(!out.includes('zone-c-fyi') || !out.includes('cf1'),
     `expected no fyi zone content for blocks without fyi items`);
+});
+
+test('renderZones: 纯叙述内容(无 default) 可见于 zone-context，不被折叠', () => {
+  const out = renderZones(mixedBlocks);
+  assert.ok(out.includes('zone-context'), 'expected zone-context section');
+  assert.ok(out.includes('ctx1'), 'expected context block ctx1 rendered');
+  const posCtx = out.indexOf('ctx1');
+  const posFold = out.indexOf('zone-c-fyi');
+  assert.ok(posFold === -1 || posCtx < posFold, 'context should be visible above the fold');
 });

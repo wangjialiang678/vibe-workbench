@@ -204,19 +204,22 @@ function handleRequest(req, res) {
     }
 
     let filePath = abs;
-    // If no extension, try .html
-    if (!path.extname(filePath)) filePath = filePath + '.html';
-
     try {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) {
-        // Try index.html inside dir
+        // 目录请求（如 /render/）→ 回退到 index.html
         filePath = path.join(filePath, 'index.html');
-        fs.statSync(filePath); // throws if missing
+        fs.statSync(filePath); // 不存在则抛
       }
     } catch {
-      json(res, 404, { ok: false, error: 'not found' });
-      return;
+      // 非现成文件/目录：对无扩展名路径尝试 .html 回退（如 /foo → foo.html）
+      if (!path.extname(abs)) {
+        try { fs.statSync(abs + '.html'); filePath = abs + '.html'; }
+        catch { json(res, 404, { ok: false, error: 'not found' }); return; }
+      } else {
+        json(res, 404, { ok: false, error: 'not found' });
+        return;
+      }
     }
 
     const ext = path.extname(filePath).toLowerCase();

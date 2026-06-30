@@ -51,6 +51,13 @@ export function renderZones(diffedBlocks) {
   // 顶部状态条
   parts.push(statusBar(stats, blocks));
 
+  // 叙述/图表内容（AI 的思考）：顶部可见，绝不折叠
+  if (zones.zoneContext && zones.zoneContext.length > 0) {
+    parts.push(`<section class="zone zone-context" aria-label="AI 的思考">
+  <div class="zone-blocks">${renderBlockList(zones.zoneContext)}</div>
+</section>`);
+  }
+
   // 区 A：需你定·无预设（◆ 形状图标）
   if (zones.zoneA.length > 0) {
     parts.push(`<section id="zone-a" class="zone zone-a" aria-label="需你定·无预设">

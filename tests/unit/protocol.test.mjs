@@ -75,13 +75,15 @@ test('routeBlocks: zones + importance order + stable + zoneC split', () => {
     { id: '3', type: 'markdown', needsDecision: false, importance: 'high', default: 'd' },
     { id: '4', type: 'verdict', needsDecision: true, hasRecommendation: false, importance: 'high' },
     { id: '5', type: 'choice', needsDecision: true, hasRecommendation: true, importance: 'low' },
-    { id: '6', type: 'markdown', needsDecision: false, importance: 'low' },
+    { id: '6', type: 'markdown', needsDecision: false, importance: 'low' },                  // 无 default → 叙述内容(可见)
+    { id: '7', type: 'markdown', needsDecision: false, importance: 'low', default: 'x' },    // 有 default → 折叠
   ];
   const z = routeBlocks(blocks);
   assert.deepEqual(z.zoneA.map((b) => b.id), ['4', '1']);       // high 先于 normal
   assert.deepEqual(z.zoneB.map((b) => b.id), ['2', '5']);       // high 先于 low
+  assert.deepEqual(z.zoneContext.map((b) => b.id), ['6']);      // 纯叙述/图表：可见不折叠
   assert.deepEqual(z.zoneCReview.map((b) => b.id), ['3']);      // 重要默认建议过目
-  assert.deepEqual(z.zoneCFyi.map((b) => b.id), ['6']);        // 普通默认折叠
+  assert.deepEqual(z.zoneCFyi.map((b) => b.id), ['7']);        // 普通默认折叠
 });
 
 test('decisionStats / unansweredDecisions / submitSummary', () => {

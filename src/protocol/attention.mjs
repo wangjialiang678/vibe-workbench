@@ -9,12 +9,17 @@ export function routeBlocks(blocks = []) {
 
   const needs = withIdx.filter((x) => x.b.needsDecision);
   const fyi = withIdx.filter((x) => !x.b.needsDecision);
+  const hasDefault = (x) => x.b.default != null; // 真正"已设默认"才进折叠/过目区
 
   return {
+    // 无需决策且无默认 = 纯叙述/图表内容（AI 的思考）→ 顶部可见，绝不折叠
+    zoneContext: fyi.filter((x) => !hasDefault(x)).map((x) => x.b),
     zoneA: sortStable(needs.filter((x) => !x.b.hasRecommendation)),
     zoneB: sortStable(needs.filter((x) => x.b.hasRecommendation)),
-    zoneCReview: sortStable(fyi.filter((x) => x.b.importance === 'high')),
-    zoneCFyi: fyi.filter((x) => x.b.importance !== 'high').map((x) => x.b),
+    // 已设默认 + 重要 = 建议过目（半展开）
+    zoneCReview: sortStable(fyi.filter((x) => hasDefault(x) && x.b.importance === 'high')),
+    // 已设默认 + 普通/次要 = 折叠 FYI
+    zoneCFyi: fyi.filter((x) => hasDefault(x) && x.b.importance !== 'high').map((x) => x.b),
   };
 }
 
