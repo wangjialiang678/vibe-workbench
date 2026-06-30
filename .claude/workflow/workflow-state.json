@@ -1,0 +1,16 @@
+{
+  "prd_path": "docs/PRD.md",
+  "design_path": "docs/DESIGN.md",
+  "project_type": "node-esm",
+  "phase": "phase-1",
+  "created_at": "2026-06-30",
+  "tasks_total": 5,
+  "tasks_done": 0,
+  "tasks_failed": 0,
+  "current_round": 0,
+  "max_rounds": 3,
+  "max_parallel": 3,
+  "config": { "closed_loop": true, "coder": "claude-subagent", "hooks": "manual-drive (auto-continue hooks skipped for safety; continuation via subagent notifications)" },
+  "stop_conditions": { "max_retries_per_task": 3, "max_total_fixes": 10 },
+  "notes": "protocol(schema/diff/attention) built as shared base in phase-1; server/loop/render/templates/bin parallel in phase-2. Full build per user directive (no MVP)."
+}

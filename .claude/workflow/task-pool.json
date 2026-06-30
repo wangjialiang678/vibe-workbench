@@ -1,0 +1,98 @@
+[
+  {
+    "id": "feat-server",
+    "description": "实现零依赖 HTTP 服务 src/server/server.mjs：静态托管 src/render/；GET /api/content?session=&round= 读 workspace/<session>/round-<n>/content.json 并用 src/protocol/diff.mjs 注入每 block 的 _change；POST /api/feedback 写 workspace/<session>/round-<n>/feedback.json+.md 并把 status.json.state 置 submitted；GET /api/status?session= 返回 status.json 且依据 heartbeatAt 与当前时间差(>30s)附加 stale:true；POST /api/retry?session=&round= 删除该轮 ack.json/error.json 并把 state 回置 submitted；GET /api/health 返回 {ok,ts}；GET /api/sessions 列 workspace 会话。所有响应带 CORS。",
+    "files": ["src/server/server.mjs"],
+    "dependencies": [],
+    "test_criteria": [
+      "POST /api/feedback 写出 feedback.json 且 status.json.state==='submitted'",
+      "GET /api/content 返回的 blocks 每项含 _change 字段",
+      "GET /api/status 在 heartbeat 超 30s 时返回 stale:true",
+      "POST /api/retry 后该轮 ack.json 不存在且 state==='submitted'",
+      "GET /api/health 返回 {ok:true}"
+    ],
+    "test_files": ["tests/e2e/server.test.mjs"],
+    "verification_command": "node --test tests/e2e/server.test.mjs",
+    "expected_output_pattern": "pass \\d+",
+    "priority": 1,
+    "status": "pending",
+    "worktree_branch": null,
+    "retries": 0
+  },
+  {
+    "id": "feat-loop",
+    "description": "实现异步唤醒回路 src/loop/：listener.mjs 轮询 workspace 各 <session>/round-*/，发现存在 feedback.json 且无 ack.json 且无 response.md 的轮 → 写 ack.json{claimedAt,pid}(幂等锁) → 调 claude-exec.mjs 处理 → 成功写 response.md 并把 status.state 置 responded、失败写 error.json 并置 error；每 10s 刷新 status.heartbeatAt；启动时先 reconcile(扫描补处理未 ack 的提交)。claude-exec.mjs 封装 buildArgv(prompt,sessionId?)→['-p',prompt,'--output-format','stream-json',(sessionId?['--resume',sessionId]:[])]，并从 stream-json 输出捕获 session_id；为可测试，driver 通过依赖注入(默认真实 spawn，可注入 mockDriver)。session-store.mjs 读写 workspace/<session>/session.json。",
+    "files": ["src/loop/listener.mjs", "src/loop/claude-exec.mjs", "src/loop/session-store.mjs"],
+    "dependencies": [],
+    "test_criteria": [
+      "claude-exec.buildArgv 在有 sessionId 时包含 '--resume' 与该 id",
+      "listener 对账：放一个无 ack 的 feedback，运行后生成 ack.json 与 response.md(用 mockDriver)",
+      "重复运行不重复处理(已存在 ack 则跳过)",
+      "mockDriver 抛错时写 error.json 且 status.state==='error'，listener 进程不退出",
+      "session-store 写入并读回 claudeSessionId"
+    ],
+    "test_files": ["tests/e2e/loop.test.mjs"],
+    "verification_command": "node --test tests/e2e/loop.test.mjs",
+    "expected_output_pattern": "pass \\d+",
+    "priority": 1,
+    "status": "pending",
+    "worktree_branch": null,
+    "retries": 0
+  },
+  {
+    "id": "feat-render",
+    "description": "实现前端 src/render/：index.html(外壳，?session=&round=，加载 app.mjs、本地 vendor/mermaid)；blocks.mjs 导出 renderBlock(block)->HTMLElement 支持 markdown/diagram/choice/verdict/freetext/editable/table/code 各类型，外层带 data-block-id/data-change/data-zone，每块有评论入口；attention-view.mjs 用 src/protocol/attention.routeBlocks 分三区渲染(区A红条『需你定·无预设』、区B橙条『需你定·有推荐』推荐项预选、区C折叠『已设默认N项』)并在顶部状态条显示需决策计数+锚点；diff-view.mjs 按 _change 渲染 NEW/CHANGED 徽章+『看上轮』对照，提供『只看变更』开关；status-bar.mjs 每3s轮询 /api/status 显示徽章(在线/处理中/已回复/离线/出错)与『重试』按钮(POST /api/retry)；app.mjs 串起：取 content→diff→注意力分区→渲染→收集反馈(草稿存 localStorage)→POST /api/feedback(失败降级下载JSON)；app.css 亮/暗变量。markdown 用内置极简实现，不引外部库。",
+    "files": ["src/render/index.html", "src/render/app.mjs", "src/render/blocks.mjs", "src/render/attention-view.mjs", "src/render/diff-view.mjs", "src/render/status-bar.mjs", "src/render/app.css", "src/render/md.mjs"],
+    "dependencies": [],
+    "test_criteria": [
+      "renderBlock 对 choice 输出含每个 option 且推荐项带 data-recommended",
+      "renderBlock 对 diagram 输出 <pre class=\"mermaid\"> 含源码",
+      "renderBlock 对 verdict 输出三个表态按钮",
+      "md.mjs 把 # 标题/列表/**粗体**/代码 正确转 HTML 且转义 < >",
+      "diff-view 对 _change==='new' 输出 NEW 徽章，'changed' 输出 CHANGED"
+    ],
+    "test_files": ["tests/unit/render.test.mjs"],
+    "verification_command": "node --test tests/unit/render.test.mjs",
+    "expected_output_pattern": "pass \\d+",
+    "priority": 2,
+    "status": "pending",
+    "worktree_branch": null,
+    "retries": 0
+  },
+  {
+    "id": "feat-templates",
+    "description": "实现 templates/think-discuss.mjs 与 templates/dev-review.mjs：各导出工厂函数返回符合协议的 blocks[]（正确设置 needsDecision/hasRecommendation/recommendation/importance/default 与稳定 id）。think-discuss(input{title,thoughtMd,diagrams[],decisions[],doc?}) 产出 markdown+diagram+choice/verdict+editable 块；dev-review(spec{prdItems[],archDiagrams[],testScenarios[]}) 复刻 PRD条目(verdict)+架构(diagram)+测试场景。",
+    "files": ["templates/think-discuss.mjs", "templates/dev-review.mjs"],
+    "dependencies": [],
+    "test_criteria": [
+      "think-discuss 产出的 decisions 决策块 needsDecision===true",
+      "think-discuss 的有推荐决策块 hasRecommendation===true 且 recommendation 指向某 option id",
+      "dev-review 产出含 type==='diagram' 的架构块",
+      "两模板产出的所有 block 通过 src/protocol/schema 校验"
+    ],
+    "test_files": ["tests/unit/templates.test.mjs"],
+    "verification_command": "node --test tests/unit/templates.test.mjs",
+    "expected_output_pattern": "pass \\d+",
+    "priority": 2,
+    "status": "pending",
+    "worktree_branch": null,
+    "retries": 0
+  },
+  {
+    "id": "feat-bin",
+    "description": "实现 bin/workbench.mjs 编排 CLI：子命令 render <session> <content.json路径|->（写入 workspace/<session>/round-<n>/content.* 并新建/更新 status.json=rendered）、serve（起 server.mjs）、watch（起 listener.mjs 并监管：异常退出自动重启≤5次）、up（同时起 serve+watch）。提供 --port。所有路径相对项目 workspace/。",
+    "files": ["bin/workbench.mjs"],
+    "dependencies": ["feat-server", "feat-loop"],
+    "test_criteria": [
+      "render 子命令把给定 content.json 写入 workspace/<session>/round-1/content.json 且生成 status.json.state==='rendered'",
+      "workbench.mjs --help 列出 render/serve/watch/up 子命令"
+    ],
+    "test_files": ["tests/e2e/bin.test.mjs"],
+    "verification_command": "node --test tests/e2e/bin.test.mjs",
+    "expected_output_pattern": "pass \\d+",
+    "priority": 3,
+    "status": "pending",
+    "worktree_branch": null,
+    "retries": 0
+  }
+]

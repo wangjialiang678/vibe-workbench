@@ -1,0 +1,17 @@
+{
+  "name": "vibecoding-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "通用人机交互层 — 把人机协作从对话流升级为可插拔的共享工件（block 协议 + 注意力路由 + 轮次 diff + 容错恢复 + 异步唤醒）",
+  "engines": { "node": ">=20" },
+  "bin": { "workbench": "bin/workbench.mjs" },
+  "scripts": {
+    "start": "node bin/workbench.mjs",
+    "server": "node src/server/server.mjs",
+    "listen": "node src/loop/listener.mjs",
+    "test": "node --test",
+    "test:unit": "node --test tests/unit",
+    "test:e2e": "node --test tests/e2e"
+  }
+}
