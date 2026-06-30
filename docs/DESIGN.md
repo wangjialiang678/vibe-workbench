@@ -315,3 +315,15 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 - 可访问性：色彩非唯一信号，区/变更徽章叠加形状图标 + 文字（◆需答/◇建议/＋新增/～改动）；暗色对比度复核（§9）。
 - 长页面：状态条「需你决策」做成进度「已填 m/X」+ 区/块跳转锚点（§4）。
 - 退化态文案：全默认→主按钮变「确认」、状态条「无需你决策，确认即可」；无 zoneC→不渲染折叠容器；全 unchanged→只看变更空列表提示；首次使用引导（§4/§9 新增"空态与退化态"）。
+
+---
+
+## 14. embed 产物嵌入 + 就地批注（dogfood 增补）
+
+**动机**：当 AI 的产物是一个真实网页/可视化（如部署好的 HTML 页），用户需要**在产物本身上就地圈点批注**，而不是只在抽象 block 上表态。
+
+- **block 类型 `embed`**：`{id, type:'embed', title, url, height?}`。渲染为 iframe + 批注 overlay。
+- **代理 `/api/proxy?url=`**：很多站点带 `X-Frame-Options/CSP` 禁止被 iframe。服务端反代目标页：抓取 HTML → **不转发** `x-frame-options`/`content-security-policy` → 注入 `<base href="<url>">`（原站相对资源正常加载）→ 同源返回。iframe 指向 `/api/proxy?url=<encoded>`。纯函数 `rewriteEmbedHtml(html, url)` 可单测；仅 http/https、10s 超时、失败降级错误页。
+- **就地批注（positional pins）**：toolbar 有「批注模式」开关。浏览模式下 overlay 隐藏（可正常翻阅页面）；批注模式下 overlay 激活，点击页面任意处 → 在该 (xPct,yPct) 落一个编号钉 + 内联 textarea 写批注。pins 存草稿，刷新还原。
+- **反馈**：每个钉提交为 `{blockId, type:'pin', value:{xPct,yPct}, comment}`，AI 侧据"位置+意见"续跑。
+- **局限**：positional pins 是视觉定位（不读 iframe 内文本）；目标页若本身 JS 依赖自身同源后端，代理下其动态请求可能失效（静态展示页无碍）。富文本锚定（高亮具体文字）留作后续。

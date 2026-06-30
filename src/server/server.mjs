@@ -84,6 +84,33 @@ function feedbackToMd(fb) {
   return lines.join('\n');
 }
 
+// ---- embed proxy helpers ----
+
+/**
+ * Rewrite fetched HTML for safe iframe embedding:
+ * 1. Inject <base href="${targetUrl}"> at start of <head> (or document start if no head).
+ * 2. Remove any <meta http-equiv="X-Frame-Options" ...> tags.
+ * Pure function, exported for unit testing.
+ */
+export function rewriteEmbedHtml(html, targetUrl) {
+  // Remove existing X-Frame-Options meta tags (case-insensitive)
+  let result = html.replace(/<meta[^>]+http-equiv\s*=\s*["']?X-Frame-Options["']?[^>]*\/?>/gi, '');
+
+  const baseTag = `<base href="${targetUrl}">`;
+
+  // Try to inject after opening <head> tag
+  const headMatch = result.match(/<head(?:\s[^>]*)?>/i);
+  if (headMatch) {
+    const headEnd = result.indexOf(headMatch[0]) + headMatch[0].length;
+    result = result.slice(0, headEnd) + baseTag + result.slice(headEnd);
+  } else {
+    // No <head>: prepend to document
+    result = baseTag + result;
+  }
+
+  return result;
+}
+
 // ---- request handler ----
 function handleRequest(req, res) {
   const method = req.method.toUpperCase();
@@ -168,6 +195,33 @@ function handleRequest(req, res) {
     }).catch((e) => {
       json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
     });
+    return;
+  }
+
+  if (urlPath === '/api/proxy' && method === 'GET') {
+    const { url: targetUrl } = parseQuery(rawUrl);
+    if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+      cors(res);
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<p>无效的代理目标 URL</p>');
+      return;
+    }
+    (async () => {
+      let html;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10000);
+        const fetchRes = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timer);
+        html = await fetchRes.text();
+        html = rewriteEmbedHtml(html, targetUrl);
+      } catch (err) {
+        html = `<p>无法加载该页面：${String(err.message ?? err)}</p>`;
+      }
+      cors(res);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    })();
     return;
   }
 

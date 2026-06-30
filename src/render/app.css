@@ -468,3 +468,118 @@ body {
   background: var(--bg, #fff); color: var(--text, #111);
 }
 .comment-input:focus { outline: none; border-color: var(--accent, #2563eb); }
+
+/* ===== Embed block ===== */
+.embed-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.embed-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.embed-src {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.embed-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--color-focus);
+  font-size: 12px;
+}
+
+.embed-pin-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.embed-frame {
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: hidden;
+}
+
+.embed-iframe {
+  display: block;
+}
+
+/* Overlay: hidden by default, active when annotate mode on */
+.embed-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(37, 99, 235, 0.08);
+  cursor: crosshair;
+  pointer-events: none;
+}
+
+.embed-overlay:not([hidden]) {
+  pointer-events: auto;
+}
+
+/* Pin dot */
+.embed-pin {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  pointer-events: none;
+  user-select: none;
+  z-index: 2;
+}
+
+/* Inline comment textarea next to pin */
+.pin-comment {
+  position: absolute;
+  width: 180px;
+  min-height: 2.4em;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-focus);
+  border-radius: var(--radius);
+  padding: 4px 7px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  resize: vertical;
+  z-index: 3;
+  /* positioned by JS; transform shifts it right of the pin dot */
+  transform: translate(12px, -50%);
+}
+
+.pin-comment:focus {
+  outline: none;
+  border-color: var(--color-focus);
+}
+
+@media (prefers-color-scheme: dark) {
+  .embed-overlay:not([hidden]) {
+    background: rgba(96, 165, 250, 0.10);
+  }
+}

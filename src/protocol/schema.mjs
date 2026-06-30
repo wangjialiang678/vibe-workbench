@@ -57,6 +57,9 @@ export function validateBlock(block) {
     if (!Array.isArray(block.columns)) errors.push('table requires columns[]');
     if (!Array.isArray(block.rows)) errors.push('table requires rows[]');
   }
+  if (block.type === 'embed') {
+    if (!block.url || typeof block.url !== 'string') errors.push('embed requires non-empty url string');
+  }
   return { ok: errors.length === 0, errors };
 }
 

@@ -10,6 +10,7 @@ import os from 'node:os';
 // These are already tested contracts.
 let writeJSON, writeStatus, paths, writeText, removeFile, exists;
 let startServer;
+let rewriteEmbedHtml;
 let server;
 let port;
 let tmpDir;
@@ -32,6 +33,7 @@ before(async () => {
 
   const srv = await import('../../src/server/server.mjs');
   startServer = srv.startServer;
+  rewriteEmbedHtml = srv.rewriteEmbedHtml;
 
   server = startServer(0);
   await new Promise((resolve) => server.once('listening', resolve));
@@ -261,4 +263,35 @@ test('API responses include CORS headers', async () => {
   const res = await fetch(url('/api/health'));
   const cors = res.headers.get('access-control-allow-origin');
   assert.ok(cors === '*' || cors != null, 'CORS header should be present');
+});
+
+// ---- rewriteEmbedHtml unit test (exported pure function) ----
+test('rewriteEmbedHtml: injects <base> inside <head> and title remains', () => {
+  const input = '<html><head><title>t</title></head><body>x</body></html>';
+  const targetUrl = 'https://h.com/p/a.html';
+  const out = rewriteEmbedHtml(input, targetUrl);
+  // base tag must be present
+  assert.ok(out.includes(`<base href="${targetUrl}">`), `expected base href in: ${out}`);
+  // base must appear before </head>
+  const basePos = out.indexOf(`<base href="${targetUrl}">`);
+  const headClosePos = out.indexOf('</head>');
+  assert.ok(basePos < headClosePos, `base (${basePos}) must be inside head (before </head> at ${headClosePos})`);
+  // base must appear after <head>
+  const headOpenPos = out.indexOf('<head>');
+  assert.ok(basePos > headOpenPos, `base (${basePos}) must be after <head> (${headOpenPos})`);
+  // title must still be present
+  assert.ok(out.includes('<title>t</title>'), `expected title to remain in: ${out}`);
+});
+
+test('rewriteEmbedHtml: removes X-Frame-Options meta tag', () => {
+  const input = '<html><head><meta http-equiv="X-Frame-Options" content="DENY"><title>t</title></head><body></body></html>';
+  const out = rewriteEmbedHtml(input, 'https://example.com/');
+  assert.ok(!out.includes('X-Frame-Options'), `X-Frame-Options meta must be removed, got: ${out}`);
+  assert.ok(out.includes('<title>t</title>'), `title must remain`);
+});
+
+test('rewriteEmbedHtml: inserts <base> at document start when no <head>', () => {
+  const input = '<body>no head here</body>';
+  const out = rewriteEmbedHtml(input, 'https://example.com/path/');
+  assert.ok(out.startsWith('<base href="https://example.com/path/">'), `expected base at start, got: ${out}`);
 });

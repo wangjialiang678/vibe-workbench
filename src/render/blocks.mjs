@@ -106,6 +106,26 @@ function renderCode(block) {
   return `<pre class="code-block"><code class="lang-${lang}">${body}</code></pre>`;
 }
 
+export function renderEmbed(block) {
+  const id = escHtml(block.id ?? '');
+  const url = block.url ?? '';
+  const escapedUrl = escHtml(url);
+  const encodedUrl = encodeURIComponent(url);
+  const height = block.height || 560;
+
+  return `<div class="embed-wrap" data-block-id="${id}">
+  <div class="embed-toolbar">
+    <span class="embed-src">🔗 ${escapedUrl}</span>
+    <label class="embed-mode"><input type="checkbox" class="embed-annotate-toggle" data-embed="${id}"> 批注模式（在页面上点选落点）</label>
+    <span class="embed-pin-count" data-embed-count="${id}">0 条批注</span>
+  </div>
+  <div class="embed-frame" data-embed-frame="${id}" style="position:relative;height:${height}px">
+    <iframe class="embed-iframe" src="/api/proxy?url=${encodedUrl}" style="width:100%;height:100%;border:0"></iframe>
+    <div class="embed-overlay" data-embed-overlay="${id}" hidden></div>
+  </div>
+</div>`;
+}
+
 // ---------- 按 type 分派 ----------
 
 function renderContent(block) {
@@ -118,6 +138,7 @@ function renderContent(block) {
     case 'editable': return renderEditable(block);
     case 'table':    return renderTable(block);
     case 'code':     return renderCode(block);
+    case 'embed':    return renderEmbed(block);
     default:         return `<p class="unknown-type">未知 block 类型：${escHtml(block.type)}</p>`;
   }
 }

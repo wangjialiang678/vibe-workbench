@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mdToHtml } from '../../src/render/md.mjs';
-import { blockHtml } from '../../src/render/blocks.mjs';
+import { blockHtml, renderEmbed } from '../../src/render/blocks.mjs';
 import { changeBadge, prevCompareHtml, diffToggleHtml } from '../../src/render/diff-view.mjs';
 import { renderZones } from '../../src/render/attention-view.mjs';
 
@@ -182,6 +182,37 @@ test('blockHtml: 批注是内联输入框（textarea），非弹窗', () => {
   assert.ok(out.includes('class="comment-box"') || out.includes("comment-box"), '应有内联批注容器 .comment-box');
   assert.ok(out.includes('data-comment-for="by"'), '批注输入框应绑定到该 block');
   assert.ok(/<textarea[^>]*comment-input/.test(out), '批注应为 textarea 内联编辑，而非仅按钮');
+});
+
+// ---------- embed ----------
+
+test('renderEmbed: contains iframe with proxy src', () => {
+  const block = { id: 'e1', type: 'embed', url: 'https://example.com/page?q=1&r=2' };
+  const out = renderEmbed(block);
+  assert.ok(out.includes('<iframe'), `expected <iframe> in: ${out}`);
+  assert.ok(out.includes('src="/api/proxy?url='), `expected proxy src in: ${out}`);
+  // url must be encodeURIComponent-encoded (: → %3A, / → %2F etc.)
+  assert.ok(out.includes(encodeURIComponent('https://example.com/page?q=1&r=2')), `expected encoded url in: ${out}`);
+});
+
+test('renderEmbed: contains embed-overlay', () => {
+  const out = renderEmbed({ id: 'e2', type: 'embed', url: 'https://x.com' });
+  assert.ok(out.includes('embed-overlay'), `expected embed-overlay in: ${out}`);
+});
+
+test('renderEmbed: contains embed-annotate-toggle', () => {
+  const out = renderEmbed({ id: 'e3', type: 'embed', url: 'https://x.com' });
+  assert.ok(out.includes('embed-annotate-toggle'), `expected embed-annotate-toggle in: ${out}`);
+});
+
+test('blockHtml: embed type renders iframe with proxy url in outer section', () => {
+  const block = { id: 'emb1', type: 'embed', url: 'https://example.com', _change: 'new' };
+  const out = blockHtml(block);
+  assert.ok(out.includes('data-block-id="emb1"'), `expected data-block-id in: ${out}`);
+  assert.ok(out.includes('data-type="embed"'), `expected data-type in: ${out}`);
+  assert.ok(out.includes('<iframe'), `expected <iframe> in: ${out}`);
+  assert.ok(out.includes('/api/proxy?url='), `expected proxy src in: ${out}`);
+  assert.ok(out.includes(encodeURIComponent('https://example.com')), `expected encoded url in: ${out}`);
 });
 
 // ---------- diff-view ----------

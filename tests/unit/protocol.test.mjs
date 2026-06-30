@@ -20,6 +20,24 @@ test('validateContent: bad round + dup id + bad type', () => {
   assert.ok(r.errors.some((e) => e.includes('invalid')));
 });
 
+test('validateBlock: embed requires url', () => {
+  // valid embed: has url
+  assert.equal(validateBlock({ id: 'e1', type: 'embed', url: 'https://example.com' }).ok, true);
+  // invalid embed: missing url
+  assert.equal(validateBlock({ id: 'e2', type: 'embed' }).ok, false);
+  // invalid embed: empty url
+  assert.equal(validateBlock({ id: 'e3', type: 'embed', url: '' }).ok, false);
+});
+
+test('validateFeedback: accepts pin type with xPct/yPct value', () => {
+  const fb = {
+    session: 's',
+    round: 1,
+    items: [{ blockId: 'e1', type: 'pin', value: { xPct: 40, yPct: 60 }, comment: '这里有问题' }],
+  };
+  assert.equal(validateFeedback(fb).ok, true);
+});
+
 test('validateBlock: choice options + recommendation match', () => {
   assert.equal(validateBlock({ id: 'c', type: 'choice', options: [] }).ok, false);
   assert.equal(validateBlock({ id: 'c', type: 'choice', options: [{ id: 'o1' }], hasRecommendation: true, recommendation: 'oX' }).ok, false);

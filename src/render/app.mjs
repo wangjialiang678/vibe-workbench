@@ -97,6 +97,16 @@ function restoreDraftUI(draft) {
       if (box) box.hidden = false;
       updateCommentBtn(blockId, item.comment);
     }
+    // embed pins：还原所有落点钉子 + 内联批注
+    if (Array.isArray(item.pins) && item.pins.length > 0) {
+      const overlay = $zones.querySelector(`.embed-overlay[data-embed-overlay="${blockId}"]`);
+      if (overlay) {
+        item.pins.forEach((pin, idx) => {
+          renderPin(overlay, blockId, pin, idx);
+        });
+        updatePinCount(blockId, item.pins.length);
+      }
+    }
   });
 }
 
@@ -104,6 +114,46 @@ function restoreDraftUI(draft) {
 function updateCommentBtn(blockId, val) {
   const btn = $zones.querySelector(`.comment-btn[data-block-id="${blockId}"]`);
   if (btn) btn.textContent = (val && val.trim()) ? '批注 ✓（点击收起）' : '+批注';
+}
+
+// ── embed 落点辅助 ──────────────────────────────────────────
+
+/**
+ * 在 overlay 内绝对定位放一个钉子（编号圆点）+ 内联 textarea（批注）。
+ * pin-comment 故意不带 data-block-id，避免被通用 textarea handler 误当 text 草稿。
+ * 用 data-pin-index + 闭包写回 draft.pins[idx].comment。
+ */
+function renderPin(overlay, blockId, pin, idx) {
+  const dot = document.createElement('div');
+  dot.className = 'embed-pin';
+  dot.textContent = String(idx + 1);
+  dot.style.left = `${pin.xPct}%`;
+  dot.style.top = `${pin.yPct}%`;
+
+  const ta = document.createElement('textarea');
+  ta.className = 'pin-comment';
+  ta.setAttribute('data-pin-index', String(idx));
+  ta.setAttribute('rows', '2');
+  ta.setAttribute('placeholder', `批注 #${idx + 1}`);
+  ta.style.left = `${pin.xPct}%`;
+  ta.style.top = `${pin.yPct}%`;
+  if (pin.comment) ta.value = pin.comment;
+
+  ta.addEventListener('input', () => {
+    const draft = loadDraft();
+    const item = draft[blockId] || {};
+    const pins = Array.isArray(item.pins) ? item.pins : [];
+    if (pins[idx]) pins[idx].comment = ta.value;
+    saveDraft({ [blockId]: { ...item, pins } });
+  });
+
+  overlay.appendChild(dot);
+  overlay.appendChild(ta);
+}
+
+function updatePinCount(blockId, count) {
+  const el = $zones.querySelector(`.embed-pin-count[data-embed-count="${blockId}"]`);
+  if (el) el.textContent = `${count} 条批注`;
 }
 
 // ── 事件绑定 ─────────────────────────────────────────────
@@ -143,6 +193,43 @@ function bindInteractions() {
     if (!bId) return;
     inp.addEventListener('change', () => {
       saveDraft({ [bId]: { ...loadDraft()[bId], select: inp.value } });
+    });
+  });
+
+  // embed 批注模式 toggle
+  $zones.querySelectorAll('.embed-annotate-toggle').forEach((checkbox) => {
+    const blockId = checkbox.dataset.embed;
+    if (!blockId) return;
+    checkbox.addEventListener('change', () => {
+      const overlay = $zones.querySelector(`.embed-overlay[data-embed-overlay="${blockId}"]`);
+      if (!overlay) return;
+      if (checkbox.checked) {
+        overlay.removeAttribute('hidden');
+      } else {
+        overlay.setAttribute('hidden', '');
+      }
+    });
+  });
+
+  // embed overlay 点击落点
+  $zones.querySelectorAll('.embed-overlay').forEach((overlay) => {
+    const blockId = overlay.dataset.embedOverlay;
+    if (!blockId) return;
+    overlay.addEventListener('click', (e) => {
+      const rect = overlay.getBoundingClientRect();
+      const xPct = Math.max(0, Math.min(100, (e.offsetX / overlay.clientWidth) * 100));
+      const yPct = Math.max(0, Math.min(100, (e.offsetY / overlay.clientHeight) * 100));
+
+      const draft = loadDraft();
+      const item = draft[blockId] || {};
+      const pins = Array.isArray(item.pins) ? item.pins : [];
+      const idx = pins.length;
+      const pin = { xPct, yPct, comment: '' };
+      pins.push(pin);
+      saveDraft({ [blockId]: { ...item, pins } });
+
+      renderPin(overlay, blockId, pin, idx);
+      updatePinCount(blockId, pins.length);
     });
   });
 
@@ -213,6 +300,12 @@ async function doSubmit(draft, answeredIds, unanswered) {
     else if (item.text) entries.push({ blockId, type: 'text', value: item.text, comment: item.comment });
     if (item.comment && !item.verdict && !item.select && !item.text) {
       entries.push({ blockId, type: 'comment', value: null, comment: item.comment });
+    }
+    // embed 落点 pins → 每个 pin 产生一条 feedback item
+    if (Array.isArray(item.pins)) {
+      item.pins.forEach((pin) => {
+        entries.push({ blockId, type: 'pin', value: { xPct: pin.xPct, yPct: pin.yPct }, comment: pin.comment || '' });
+      });
     }
     return entries;
   }).flat();
