@@ -2,7 +2,7 @@
 // bin/workbench.mjs — CLI 编排入口（DESIGN §7）
 // 零外部依赖，ESM
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -12,9 +12,11 @@ const ROOT = path.resolve(__dirname, '..');
 // ─── 导入工作区契约 ──────────────────────────────────────────────────────────
 const {
   paths,
+  readJSON,
   writeJSON,
   writeText,
   writeStatus,
+  exists,
   latestRound,
 } = await import(`${ROOT}/src/workspace.mjs`);
 
@@ -111,6 +113,49 @@ export async function cmdRender(session, contentObj) {
   return { session, round };
 }
 
+// ─── present / wait（供 skill 一键调用）─────────────────────────────────────
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function readSource(src) {
+  if (!src || src === '-' || src.startsWith('--')) return await readStdin();
+  return readFileSync(src, 'utf8');
+}
+
+// 确保 server 在运行（不在则 detached 拉起，保活于本命令退出后）
+async function ensureServer(port) {
+  try { const r = await fetch(`http://127.0.0.1:${port}/api/health`); if (r.ok) return 'already'; } catch {}
+  const { spawn } = await import('node:child_process');
+  const self = fileURLToPath(import.meta.url);
+  const child = spawn(process.execPath, [self, 'serve', '--port', String(port)], { detached: true, stdio: 'ignore' });
+  child.unref();
+  for (let i = 0; i < 40; i++) {
+    try { const r = await fetch(`http://127.0.0.1:${port}/api/health`); if (r.ok) return 'started'; } catch {}
+    await sleep(100);
+  }
+  return 'starting';
+}
+
+/** 一键：确保 server + 渲染一轮 + 返回可打开的 URL。 */
+export async function cmdPresent(session, contentObj, { port = 8099 } = {}) {
+  const server = await ensureServer(port);
+  const { round } = await cmdRender(session, contentObj);
+  const url = `http://127.0.0.1:${port}/render/?session=${encodeURIComponent(session)}&round=${round}`;
+  return { ok: true, session, round, url, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
+}
+
+/** 阻塞轮询该轮 feedback，出现即返回其内容；超时返回 timeout。供 Agent 后台运行→提交即被唤醒。 */
+export async function cmdWait(session, round, { timeoutMs = 3600000, intervalMs = 2000, nowFn = Date.now } = {}) {
+  const fbPath = paths.feedback(session, round);
+  const deadline = nowFn() + timeoutMs;
+  while (nowFn() < deadline) {
+    if (exists(fbPath)) {
+      return { ok: true, event: 'feedback', session, round, feedback: readJSON(fbPath) };
+    }
+    await sleep(intervalMs);
+  }
+  return { ok: false, event: 'timeout', session, round };
+}
+
 // ─── --port 解析助手 ──────────────────────────────────────────────────────────
 function parsePort(args, defaultPort = 8099) {
   const idx = args.indexOf('--port');
@@ -124,7 +169,9 @@ function printHelp() {
 vibecoding workbench — CLI 编排
 
 用法：
-  workbench render <session> <content.json|->   渲染一轮内容（- 表示从 stdin 读取）
+  workbench present <session> [content.json|-]  一键：确保 server + 渲染一轮 + 返回 URL（推荐给 skill 用）
+  workbench wait <session> <round> [--timeout 秒]  监听该轮提交，出现反馈即返回其内容（后台运行）
+  workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
   workbench serve [--port N]                    启动 HTTP server（默认 8099）
   workbench watch                               启动 listener，监管自愈（最多重启 5 次）
   workbench up [--port N]                       同时启动 serve + watch
@@ -244,6 +291,28 @@ async function main() {
       const contentObj = JSON.parse(raw);
       const result = await cmdRender(session, contentObj);
       console.log(JSON.stringify(result));
+      break;
+    }
+
+    case 'present': {
+      const session = rest[0];
+      if (!session) { console.error('用法: workbench present <session> [content.json|-] [--port N]'); process.exit(1); }
+      const port = parsePort(rest);
+      const contentObj = JSON.parse(await readSource(rest[1]));
+      const r = await cmdPresent(session, contentObj, { port });
+      console.log(JSON.stringify(r));
+      break;
+    }
+
+    case 'wait': {
+      const session = rest[0];
+      const round = parseInt(rest[1], 10);
+      if (!session || !Number.isInteger(round)) { console.error('用法: workbench wait <session> <round> [--timeout 秒]'); process.exit(1); }
+      const tIdx = rest.indexOf('--timeout');
+      const timeoutMs = tIdx >= 0 ? parseInt(rest[tIdx + 1], 10) * 1000 : 3600000;
+      const r = await cmdWait(session, round, { timeoutMs });
+      console.log(JSON.stringify(r));
+      if (!r.ok) process.exit(2);
       break;
     }
 
