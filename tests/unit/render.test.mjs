@@ -176,6 +176,14 @@ test('blockHtml: has comment entry point', () => {
   assert.ok(out.includes('批注') || out.includes('+批注'), `expected 批注 in: ${out}`);
 });
 
+test('blockHtml: 批注是内联输入框（textarea），非弹窗', () => {
+  const out = blockHtml({ id: 'by', type: 'markdown', body: 'y', _change: 'unchanged' });
+  assert.ok(out.includes('comment-input'), '应有内联批注输入框 .comment-input');
+  assert.ok(out.includes('class="comment-box"') || out.includes("comment-box"), '应有内联批注容器 .comment-box');
+  assert.ok(out.includes('data-comment-for="by"'), '批注输入框应绑定到该 block');
+  assert.ok(/<textarea[^>]*comment-input/.test(out), '批注应为 textarea 内联编辑，而非仅按钮');
+});
+
 // ---------- diff-view ----------
 
 test('changeBadge: new contains NEW and ＋', () => {

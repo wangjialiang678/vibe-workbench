@@ -89,7 +89,21 @@ function restoreDraftUI(draft) {
       const inp = $zones.querySelector(`input[name="choice-${blockId}"][value="${item.select}"]`);
       if (inp) inp.checked = true;
     }
+    // 批注（inline）：还原内容并就地展开显示
+    if (item.comment != null && item.comment !== '') {
+      const ta = $zones.querySelector(`.comment-input[data-comment-for="${blockId}"]`);
+      const box = $zones.querySelector(`.comment-box[data-comment-box="${blockId}"]`);
+      if (ta) ta.value = item.comment;
+      if (box) box.hidden = false;
+      updateCommentBtn(blockId, item.comment);
+    }
   });
+}
+
+// 批注按钮文案：有内容→提示可收起；空→恢复"+批注"
+function updateCommentBtn(blockId, val) {
+  const btn = $zones.querySelector(`.comment-btn[data-block-id="${blockId}"]`);
+  if (btn) btn.textContent = (val && val.trim()) ? '批注 ✓（点击收起）' : '+批注';
 }
 
 // ── 事件绑定 ─────────────────────────────────────────────
@@ -132,15 +146,25 @@ function bindInteractions() {
     });
   });
 
-  // 批注
+  // 批注（inline：点按钮就地展开输入框，内容就地显示、可编辑，不弹窗）
   $zones.querySelectorAll('.comment-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const bId = btn.dataset.blockId;
-      const comment = prompt('添加批注：');
-      if (comment != null) {
-        saveDraft({ [bId]: { ...loadDraft()[bId], comment } });
-        btn.textContent = '已批注';
-      }
+      const box = $zones.querySelector(`.comment-box[data-comment-box="${bId}"]`);
+      if (!box) return;
+      const willShow = box.hidden;
+      box.hidden = !willShow;
+      btn.setAttribute('aria-expanded', String(willShow));
+      if (willShow) box.querySelector('.comment-input')?.focus();
+    });
+  });
+  $zones.querySelectorAll('.comment-input').forEach((ta) => {
+    const bId = ta.dataset.commentFor;
+    if (!bId) return;
+    ta.addEventListener('input', () => {
+      const val = ta.value;
+      saveDraft({ [bId]: { ...loadDraft()[bId], comment: val.trim() ? val : undefined } });
+      updateCommentBtn(bId, val);
     });
   });
 

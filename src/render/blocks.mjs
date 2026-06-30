@@ -18,7 +18,14 @@ function titleHtml(block) {
 }
 
 function commentEntry(blockId) {
-  return `<button class="comment-btn" data-block-id="${escHtml(blockId)}" aria-label="添加批注">+批注</button>`;
+  const id = escHtml(blockId);
+  // 内联批注：点按钮就地展开输入框，内容直接显示在原文对应位置（不弹窗、不只显示"已批注"）
+  return `<div class="comment-area">
+  <button class="comment-btn" data-block-id="${id}" aria-expanded="false" aria-label="添加批注">+批注</button>
+  <div class="comment-box" data-comment-box="${id}" hidden>
+    <textarea class="comment-input" data-comment-for="${id}" rows="2" placeholder="写下你的批注，会就地显示在这里…"></textarea>
+  </div>
+</div>`;
 }
 
 // ---------- 各 type 内容渲染 ----------
