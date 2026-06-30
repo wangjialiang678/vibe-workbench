@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>振动编码工作台</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header id="top-bar" class="top-bar">
+    <div class="top-bar-left">
+      <span id="session-label" class="session-label"></span>
+      <span id="diff-toggle-mount"></span>
+    </div>
+    <div class="top-bar-right">
+      <span id="status-badge-mount"></span>
+      <button id="submit-btn" class="submit-btn" type="button">提交</button>
+    </div>
+  </header>
+
+  <main id="main-content" class="main-content">
+    <div id="zones-mount"></div>
+  </main>
+
+  <!-- 本地 mermaid（缺失则降级静默） -->
+  <script>
+    (function () {
+      var s = document.createElement('script');
+      s.src = 'vendor/mermaid.min.js';
+      s.onload = function () {
+        if (window.mermaid) {
+          window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+        }
+      };
+      s.onerror = function () { /* 降级：mermaid 不可用，静默 */ };
+      document.head.appendChild(s);
+    })();
+  </script>
+
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

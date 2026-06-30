@@ -1,0 +1,226 @@
+// listener.mjs — 异步唤醒回路（DESIGN §6.3 + §7 + §13 P0-2）
+import {
+  paths,
+  readJSON, writeJSON, writeText,
+  exists,
+  readStatus, writeStatus,
+  listSessions, listRounds,
+} from '../workspace.mjs';
+import { getSession, setSessionId, getCwd } from './session-store.mjs';
+import { runClaude } from './claude-exec.mjs';
+
+// ────────────────────────────────────────────────────────────────────────────
+// 内部工具
+
+/**
+ * 拼装要发给 claude 的 prompt：content + feedback。
+ */
+function buildPrompt(session, round) {
+  const feedback = readJSON(paths.feedback(session, round), null);
+  const content = readJSON(paths.content(session, round), null);
+
+  const parts = [];
+  if (content) {
+    parts.push(`[Round ${round} content]\n${JSON.stringify(content, null, 2)}`);
+  }
+  if (feedback) {
+    parts.push(`[User feedback]\n${JSON.stringify(feedback, null, 2)}`);
+  }
+  return parts.join('\n\n');
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 核心：处理单轮
+
+/**
+ * 处理一轮反馈。
+ * - ack 已存在 → 幂等跳过，return { status: 'skipped' }
+ * - 否则：写 ack → 调 driver → 写 response/error
+ * driver 抛错 → 写 error.json，不再抛出，return { status: 'error' }
+ *
+ * @param {string} session
+ * @param {number} round
+ * @param {{ driver?: Function }} opts
+ * @returns {Promise<{ status: 'skipped'|'responded'|'error' }>}
+ */
+export async function processRound(session, round, { driver = (a) => runClaude(a) } = {}) {
+  const ackPath = paths.ack(session, round);
+
+  // 幂等锁：已认领则跳过
+  if (exists(ackPath)) {
+    return { status: 'skipped' };
+  }
+
+  const claimedAt = new Date().toISOString();
+
+  // 写 ack（认领凭证）
+  writeJSON(ackPath, { claimedAt, pid: process.pid });
+
+  // 更新状态 → claimed
+  writeStatus(session, { state: 'claimed', claimedAt, round });
+
+  // 组装 prompt
+  const prompt = buildPrompt(session, round);
+
+  // 取 session 元数据
+  const sessionData = getSession(session);
+  const claudeSessionId = sessionData?.claudeSessionId || null;
+  const cwd = getCwd(session) || undefined;
+
+  try {
+    const result = await driver({ prompt, sessionId: claudeSessionId, cwd });
+
+    // 写 response.md
+    writeText(paths.response(session, round), result.text || '');
+
+    // 更新 session（续接 id）
+    if (result.sessionId) {
+      setSessionId(session, result.sessionId);
+    }
+
+    // 更新状态 → responded
+    writeStatus(session, { state: 'responded' });
+
+    return { status: 'responded' };
+  } catch (err) {
+    // err 是 { kind, message } 或普通 Error
+    const kind = err.kind || 'unknown';
+    const message = err.message || String(err);
+
+    // 按 DESIGN §13 P1：按 kind 写 userMessage/suggestedAction
+    const { userMessage, suggestedAction } = kindToUserFacing(kind);
+
+    writeJSON(paths.error(session, round), {
+      kind,
+      message,
+      userMessage,
+      suggestedAction,
+      at: new Date().toISOString(),
+    });
+
+    writeStatus(session, { state: 'error' });
+
+    // 不再抛出（单轮异常不拖垮进程）
+    return { status: 'error' };
+  }
+}
+
+function kindToUserFacing(kind) {
+  switch (kind) {
+    case 'driver':
+      return {
+        userMessage: 'AI 驱动程序未找到或启动失败，请检查 claude CLI 是否正确安装。',
+        suggestedAction: '请确认 `claude` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
+      };
+    case 'timeout':
+      return {
+        userMessage: 'AI 处理超时，请稍后重试。',
+        suggestedAction: '点击「重试」重新处理本轮。',
+      };
+    case 'api':
+      return {
+        userMessage: 'AI API 返回错误，请稍后重试。',
+        suggestedAction: '点击「重试」重新处理本轮。',
+      };
+    default:
+      return {
+        userMessage: '发生未知错误，请稍后重试。',
+        suggestedAction: '点击「重试」重新处理本轮。',
+      };
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 对账
+
+/**
+ * 扫描所有 session 的所有轮，补处理"有 feedback 且无 ack 且无 response"的轮。
+ * 崩溃重启后调用可自动补上遗漏的轮。
+ *
+ * @param {{ driver?: Function }} opts
+ * @returns {Promise<Array<{ session: string, round: number, status: string }>>}
+ */
+export async function reconcile({ driver } = {}) {
+  const processed = [];
+  const sessions = listSessions();
+
+  for (const session of sessions) {
+    const rounds = listRounds(session);
+    for (const round of rounds) {
+      const hasFeedback = exists(paths.feedback(session, round));
+      const hasAck = exists(paths.ack(session, round));
+      const hasResponse = exists(paths.response(session, round));
+
+      if (hasFeedback && !hasAck && !hasResponse) {
+        const result = await processRound(session, round, { driver });
+        processed.push({ session, round, status: result.status });
+      }
+    }
+  }
+
+  return processed;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 监管终态
+
+/**
+ * 将 session 标记为 dead（自愈耗尽终态）。
+ * bin/workbench.mjs 在重启次数耗尽后调用。
+ * @param {string} session
+ */
+export function markDead(session) {
+  writeStatus(session, { supervisorState: 'dead' });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 主 listener
+
+/**
+ * 启动 listener：
+ * 1. 独立心跳 setInterval（绝不被 processRound 阻塞，DESIGN §13 P0-2）
+ * 2. 独立对账 setInterval
+ *
+ * @param {{
+ *   driver?: Function,
+ *   intervalMs?: number,
+ *   heartbeatMs?: number
+ * }} opts
+ * @returns {{ stop: () => void }}
+ */
+export function startListener({ driver, intervalMs = 2000, heartbeatMs = 10000 } = {}) {
+  // ① 心跳：独立定时，写所有活动 session 的心跳（不 await 任何 IO 密集操作）
+  const heartbeatTimer = setInterval(() => {
+    try {
+      const sessions = listSessions();
+      const now = new Date().toISOString();
+      for (const session of sessions) {
+        // 只写心跳，合并进现有 status
+        writeStatus(session, { heartbeatAt: now });
+      }
+    } catch {
+      // 心跳失败不能崩溃，静默忽略
+    }
+  }, heartbeatMs);
+
+  // ② 对账轮询
+  let reconciling = false;
+  const reconcileTimer = setInterval(async () => {
+    if (reconciling) return; // 防止并发
+    reconciling = true;
+    try {
+      await reconcile({ driver });
+    } catch {
+      // 单次对账异常不拖垮 listener
+    } finally {
+      reconciling = false;
+    }
+  }, intervalMs);
+
+  function stop() {
+    clearInterval(heartbeatTimer);
+    clearInterval(reconcileTimer);
+  }
+
+  return { stop };
+}

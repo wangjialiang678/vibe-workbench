@@ -1,0 +1,449 @@
+/* vibecoding 工作台 — 亮/暗主题 CSS 变量 + 分区色条 */
+/* 克制、信息优先；色彩 + 形状图标双重语义（§13 P2 可访问性） */
+
+/* ===== 亮色主题（默认）===== */
+:root {
+  --color-bg: #f9f9f9;
+  --color-surface: #ffffff;
+  --color-text: #1a1a1a;
+  --color-text-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-focus: #2563eb;
+
+  /* 注意力分区强调色 */
+  --color-zone-a: #ef4444;      /* 区A：需定·无预设 = 红 */
+  --color-zone-b: #f97316;      /* 区B：需定·有推荐 = 橙 */
+  --color-zone-cr: #3b82f6;     /* 区CReview：重要默认 = 蓝 */
+  --color-zone-cf: #9ca3af;     /* 区CFyi：普通默认 = 灰 */
+
+  /* diff 徽章 */
+  --color-new: #16a34a;         /* 绿 */
+  --color-changed: #f97316;     /* 橙 */
+
+  /* 状态 */
+  --color-status-ok: #16a34a;
+  --color-status-warn: #ca8a04;
+  --color-status-err: #dc2626;
+  --color-status-info: #2563eb;
+
+  --radius: 6px;
+  --bar-width: 4px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+
+/* 暗色主题 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #111827;
+    --color-surface: #1f2937;
+    --color-text: #f3f4f6;
+    --color-text-muted: #9ca3af;
+    --color-border: #374151;
+    --color-focus: #60a5fa;
+    --color-zone-a: #f87171;
+    --color-zone-b: #fb923c;
+    --color-zone-cr: #60a5fa;
+    --color-zone-cf: #6b7280;
+    --color-new: #4ade80;
+    --color-changed: #fb923c;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+}
+
+/* ===== 基础重置 ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ===== 顶部固定状态条 ===== */
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow);
+}
+
+.top-bar-left, .top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.session-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.submit-btn {
+  padding: 6px 18px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.submit-btn:hover { opacity: .88; }
+.submit-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+/* ===== 主内容区 ===== */
+.main-content {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 16px 60px;
+}
+
+/* ===== 状态条（分区内顶部）===== */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.status-bar--nodecision { border-color: var(--color-zone-cf); }
+
+.decision-progress {
+  height: 6px;
+  border-radius: 3px;
+  flex: 1;
+  min-width: 80px;
+}
+
+.status-jump {
+  font-size: 13px;
+  color: var(--color-focus);
+  text-decoration: none;
+}
+
+/* ===== 分区 Zone ===== */
+.zone {
+  margin-bottom: 24px;
+}
+
+.zone-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.zone-icon { font-size: 18px; }
+.zone-title { font-size: 15px; font-weight: 700; }
+
+/* 区 A — 红色左色条 */
+.zone-a > .zone-blocks > .block {
+  border-left: var(--bar-width) solid var(--color-zone-a);
+}
+
+/* 区 B — 橙色左色条 */
+.zone-b > .zone-blocks > .block {
+  border-left: var(--bar-width) solid var(--color-zone-b);
+}
+
+/* 区 C-Review — 蓝色左色条 */
+.zone-c-review > .zone-blocks > .block {
+  border-left: var(--bar-width) solid var(--color-zone-cr);
+}
+
+/* 区 C-FYI 折叠 */
+.zone-c-fyi {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0;
+}
+
+.zone-fyi-summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  list-style: none;
+}
+
+.zone-c-fyi[open] .zone-blocks {
+  padding: 12px;
+}
+
+.zone-c-fyi > .zone-blocks > .block {
+  border-left: var(--bar-width) solid var(--color-zone-cf);
+}
+
+/* ===== Block 卡片 ===== */
+.block {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  position: relative;
+}
+
+.block-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.block-content { font-size: 14px; }
+
+/* ===== 变更徽章 ===== */
+.change-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+.badge-new { background: var(--color-new); color: #fff; }
+.badge-changed { background: var(--color-changed); color: #fff; }
+
+/* ===== 批注入口 ===== */
+.comment-btn {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--color-focus);
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.comment-btn:hover { border-color: var(--color-focus); }
+
+/* ===== Choice ===== */
+.choice-group { display: flex; flex-direction: column; gap: 8px; }
+
+.choice-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.choice-recommended {
+  background: color-mix(in srgb, var(--color-zone-b) 8%, transparent);
+  border-color: var(--color-zone-b);
+}
+
+.rec-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-zone-b);
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid var(--color-zone-b);
+  margin-left: 4px;
+}
+
+.opt-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+/* ===== Verdict ===== */
+.verdict-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.verdict-btn {
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background .15s;
+}
+
+.verdict-btn:hover { background: var(--color-bg); }
+.verdict-btn.selected { background: var(--color-focus); color: #fff; border-color: var(--color-focus); }
+
+.verdict-reason {
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  font-size: 14px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+/* ===== Freetext / Editable ===== */
+.freetext-input, .editable-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 14px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.edit-status {
+  display: block;
+  font-size: 12px;
+  color: var(--color-zone-b);
+  margin-top: 4px;
+}
+
+/* ===== Table ===== */
+.block-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.block-table th, .block-table td {
+  border: 1px solid var(--color-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.block-table th {
+  background: var(--color-bg);
+  font-weight: 600;
+}
+
+/* ===== Code ===== */
+.code-block {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px;
+  overflow-x: auto;
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+}
+
+/* ===== Prev compare ===== */
+.prev-compare {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.prev-compare summary {
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--color-zone-b);
+}
+
+.prev-table {
+  width: 100%;
+  border-collapse: collapse;
+  padding: 8px;
+}
+
+.prev-table th, .prev-table td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+/* ===== Diff toggle ===== */
+.diff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+/* ===== Status badge (top-bar 内）===== */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.retry-btn {
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.retry-force { border-color: var(--color-zone-a); color: var(--color-zone-a); }
+
+.error-detail { margin-top: 4px; font-size: 13px; }
+.error-msg { color: var(--color-zone-a); }
+.error-action { color: var(--color-text-muted); }
+
+/* ===== Diagram rationale ===== */
+.diagram-rationale {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.diagram-rationale summary {
+  padding: 5px 10px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+/* ===== Default preview (zone-c-review) ===== */
+.default-preview {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  padding: 4px 10px;
+  margin-top: -6px;
+  margin-bottom: 10px;
+}
+
+/* ===== 响应式（移动友好）===== */
+@media (max-width: 600px) {
+  .top-bar { flex-wrap: wrap; gap: 8px; }
+  .verdict-group { flex-direction: column; }
+  .choice-option { flex-wrap: wrap; }
+}
