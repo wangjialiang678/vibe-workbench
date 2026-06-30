@@ -9,9 +9,12 @@ import { submitSummary, unansweredDecisions } from '../protocol/attention.mjs';
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const SESSION = params.get('session') ?? '';
-const ROUND   = params.get('round')   ?? '';
+const URL_ROUND = params.get('round') ?? '';   // 可空：留空 = 自动跟随最新一轮（固定 URL）
 
-const DRAFT_KEY = `wb:${SESSION}:${ROUND}:fb`;
+// 当前展示的轮次；为 null 时在 bootstrap 里解析为服务端最新一轮，并可随新轮自动推进
+let currentRound = URL_ROUND !== '' ? Number(URL_ROUND) : null;
+
+function draftKey() { return `wb:${SESSION}:${currentRound}:fb`; }
 
 // ── 元素引用 ─────────────────────────────────────────────
 const $zones        = document.getElementById('zones-mount');
@@ -20,18 +23,23 @@ const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
 const $sessionLabel = document.getElementById('session-label');
 
-$sessionLabel.textContent = SESSION ? `会话 ${SESSION}  ·  轮 ${ROUND}` : '（无会话）';
+function updateSessionLabel() {
+  $sessionLabel.textContent = SESSION
+    ? `会话 ${SESSION}  ·  轮 ${currentRound ?? '…'}`
+    : '（无会话）';
+}
+updateSessionLabel();
 
 // ── 草稿 ─────────────────────────────────────────────────
 function loadDraft() {
-  try { return JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null') ?? {}; }
+  try { return JSON.parse(localStorage.getItem(draftKey()) ?? 'null') ?? {}; }
   catch { return {}; }
 }
 
 function saveDraft(patch) {
   const draft = loadDraft();
   Object.assign(draft, patch);
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  localStorage.setItem(draftKey(), JSON.stringify(draft));
 }
 
 // ── 渲染 ─────────────────────────────────────────────────
@@ -40,7 +48,7 @@ let _blocks = [];   // 当前轮 blocks（带 _change）
 async function loadAndRender() {
   let data;
   try {
-    const resp = await fetch(`/api/content?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(ROUND)}`);
+    const resp = await fetch(`/api/content?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     data = await resp.json();
   } catch (err) {
@@ -312,7 +320,7 @@ async function doSubmit(draft, answeredIds, unanswered) {
 
   const payload = {
     session: SESSION,
-    round: Number(ROUND),
+    round: Number(currentRound),
     submittedAt: new Date().toISOString(),
     items,
     unanswered,
@@ -343,7 +351,7 @@ async function doSubmit(draft, answeredIds, unanswered) {
   }
 
   // 成功：提示可离开（一次性 toast）
-  const toastKey = `wb:${SESSION}:${ROUND}:toast-sent`;
+  const toastKey = `wb:${SESSION}:${currentRound}:toast-sent`;
   if (!sessionStorage.getItem(toastKey)) {
     sessionStorage.setItem(toastKey, '1');
     showToast('提交成功！AI 正在处理，你可以关闭此页面，回复后会变蓝提醒。');
@@ -357,7 +365,7 @@ function downloadFallback(payload) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `feedback-${SESSION}-${ROUND}.json`;
+  a.download = `feedback-${SESSION}-${currentRound}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -375,6 +383,38 @@ function showToast(msg) {
   setTimeout(() => div.remove(), 5000);
 }
 
+// ── 轮次解析 / 自动推进 ───────────────────────────────────
+// 向服务端查最新一轮（用于固定 URL：不带 round 时跟随最新一轮）。
+async function resolveLatestRound() {
+  try {
+    const resp = await fetch(`/api/status?session=${encodeURIComponent(SESSION)}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const r = data?.status?.round;
+    return Number.isInteger(r) ? r : null;
+  } catch { return null; }
+}
+
+// 就地推进到新一轮：重置本轮 UI 状态 + 重新载入渲染（无需手动刷新/换链接）。
+async function advanceToRound(newRound) {
+  currentRound = newRound;
+  $submitBtn.disabled = false;
+  $submitBtn.textContent = '提交';
+  updateSessionLabel();
+  document.title = `第 ${newRound} 轮 — 振动编码工作台`;
+  await loadAndRender();
+  showToast(`AI 已生成第 ${newRound} 轮，已为你自动载入 ✦`);
+}
+
+// 启动：URL 不带 round → 解析为最新一轮；否则用 URL 指定的轮。
+async function bootstrap() {
+  if (currentRound == null) {
+    currentRound = (await resolveLatestRound()) ?? 1;
+    updateSessionLabel();
+  }
+  await loadAndRender();
+}
+
 // ── 状态轮询 ─────────────────────────────────────────────
 let _prevState = null;
 let _notifGranted = false;
@@ -390,6 +430,14 @@ async function pollStatus() {
     const resp = await fetch(`/api/status?session=${encodeURIComponent(SESSION)}`);
     if (!resp.ok) return;
     const status = await resp.json();
+
+    // 自动推进：服务端出现更高轮次 → 就地载入新一轮（无需手动刷新 / 换链接）
+    const latest = status?.status?.round;
+    if (Number.isInteger(latest) && currentRound != null && latest > currentRound) {
+      await advanceToRound(latest);
+      return;
+    }
+
     const now = Date.now();
 
     $statusMount.innerHTML = statusBadgeHtml(status, now);
@@ -415,7 +463,7 @@ async function pollStatus() {
 async function handleRetry(force = false) {
   if (force && !confirm('强制重试会忽略当前处理状态，可能导致重复处理，确认？')) return;
   try {
-    await fetch(`/api/retry?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(ROUND)}&force=${force}`, { method: 'POST' });
+    await fetch(`/api/retry?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}&force=${force}`, { method: 'POST' });
   } catch { /* 静默 */ }
   await pollStatus();
 }
@@ -424,5 +472,5 @@ async function handleRetry(force = false) {
 setInterval(pollStatus, 3000);
 
 // ── 初始化 ────────────────────────────────────────────────
-loadAndRender();
+bootstrap();
 pollStatus();
