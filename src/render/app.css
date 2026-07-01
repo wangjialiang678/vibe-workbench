@@ -101,9 +101,9 @@ body {
 
 /* ===== 主内容区 ===== */
 .main-content {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 20px 16px 60px;
+  max-width: none;          /* 用满宽度（此前卡在 860px 造成两侧大量留白）*/
+  margin: 0;
+  padding: 20px clamp(16px, 2vw, 48px) 60px;
 }
 
 /* ===== 状态条（分区内顶部）===== */
