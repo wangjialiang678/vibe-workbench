@@ -310,9 +310,10 @@ function bindEmbedIframe(blockId, iframe) {
         const selRect = range.getBoundingClientRect();
         const iframeRect = iframe.getBoundingClientRect();
 
-        // fab 定位到选区右上角
-        const fabX = iframeRect.left + selRect.right;
-        const fabY = iframeRect.top  + selRect.top + window.scrollY;
+        // fab 定位到选区右上角。position:fixed 相对视口，
+        // iframeRect.top + selRect.top 已是"选区相对视口"的坐标——不能再加 window.scrollY（否则随滚动被推到页底）。
+        const fabX = iframeRect.left + selRect.right + 6;
+        const fabY = iframeRect.top + selRect.top;
         showFab(fabX, fabY, blockId, quote, iframeDoc, range);
       } catch { hideFab(); }
     });
