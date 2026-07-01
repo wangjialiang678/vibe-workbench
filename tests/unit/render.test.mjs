@@ -195,14 +195,16 @@ test('renderEmbed: contains iframe with proxy src', () => {
   assert.ok(out.includes(encodeURIComponent('https://example.com/page?q=1&r=2')), `expected encoded url in: ${out}`);
 });
 
-test('renderEmbed: contains embed-overlay', () => {
+test('renderEmbed: contains embed-rail (飞书式右侧评论栏)', () => {
   const out = renderEmbed({ id: 'e2', type: 'embed', url: 'https://x.com' });
-  assert.ok(out.includes('embed-overlay'), `expected embed-overlay in: ${out}`);
+  assert.ok(out.includes('embed-rail'), `expected embed-rail in: ${out}`);
+  assert.ok(!out.includes('embed-overlay'), `must NOT contain embed-overlay in: ${out}`);
 });
 
-test('renderEmbed: contains embed-annotate-toggle', () => {
+test('renderEmbed: contains rail-add button and no embed-annotate-toggle', () => {
   const out = renderEmbed({ id: 'e3', type: 'embed', url: 'https://x.com' });
-  assert.ok(out.includes('embed-annotate-toggle'), `expected embed-annotate-toggle in: ${out}`);
+  assert.ok(out.includes('rail-add'), `expected rail-add in: ${out}`);
+  assert.ok(!out.includes('embed-annotate-toggle'), `must NOT contain embed-annotate-toggle in: ${out}`);
 });
 
 test('blockHtml: embed type renders iframe with proxy url in outer section', () => {

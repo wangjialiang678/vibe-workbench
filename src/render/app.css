@@ -225,7 +225,7 @@ body {
 .badge-new { background: var(--color-new); color: #fff; }
 .badge-changed { background: var(--color-changed); color: #fff; }
 
-/* ===== 批注入口 ===== */
+/* ===== 内联批注入口 ===== */
 .comment-btn {
   margin-top: 10px;
   font-size: 13px;
@@ -452,7 +452,7 @@ body {
 /* 注意：不要在此覆盖背景——块本身是 .block（已用 --color-surface，亮/暗自适应）。 */
 .zone-context { margin: 8px 0 4px; }
 
-/* 内联批注（不弹窗，就地展开+显示）—— 统一用 --color-* 变量，保证暗色模式对比度 */
+/* 内联批注（飞书式三态）—— 统一用 --color-* 变量，保证暗色模式对比度 */
 .comment-area { margin-top: 8px; }
 .comment-box { margin-top: 6px; }
 .comment-input {
@@ -463,7 +463,56 @@ body {
 }
 .comment-input:focus { outline: none; border-color: var(--color-focus); }
 
-/* ===== Embed block ===== */
+/* 内联批注操作按钮区 */
+.comment-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.comment-save {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.comment-save:hover { opacity: .85; }
+
+.comment-edit-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.comment-edit-btn:hover { border-color: var(--color-focus); color: var(--color-focus); }
+
+.comment-delete {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-zone-a);
+  background: none;
+  color: var(--color-zone-a);
+  font-size: 13px;
+  cursor: pointer;
+}
+.comment-delete:hover { background: color-mix(in srgb, var(--color-zone-a) 10%, transparent); }
+
+/* 内联批注读态文本 */
+.comment-read-text {
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 4px 0;
+}
+
+/* ===== Embed block（飞书式）===== */
 .embed-wrap {
   display: flex;
   flex-direction: column;
@@ -490,13 +539,10 @@ body {
   white-space: nowrap;
 }
 
-.embed-mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  color: var(--color-focus);
+.embed-hint {
   font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
 
 .embed-pin-count {
@@ -505,75 +551,182 @@ body {
   white-space: nowrap;
 }
 
-.embed-frame {
+/* embed body：iframe + 右侧 rail 并排 */
+.embed-body {
+  display: flex;
+  gap: 12px;
   border: 1px solid var(--color-border);
   border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
   overflow: hidden;
+  background: var(--color-surface);
+  padding: 8px;
+}
+
+.embed-frame {
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
 }
 
 .embed-iframe {
   display: block;
 }
 
-/* Overlay: hidden by default, active when annotate mode on */
-.embed-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(37, 99, 235, 0.08);
-  cursor: crosshair;
-  pointer-events: none;
+/* 右侧评论 rail */
+.embed-rail {
+  width: 300px;
+  flex: none;
+  max-height: 620px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.embed-overlay:not([hidden]) {
-  pointer-events: auto;
-}
-
-/* Pin dot */
-.embed-pin {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--color-focus);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
+.rail-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 1px 4px rgba(0,0,0,.25);
-  pointer-events: none;
-  user-select: none;
-  z-index: 2;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-/* Inline comment textarea next to pin */
-.pin-comment {
-  position: absolute;
-  width: 180px;
-  min-height: 2.4em;
+.rail-add {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--color-focus);
+  background: none;
+  color: var(--color-focus);
   font-size: 12px;
+  cursor: pointer;
+}
+.rail-add:hover { background: color-mix(in srgb, var(--color-focus) 8%, transparent); }
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rail-empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  padding: 8px 0;
+}
+
+/* rail 卡片 */
+.rail-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--color-bg);
+}
+
+.rail-quote {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  border-left: 3px solid var(--color-border);
+  padding: 2px 8px;
+  margin: 0 0 6px;
+  font-style: normal;
+  word-break: break-word;
+}
+
+.rail-comment-input {
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--color-border);
   border-left: 3px solid var(--color-focus);
   border-radius: var(--radius);
-  padding: 4px 7px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
   background: var(--color-surface);
   color: var(--color-text);
-  resize: vertical;
-  z-index: 3;
-  /* positioned by JS; transform shifts it right of the pin dot */
-  transform: translate(12px, -50%);
+}
+.rail-comment-input:focus { outline: none; border-color: var(--color-focus); }
+
+.rail-card-text {
+  font-size: 13px;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1.4em;
+  cursor: pointer;
+}
+.rail-card-text:hover { text-decoration: underline dotted; }
+
+.rail-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
 }
 
-.pin-comment:focus {
-  outline: none;
-  border-color: var(--color-focus);
+.rail-save {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
 }
+.rail-save:hover { opacity: .85; }
 
-@media (prefers-color-scheme: dark) {
-  .embed-overlay:not([hidden]) {
-    background: rgba(96, 165, 250, 0.10);
-  }
+.rail-edit-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.rail-edit-btn:hover { border-color: var(--color-focus); color: var(--color-focus); }
+
+.rail-card-delete {
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-zone-a);
+  background: none;
+  color: var(--color-zone-a);
+  font-size: 12px;
+  cursor: pointer;
+}
+.rail-card-delete:hover { background: color-mix(in srgb, var(--color-zone-a) 10%, transparent); }
+
+/* 浮动评论按钮 FAB */
+.comment-fab {
+  position: fixed;
+  z-index: 1000;
+  padding: 5px 12px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  transform: translate(4px, -100%);
+  white-space: nowrap;
+}
+.comment-fab:hover { opacity: .88; }
+
+/* 窄屏：embed-body 垂直堆叠，rail 全宽 */
+@media (max-width: 800px) {
+  .embed-body { flex-direction: column; }
+  .embed-rail { width: auto; max-height: 360px; }
 }

@@ -324,6 +324,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 - **block 类型 `embed`**：`{id, type:'embed', title, url, height?}`。渲染为 iframe + 批注 overlay。
 - **代理 `/api/proxy?url=`**：很多站点带 `X-Frame-Options/CSP` 禁止被 iframe。服务端反代目标页：抓取 HTML → **不转发** `x-frame-options`/`content-security-policy` → 注入 `<base href="<url>">`（原站相对资源正常加载）→ 同源返回。iframe 指向 `/api/proxy?url=<encoded>`。纯函数 `rewriteEmbedHtml(html, url)` 可单测；仅 http/https、10s 超时、失败降级错误页。
-- **就地批注（positional pins）**：toolbar 有「批注模式」开关。浏览模式下 overlay 隐藏（可正常翻阅页面）；批注模式下 overlay 激活，点击页面任意处 → 在该 (xPct,yPct) 落一个编号钉 + 内联 textarea 写批注。pins 存草稿，刷新还原。
-- **反馈**：每个钉提交为 `{blockId, type:'pin', value:{xPct,yPct}, comment}`，AI 侧据"位置+意见"续跑。
-- **局限**：positional pins 是视觉定位（不读 iframe 内文本）；目标页若本身 JS 依赖自身同源后端，代理下其动态请求可能失效（静态展示页无碍）。富文本锚定（高亮具体文字）留作后续。
+- **飞书式批注（选中文字→评论→右栏）**：因页面经 `/api/proxy` **同源**嵌入，监听 iframe 内选区——用户**选中文字**即浮出「💬 评论」按钮（无"批注模式"开关）；点击在**右侧评论栏**建卡片（引用原文 + 评论），每条可 **保存 / 编辑 / 删除**；也可「+ 新增批注」写不锚定文字的整体意见。best-effort 用 CSS Custom Highlight API 高亮原文。
+- **布局**：embed 区左右两栏——左=内容（iframe），右=固定宽度评论栏。
+- **数据/反馈**：草稿 `comments:[{id,quote,text,done}]`；**创建不落草稿、保存空内容即丢弃**（不产生空评论）；提交为 `{blockId, type:'pin', value:{quote}, comment}`（quote=引用原文，整体意见为 null）。
+- **局限**：文字锚定按 quote 文本 best-effort 定位/高亮（重复文本可能不精确）；目标页若强依赖自身同源后端，代理下动态请求可能失效（静态展示页无碍）。

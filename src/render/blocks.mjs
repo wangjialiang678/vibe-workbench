@@ -19,11 +19,24 @@ function titleHtml(block) {
 
 function commentEntry(blockId) {
   const id = escHtml(blockId);
-  // 内联批注：点按钮就地展开输入框，内容直接显示在原文对应位置（不弹窗、不只显示"已批注"）
-  return `<div class="comment-area">
+  // 内联批注（飞书式三态：无→编辑→读）：点按钮就地展开，保存后显示读态，支持编辑/删除
+  return `<div class="comment-area" data-comment-area="${id}">
   <button class="comment-btn" data-block-id="${id}" aria-expanded="false" aria-label="添加批注">+批注</button>
   <div class="comment-box" data-comment-box="${id}" hidden>
-    <textarea class="comment-input" data-comment-for="${id}" rows="2" placeholder="写下你的批注，会就地显示在这里…"></textarea>
+    <div class="comment-edit" data-comment-edit="${id}">
+      <textarea class="comment-input" data-comment-for="${id}" rows="2" placeholder="写下你的批注…"></textarea>
+      <div class="comment-actions">
+        <button class="comment-save" data-comment-save="${id}" type="button">保存</button>
+        <button class="comment-delete" data-comment-del="${id}" type="button">删除</button>
+      </div>
+    </div>
+    <div class="comment-read" data-comment-read="${id}" hidden>
+      <div class="comment-read-text" data-comment-text="${id}"></div>
+      <div class="comment-actions">
+        <button class="comment-edit-btn" data-comment-edit-btn="${id}" type="button">编辑</button>
+        <button class="comment-delete" data-comment-del="${id}" type="button">删除</button>
+      </div>
+    </div>
   </div>
 </div>`;
 }
@@ -111,17 +124,20 @@ export function renderEmbed(block) {
   const url = block.url ?? '';
   const escapedUrl = escHtml(url);
   const encodedUrl = encodeURIComponent(url);
-  const height = block.height || 560;
+  const height = block.height || 620;
 
   return `<div class="embed-wrap" data-block-id="${id}">
   <div class="embed-toolbar">
     <span class="embed-src">🔗 ${escapedUrl}</span>
-    <label class="embed-mode"><input type="checkbox" class="embed-annotate-toggle" data-embed="${id}"> 批注模式（在页面上点选落点）</label>
+    <span class="embed-hint">选中页面里的文字即可评论（飞书式）</span>
     <span class="embed-pin-count" data-embed-count="${id}">0 条批注</span>
   </div>
-  <div class="embed-frame" data-embed-frame="${id}" style="position:relative;height:${height}px">
-    <iframe class="embed-iframe" src="/api/proxy?url=${encodedUrl}" style="width:100%;height:100%;border:0"></iframe>
-    <div class="embed-overlay" data-embed-overlay="${id}" hidden></div>
+  <div class="embed-body">
+    <div class="embed-frame" style="height:${height}px"><iframe class="embed-iframe" data-embed-iframe="${id}" src="/api/proxy?url=${encodedUrl}" style="width:100%;height:100%;border:0"></iframe></div>
+    <aside class="embed-rail" data-embed-rail="${id}">
+      <div class="rail-head"><span>批注</span><button class="rail-add" data-embed-add="${id}" type="button">+ 新增批注</button></div>
+      <div class="rail-list" data-embed-rail-list="${id}"><div class="rail-empty">选中页面里的文字，点浮出的「💬 评论」添加；也可点「+ 新增批注」写整体意见。</div></div>
+    </aside>
   </div>
 </div>`;
 }
