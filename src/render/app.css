@@ -555,11 +555,11 @@ body {
 .embed-body {
   display: flex;
   gap: 12px;
+  align-items: flex-start;   /* 评论栏不再被拉伸到 iframe 高度 */
   border: 1px solid var(--color-border);
   border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
-  overflow: hidden;
-  background: var(--color-surface);
+  background: var(--color-surface);   /* 去掉 overflow:hidden：它会裁剪评论并破坏 sticky */
   padding: 8px;
 }
 
@@ -577,9 +577,12 @@ body {
 
 /* 右侧评论 rail */
 .embed-rail {
-  width: 300px;
+  width: 320px;
   flex: none;
-  max-height: 620px;
+  /* 高度绑视口而非 iframe：sticky 跟随页面滚动、自身独立滚动，评论再多也不截断 */
+  position: sticky;
+  top: 64px;
+  max-height: calc(100vh - 88px);
   overflow-y: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -727,6 +730,7 @@ body {
 
 /* 窄屏：embed-body 垂直堆叠，rail 全宽 */
 @media (max-width: 800px) {
+  /* 窄屏：评论栏堆叠到 iframe 下方，全宽、自身滚动、不截断（不再 sticky） */
   .embed-body { flex-direction: column; }
-  .embed-rail { width: auto; max-height: 360px; }
+  .embed-rail { width: auto; position: static; max-height: 60vh; }
 }
