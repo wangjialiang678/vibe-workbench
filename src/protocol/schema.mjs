@@ -23,7 +23,7 @@ function stableStringify(v) {
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
 }
 
-// 内容指纹：仅取影响"呈现"的字段，用于 diff（DESIGN §5）
+// 内容指纹：仅取影响"呈现"的字段，用于 diff（DESIGN §5 + §1.4 C）
 export function blockFingerprint(block) {
   const subset = {
     type: block.type,
@@ -34,6 +34,21 @@ export function blockFingerprint(block) {
     default: block.default ?? null,
     value: block.value ?? null,
   };
+  // §1.4 C：新 block 类型的核心字段加入指纹，否则 diff 对新类型失效
+  if (block.type === 'prototype') {
+    Object.assign(subset, {
+      mode: block.mode ?? null,
+      src: block.src ?? null,
+      imageUrl: block.imageUrl ?? null,
+      screen: block.screen ?? null,
+    });
+  }
+  if (block.type === 'checklist') {
+    Object.assign(subset, {
+      items: block.items ?? null,
+      verdictLabels: block.verdictLabels ?? null,
+    });
+  }
   return createHash('sha1').update(stableStringify(subset)).digest('hex');
 }
 
@@ -59,6 +74,32 @@ export function validateBlock(block) {
   }
   if (block.type === 'embed') {
     if (!block.url || typeof block.url !== 'string') errors.push('embed requires non-empty url string');
+  }
+  if (block.type === 'prototype') {
+    const validModes = ['wireframe', 'iframe', 'image'];
+    if (!validModes.includes(block.mode)) errors.push(`prototype.mode must be one of: ${validModes.join(', ')}`);
+    if (block.mode === 'iframe' && (!block.src || typeof block.src !== 'string')) {
+      errors.push('prototype with mode=iframe requires non-empty src string');
+    }
+    if (block.mode === 'image' && (!block.imageUrl || typeof block.imageUrl !== 'string')) {
+      errors.push('prototype with mode=image requires non-empty imageUrl string');
+    }
+    if (block.mode === 'wireframe' && (!block.screen || typeof block.screen !== 'object')) {
+      errors.push('prototype with mode=wireframe requires screen object');
+    }
+  }
+  if (block.type === 'checklist') {
+    if (!Array.isArray(block.items) || block.items.length === 0) {
+      errors.push('checklist requires non-empty items[]');
+    } else {
+      block.items.forEach((item, i) => {
+        if (!item || !item.id) errors.push(`checklist items[${i}] requires id`);
+        if (!item || !item.label) errors.push(`checklist items[${i}] requires label`);
+      });
+    }
+    if (!Array.isArray(block.verdictLabels) || block.verdictLabels.length === 0) {
+      errors.push('checklist requires non-empty verdictLabels[]');
+    }
   }
   return { ok: errors.length === 0, errors };
 }

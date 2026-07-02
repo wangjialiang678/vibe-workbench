@@ -113,6 +113,18 @@ function restoreDraftUI(draft) {
         saveDraft({ [blockId]: { ...item, comments: real } }); // 顺手清理历史空评论
       }
     }
+    // checklist 三态：还原各 item 的选中状态
+    if (item.checklistItems && typeof item.checklistItems === 'object') {
+      Object.entries(item.checklistItems).forEach(([itemId, label]) => {
+        restoreChecklistItem(blockId, itemId, label);
+      });
+    }
+    // prototype pins：还原已保存的 pin 标注
+    if (Array.isArray(item.pins) && item.pins.length > 0) {
+      item.pins.forEach((pin) => {
+        if (pin && pin.id) renderPinOnOverlay(blockId, pin, /* readMode= */ true);
+      });
+    }
   });
 }
 
@@ -141,6 +153,174 @@ function updateCommentBtn(blockId, val) {
 function updatePinCount(blockId, count) {
   const el = $zones.querySelector(`.embed-pin-count[data-embed-count="${blockId}"]`);
   if (el) el.textContent = `${count} 条批注`;
+}
+
+// ── checklist 三态 ────────────────────────────────────────
+
+/** 还原单个 checklist item 的选中态 */
+function restoreChecklistItem(blockId, itemId, label) {
+  const btns = $zones.querySelectorAll(
+    `.checklist-verdict-btn[data-block-id="${blockId}"][data-item-id="${itemId}"]`,
+  );
+  btns.forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.label === label);
+  });
+}
+
+// ── prototype SVG pin 定位批注 ────────────────────────────
+
+let _pinSeq = 0;
+
+/**
+ * 在 SVG overlay 上渲染（或更新）一个 pin。
+ * pin: { id, xPct, yPct, text }
+ * readMode=true → 直接渲染为读态（草稿恢复）；false → 展开编辑态
+ */
+function renderPinOnOverlay(blockId, pin, readMode = false) {
+  const overlay = $zones.querySelector(`svg.proto-overlay[data-proto-overlay="${blockId}"]`);
+  const pinsG   = $zones.querySelector(`g.proto-pins[data-proto-pins="${blockId}"]`);
+  if (!overlay || !pinsG) return;
+
+  // 移除已存在的同 id pin（更新场景）
+  const existing = pinsG.querySelector(`[data-pin-id="${pin.id}"]`);
+  if (existing) existing.remove();
+
+  // pin 圆形标记（SVG circle + text）
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('data-pin-id', pin.id);
+  g.setAttribute('class', 'proto-pin');
+  g.setAttribute('style', 'cursor:pointer');
+
+  const cx = pin.xPct;
+  const cy = pin.yPct;
+
+  // 使用 SVG foreignObject 承载 pin 标记（避免 text 计量问题）
+  g.innerHTML = `
+    <circle cx="${cx}%" cy="${cy}%" r="12" class="pin-circle" fill="var(--color-focus)" stroke="#fff" stroke-width="2" opacity="0.9"/>
+    <text x="${cx}%" y="${cy}%" dy="0.35em" text-anchor="middle" fill="#fff" font-size="10" pointer-events="none">📍</text>`;
+
+  pinsG.appendChild(g);
+
+  // 内联评论气泡：作为普通 DOM 节点挂到 proto-container
+  const containerId = `proto-pin-comment-${pin.id}`;
+  let commentBubble = document.getElementById(containerId);
+  if (!commentBubble) {
+    commentBubble = document.createElement('div');
+    commentBubble.id = containerId;
+    commentBubble.className = 'proto-pin-comment';
+    commentBubble.dataset.pinId = pin.id;
+    commentBubble.dataset.blockId = blockId;
+    // 定位：相对 proto-container，跟随百分比坐标
+    commentBubble.style.cssText = `position:absolute;left:calc(${cx}% + 16px);top:calc(${cy}% - 8px);z-index:10`;
+    // 找 proto-container 挂载
+    const container = $zones.querySelector(`.proto-container[data-proto="${blockId}"]`);
+    if (container) {
+      container.style.position = 'relative';
+      container.appendChild(commentBubble);
+    }
+  }
+
+  if (readMode && pin.text) {
+    commentBubble.innerHTML = `<div class="proto-pin-read">
+      <span class="proto-pin-text">${escapeHtml(pin.text)}</span>
+      <div class="proto-pin-actions">
+        <button class="proto-pin-edit-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">编辑</button>
+        <button class="proto-pin-del-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">删除</button>
+      </div>
+    </div>`;
+    commentBubble.hidden = false;
+    bindPinBubbleActions(blockId, pin, commentBubble);
+  } else {
+    commentBubble.innerHTML = `<div class="proto-pin-edit">
+      <textarea class="proto-pin-input" data-pin-id="${pin.id}" rows="2" placeholder="写下批注…">${escapeHtml(pin.text || '')}</textarea>
+      <div class="proto-pin-actions">
+        <button class="proto-pin-save-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">保存</button>
+        <button class="proto-pin-del-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">删除</button>
+      </div>
+    </div>`;
+    commentBubble.hidden = false;
+    bindPinBubbleActions(blockId, pin, commentBubble);
+    commentBubble.querySelector('.proto-pin-input')?.focus();
+  }
+
+  // 点击 pin marker → 展开/收起气泡
+  g.addEventListener('click', (e) => {
+    e.stopPropagation();
+    commentBubble.hidden = !commentBubble.hidden;
+  });
+}
+
+/** 绑定 pin 气泡里的保存/编辑/删除事件 */
+function bindPinBubbleActions(blockId, pin, bubble) {
+  function savePinDraft(text) {
+    const draft = loadDraft();
+    const item = draft[blockId] || {};
+    const pins = Array.isArray(item.pins) ? [...item.pins] : [];
+    const idx = pins.findIndex((p) => p.id === pin.id);
+    const updated = { ...pin, text };
+    if (idx >= 0) pins[idx] = updated; else pins.push(updated);
+    saveDraft({ [blockId]: { ...item, pins } });
+    return updated;
+  }
+
+  function deletePinDraft() {
+    const draft = loadDraft();
+    const item = draft[blockId] || {};
+    const pins = (Array.isArray(item.pins) ? item.pins : []).filter((p) => p.id !== pin.id);
+    saveDraft({ [blockId]: { ...item, pins } });
+    // 移除 SVG marker
+    const overlay = $zones.querySelector(`g.proto-pins[data-proto-pins="${blockId}"]`);
+    if (overlay) {
+      const g = overlay.querySelector(`[data-pin-id="${pin.id}"]`);
+      if (g) g.remove();
+    }
+    bubble.remove();
+  }
+
+  // 保存按钮
+  const saveBtn = bubble.querySelector('.proto-pin-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ta = bubble.querySelector('.proto-pin-input');
+      const text = ta ? ta.value.trim() : '';
+      if (!text) { deletePinDraft(); return; }
+      const updated = savePinDraft(text);
+      // 切换到读态
+      bubble.innerHTML = `<div class="proto-pin-read">
+        <span class="proto-pin-text">${escapeHtml(text)}</span>
+        <div class="proto-pin-actions">
+          <button class="proto-pin-edit-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">编辑</button>
+          <button class="proto-pin-del-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">删除</button>
+        </div>
+      </div>`;
+      bindPinBubbleActions(blockId, updated, bubble);
+    });
+  }
+
+  // 编辑按钮（读态下）
+  const editBtn = bubble.querySelector('.proto-pin-edit-btn');
+  if (editBtn) {
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      bubble.innerHTML = `<div class="proto-pin-edit">
+        <textarea class="proto-pin-input" data-pin-id="${pin.id}" rows="2" placeholder="写下批注…">${escapeHtml(pin.text || '')}</textarea>
+        <div class="proto-pin-actions">
+          <button class="proto-pin-save-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">保存</button>
+          <button class="proto-pin-del-btn" data-pin-id="${pin.id}" data-block-id="${blockId}" type="button">删除</button>
+        </div>
+      </div>`;
+      bindPinBubbleActions(blockId, pin, bubble);
+      bubble.querySelector('.proto-pin-input')?.focus();
+    });
+  }
+
+  // 删除按钮
+  const delBtns = bubble.querySelectorAll('.proto-pin-del-btn');
+  delBtns.forEach((btn) => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deletePinDraft();
+  }));
 }
 
 // ── embed 飞书式评论 rail ──────────────────────────────────
@@ -424,6 +604,55 @@ function bindInteractions() {
     });
   });
 
+  // checklist 三态点选
+  $zones.querySelectorAll('.checklist-verdict-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const bId    = btn.dataset.blockId;
+      const itemId = btn.dataset.itemId;
+      const label  = btn.dataset.label;
+      if (!bId || !itemId) return;
+
+      // 视觉：同组按钮清除选中，点击当前选中的则取消（toggle）
+      const groupBtns = $zones.querySelectorAll(
+        `.checklist-verdict-btn[data-block-id="${bId}"][data-item-id="${itemId}"]`,
+      );
+      const alreadySelected = btn.classList.contains('selected');
+      groupBtns.forEach((b) => b.classList.remove('selected'));
+      if (!alreadySelected) btn.classList.add('selected');
+
+      // 草稿：checklistItems 是 { itemId: label } 的映射
+      const draft = loadDraft();
+      const item  = draft[bId] || {};
+      const checklistItems = { ...(item.checklistItems || {}) };
+      if (alreadySelected) {
+        delete checklistItems[itemId];
+      } else {
+        checklistItems[itemId] = label;
+      }
+      saveDraft({ [bId]: { ...item, checklistItems } });
+    });
+  });
+
+  // prototype SVG overlay 点击落 pin
+  $zones.querySelectorAll('svg.proto-overlay[data-proto-overlay]').forEach((overlay) => {
+    const blockId = overlay.dataset.protoOverlay;
+    if (!blockId) return;
+
+    overlay.addEventListener('click', (e) => {
+      // 忽略点到已有 pin 标记的点击（pin 的 g 元素自行处理）
+      if (e.target.closest('.proto-pin')) return;
+
+      const rect = overlay.getBoundingClientRect();
+      const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+      const yPct = ((e.clientY - rect.top)  / rect.height) * 100;
+
+      const pinId = `pin-${blockId}-${_pinSeq++}`;
+      const pin = { id: pinId, xPct: +xPct.toFixed(2), yPct: +yPct.toFixed(2), text: '' };
+
+      renderPinOnOverlay(blockId, pin, /* readMode= */ false);
+    });
+  });
+
   // 内联批注（普通 block，非 embed）：点按钮展开编辑态
   $zones.querySelectorAll('.comment-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -562,6 +791,27 @@ async function doSubmit(draft, answeredIds, unanswered) {
       item.comments.forEach((c) => {
         if (c && c.text) {
           entries.push({ blockId, type: 'pin', value: { quote: c.quote }, comment: c.text });
+        }
+      });
+    }
+    // checklist 三态 → 每个 item 产生一条 select feedback，value = 'itemId:label'
+    if (item.checklistItems && typeof item.checklistItems === 'object') {
+      Object.entries(item.checklistItems).forEach(([itemId, label]) => {
+        if (label) {
+          entries.push({ blockId, type: 'select', value: `${itemId}:${label}` });
+        }
+      });
+    }
+    // prototype pin 批注 → 每条有文本的 pin 产生一条 pin feedback
+    if (Array.isArray(item.pins)) {
+      item.pins.forEach((pin) => {
+        if (pin && pin.text) {
+          entries.push({
+            blockId,
+            type: 'pin',
+            value: { xPct: pin.xPct, yPct: pin.yPct },
+            comment: pin.text,
+          });
         }
       });
     }

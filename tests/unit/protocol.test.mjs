@@ -57,6 +57,107 @@ test('fingerprint stable + sensitive', () => {
   assert.notEqual(blockFingerprint(b1), blockFingerprint(b3));
 });
 
+// ---------- validateBlock: prototype + checklist（§1.4 A/B）----------
+
+test('validateBlock: prototype mode=iframe requires src', () => {
+  const ok = validateBlock({ id: 'p1', type: 'prototype', mode: 'iframe', src: 'https://example.com' });
+  assert.equal(ok.ok, true);
+  const fail = validateBlock({ id: 'p2', type: 'prototype', mode: 'iframe' });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('src')));
+});
+
+test('validateBlock: prototype mode=image requires imageUrl', () => {
+  const ok = validateBlock({ id: 'p3', type: 'prototype', mode: 'image', imageUrl: '/img.png' });
+  assert.equal(ok.ok, true);
+  const fail = validateBlock({ id: 'p4', type: 'prototype', mode: 'image' });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('imageUrl')));
+});
+
+test('validateBlock: prototype mode=wireframe requires screen', () => {
+  const ok = validateBlock({ id: 'p5', type: 'prototype', mode: 'wireframe', screen: { id: 's1', widgets: [] } });
+  assert.equal(ok.ok, true);
+  const fail = validateBlock({ id: 'p6', type: 'prototype', mode: 'wireframe' });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('screen')));
+});
+
+test('validateBlock: prototype invalid mode', () => {
+  const fail = validateBlock({ id: 'p7', type: 'prototype', mode: 'video' });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('mode')));
+});
+
+test('validateBlock: checklist valid', () => {
+  const ok = validateBlock({
+    id: 'c1',
+    type: 'checklist',
+    verdictLabels: ['已覆盖', '明确不做', '待定'],
+    items: [{ id: 'i1', label: '用户注册流程' }, { id: 'i2', label: '错误恢复' }],
+  });
+  assert.equal(ok.ok, true);
+});
+
+test('validateBlock: checklist requires non-empty items[]', () => {
+  const fail = validateBlock({ id: 'c2', type: 'checklist', verdictLabels: ['A', 'B'], items: [] });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('items')));
+});
+
+test('validateBlock: checklist items require id and label', () => {
+  const fail = validateBlock({
+    id: 'c3', type: 'checklist', verdictLabels: ['A'], items: [{ label: '无 id' }, { id: 'i2' }],
+  });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('id')));
+  assert.ok(fail.errors.some((e) => e.includes('label')));
+});
+
+test('validateBlock: checklist requires verdictLabels[]', () => {
+  const fail = validateBlock({ id: 'c4', type: 'checklist', verdictLabels: [], items: [{ id: 'i1', label: 'x' }] });
+  assert.equal(fail.ok, false);
+  assert.ok(fail.errors.some((e) => e.includes('verdictLabels')));
+});
+
+// ---------- blockFingerprint 扩展（§1.4 C）----------
+
+test('blockFingerprint: prototype src 变化 → 指纹变化', () => {
+  const b1 = { id: 'p', type: 'prototype', mode: 'iframe', src: 'https://a.com' };
+  const b2 = { id: 'p', type: 'prototype', mode: 'iframe', src: 'https://b.com' };
+  assert.notEqual(blockFingerprint(b1), blockFingerprint(b2), 'src 变化应导致指纹变化');
+});
+
+test('blockFingerprint: prototype imageUrl 变化 → 指纹变化', () => {
+  const b1 = { id: 'p', type: 'prototype', mode: 'image', imageUrl: '/img-v1.png' };
+  const b2 = { id: 'p', type: 'prototype', mode: 'image', imageUrl: '/img-v2.png' };
+  assert.notEqual(blockFingerprint(b1), blockFingerprint(b2), 'imageUrl 变化应导致指纹变化');
+});
+
+test('blockFingerprint: prototype screen 变化 → 指纹变化', () => {
+  const b1 = { id: 'p', type: 'prototype', mode: 'wireframe', screen: { id: 's1', widgets: [] } };
+  const b2 = { id: 'p', type: 'prototype', mode: 'wireframe', screen: { id: 's2', widgets: [{ id: 'w1' }] } };
+  assert.notEqual(blockFingerprint(b1), blockFingerprint(b2), 'screen 变化应导致指纹变化');
+});
+
+test('blockFingerprint: checklist items 变化 → 指纹变化', () => {
+  const b1 = { id: 'c', type: 'checklist', verdictLabels: ['A', 'B'], items: [{ id: 'i1', label: '用户注册' }] };
+  const b2 = { id: 'c', type: 'checklist', verdictLabels: ['A', 'B'], items: [{ id: 'i1', label: '用户注册' }, { id: 'i2', label: '错误恢复' }] };
+  assert.notEqual(blockFingerprint(b1), blockFingerprint(b2), 'items 变化应导致指纹变化');
+});
+
+test('blockFingerprint: checklist verdictLabels 变化 → 指纹变化', () => {
+  const b1 = { id: 'c', type: 'checklist', verdictLabels: ['已覆盖', '不做', '待定'], items: [{ id: 'i1', label: 'x' }] };
+  const b2 = { id: 'c', type: 'checklist', verdictLabels: ['已覆盖', '明确不做', '待定'], items: [{ id: 'i1', label: 'x' }] };
+  assert.notEqual(blockFingerprint(b1), blockFingerprint(b2), 'verdictLabels 变化应导致指纹变化');
+});
+
+test('blockFingerprint: prototype 非核心字段（importance）不影响指纹', () => {
+  const b1 = { id: 'p', type: 'prototype', mode: 'image', imageUrl: '/img.png', importance: 'normal' };
+  const b2 = { id: 'p', type: 'prototype', mode: 'image', imageUrl: '/img.png', importance: 'high' };
+  assert.equal(blockFingerprint(b1), blockFingerprint(b2), 'importance 不应影响指纹');
+});
+
 // ---------- diff ----------
 test('computeDiff: new/changed/unchanged + changedFields/_prev', () => {
   const prev = [{ id: 'a', type: 'markdown', body: 'x' }, { id: 'b', type: 'markdown', body: 'y' }];

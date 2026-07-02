@@ -142,20 +142,113 @@ export function renderEmbed(block) {
 </div>`;
 }
 
+// ---------- checklist block ----------
+
+export function renderChecklist(block) {
+  const bId = escHtml(block.id ?? '');
+  const items = block.items ?? [];
+  const labels = block.verdictLabels ?? ['赞成', '异议', '疑问'];
+
+  const itemsHtml = items.map((item) => {
+    const itemId = escHtml(item.id ?? '');
+    const itemLabel = escHtml(item.label ?? '');
+    const itemBody = item.body ? `<div class="checklist-item-body">${escHtml(item.body)}</div>` : '';
+
+    const btnsHtml = labels.map((lbl) => {
+      const lblEsc = escHtml(lbl);
+      return `<button class="checklist-verdict-btn"
+  data-block-id="${bId}"
+  data-item-id="${itemId}"
+  data-label="${lblEsc}"
+  type="button"
+  aria-label="${lblEsc}">${lblEsc}</button>`;
+    }).join('');
+
+    return `<div class="checklist-item" data-checklist-item="${itemId}">
+  <div class="checklist-item-header">
+    <span class="checklist-item-label">${itemLabel}</span>
+    <div class="checklist-verdict-group" role="group" aria-label="${itemLabel} 表态">${btnsHtml}</div>
+  </div>
+  ${itemBody}
+</div>`;
+  }).join('\n');
+
+  return `<div class="checklist-group" data-checklist="${bId}">${itemsHtml}</div>`;
+}
+
+// ---------- prototype block（自研零依赖 SVG pin 定位批注）----------
+
+export function renderPrototype(block) {
+  const bId = escHtml(block.id ?? '');
+  const mode = block.mode ?? 'image';
+
+  // SVG overlay：pin 点击落点，data-* 携带 blockId 和百分比坐标
+  // 点击 overlay 的空白区域落新 pin；点击已有 pin 展开内联评论
+  const svgOverlay = `<svg class="proto-overlay" data-proto-overlay="${bId}" xmlns="http://www.w3.org/2000/svg"
+  style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:all;overflow:visible">
+  <g class="proto-pins" data-proto-pins="${bId}"></g>
+</svg>`;
+
+  let innerHtml = '';
+  if (mode === 'wireframe') {
+    const screen = block.screen ?? { id: 'screen', name: '原型', widgets: [] };
+    const screenName = escHtml(screen.name ?? '');
+    const widgets = screen.widgets ?? [];
+    const widgetsHtml = widgets.map((w) => {
+      const x = (w.x ?? 0) * 100;
+      const y = (w.y ?? 0) * 100;
+      const ww = (w.w ?? 0.1) * 100;
+      const wh = (w.h ?? 0.05) * 100;
+      const cls = escHtml(w.cls ?? 'rect');
+      const text = escHtml(w.text ?? '');
+      return `<div class="proto-widget proto-widget-${cls}"
+  style="position:absolute;left:${x}%;top:${y}%;width:${ww}%;height:${wh}%"
+  title="${text}">${text}</div>`;
+    }).join('');
+    innerHtml = `<div class="proto-wireframe-canvas" data-proto-canvas="${bId}" style="position:relative;width:100%;padding-bottom:75%;background:#fff;border:1px solid var(--color-border);overflow:hidden">
+  <div style="position:absolute;inset:0">${widgetsHtml}</div>
+  <div class="proto-screen-label" style="position:absolute;bottom:4px;right:8px;font-size:11px;color:var(--color-text-muted)">${screenName}</div>
+  ${svgOverlay}
+</div>`;
+  } else if (mode === 'iframe') {
+    const src = escHtml(block.src ?? '');
+    const encodedSrc = encodeURIComponent(block.src ?? '');
+    const height = block.height || 620;
+    innerHtml = `<div class="proto-iframe-wrap" style="position:relative;height:${height}px">
+  <iframe class="proto-iframe" src="/api/proxy?url=${encodedSrc}"
+    style="width:100%;height:100%;border:0" title="${src}"></iframe>
+  ${svgOverlay}
+</div>`;
+  } else {
+    // mode === 'image'
+    const imgUrl = escHtml(block.imageUrl ?? '');
+    innerHtml = `<div class="proto-image-wrap" style="position:relative;display:inline-block;max-width:100%">
+  <img class="proto-image" src="${imgUrl}" alt="${escHtml(block.title ?? '原型截图')}"
+    style="display:block;max-width:100%;height:auto">
+  ${svgOverlay}
+</div>`;
+  }
+
+  const hint = `<div class="proto-hint" style="font-size:12px;color:var(--color-text-muted);margin-top:4px">点击图上任意位置落 pin 批注；点已有 pin 编辑或删除</div>`;
+  return `<div class="proto-container" data-proto="${bId}">${innerHtml}${hint}</div>`;
+}
+
 // ---------- 按 type 分派 ----------
 
 function renderContent(block) {
   switch (block.type) {
-    case 'markdown': return renderMarkdown(block);
-    case 'diagram':  return renderDiagram(block);
-    case 'choice':   return renderChoice(block);
-    case 'verdict':  return renderVerdict(block);
-    case 'freetext': return renderFreetext(block);
-    case 'editable': return renderEditable(block);
-    case 'table':    return renderTable(block);
-    case 'code':     return renderCode(block);
-    case 'embed':    return renderEmbed(block);
-    default:         return `<p class="unknown-type">未知 block 类型：${escHtml(block.type)}</p>`;
+    case 'markdown':   return renderMarkdown(block);
+    case 'diagram':    return renderDiagram(block);
+    case 'choice':     return renderChoice(block);
+    case 'verdict':    return renderVerdict(block);
+    case 'freetext':   return renderFreetext(block);
+    case 'editable':   return renderEditable(block);
+    case 'table':      return renderTable(block);
+    case 'code':       return renderCode(block);
+    case 'embed':      return renderEmbed(block);
+    case 'checklist':  return renderChecklist(block);
+    case 'prototype':  return renderPrototype(block);
+    default:           return `<p class="unknown-type">未知 block 类型：${escHtml(block.type)}</p>`;
   }
 }
 

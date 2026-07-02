@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mdToHtml } from '../../src/render/md.mjs';
-import { blockHtml, renderEmbed } from '../../src/render/blocks.mjs';
+import { blockHtml, renderEmbed, renderChecklist, renderPrototype } from '../../src/render/blocks.mjs';
 import { changeBadge, prevCompareHtml, diffToggleHtml } from '../../src/render/diff-view.mjs';
 import { renderZones } from '../../src/render/attention-view.mjs';
 
@@ -536,6 +536,117 @@ test('renderZones: zoneSettled 全无 _decidedInPrev 时只显示"本轮无变�
   const out = renderZones(blocks);
   assert.ok(out.includes('本轮无变化 2 项'), 'expected 本轮无变化 2 项 in summary');
   assert.ok(!out.includes('已决 0 项'), 'must not show 已决 0 项');
+});
+
+// ---------- renderChecklist（§1.4 B）----------
+
+test('renderChecklist: 三态按钮标签取 verdictLabels', () => {
+  const block = {
+    id: 'chk1',
+    type: 'checklist',
+    verdictLabels: ['已覆盖', '明确不做', '待定'],
+    items: [
+      { id: 'i1', label: '用户注册流程' },
+      { id: 'i2', label: '错误恢复', body: '异常时应给出明确提示' },
+    ],
+  };
+  const out = renderChecklist(block);
+  assert.ok(out.includes('已覆盖'), 'expected 已覆盖 label');
+  assert.ok(out.includes('明确不做'), 'expected 明确不做 label');
+  assert.ok(out.includes('待定'), 'expected 待定 label');
+  assert.ok(out.includes('用户注册流程'), 'expected item label');
+  assert.ok(out.includes('错误恢复'), 'expected second item');
+  assert.ok(out.includes('异常时应给出明确提示'), 'expected item body');
+});
+
+test('renderChecklist: 每个 item 的每个标签都有对应 data-item-id + data-label', () => {
+  const block = {
+    id: 'chk2',
+    type: 'checklist',
+    verdictLabels: ['A', 'B'],
+    items: [{ id: 'i1', label: 'Item' }],
+  };
+  const out = renderChecklist(block);
+  assert.ok(out.includes('data-item-id="i1"'), 'expected data-item-id');
+  assert.ok(out.includes('data-label="A"'), 'expected data-label A');
+  assert.ok(out.includes('data-label="B"'), 'expected data-label B');
+  assert.ok(out.includes('data-block-id="chk2"'), 'expected data-block-id');
+});
+
+test('renderChecklist: blockHtml 含 checklist-group', () => {
+  const block = {
+    id: 'chk3', type: 'checklist', _change: 'new',
+    verdictLabels: ['通过', '失败'],
+    items: [{ id: 'i1', label: '功能覆盖' }],
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('data-block-id="chk3"'), 'expected block wrapper');
+  assert.ok(out.includes('checklist-group'), 'expected checklist-group in blockHtml');
+  assert.ok(out.includes('通过'), 'expected verdictLabel in blockHtml output');
+});
+
+// ---------- renderPrototype（§1.4 A）----------
+
+test('renderPrototype: mode=image 含 img 标签 + SVG overlay', () => {
+  const block = {
+    id: 'proto1', type: 'prototype', mode: 'image', imageUrl: '/assets/screen.png', title: '登录页',
+  };
+  const out = renderPrototype(block);
+  assert.ok(out.includes('<img'), 'expected <img> in image mode');
+  assert.ok(out.includes('/assets/screen.png'), 'expected imageUrl in src');
+  assert.ok(out.includes('proto-overlay'), 'expected SVG overlay');
+  assert.ok(out.includes('proto-pins'), 'expected pins group in SVG');
+  assert.ok(out.includes('data-proto-overlay="proto1"'), 'expected data-proto-overlay');
+});
+
+test('renderPrototype: mode=iframe 含 iframe + /api/proxy + SVG overlay', () => {
+  const block = {
+    id: 'proto2', type: 'prototype', mode: 'iframe', src: 'https://example.com/design',
+  };
+  const out = renderPrototype(block);
+  assert.ok(out.includes('<iframe'), 'expected <iframe> in iframe mode');
+  assert.ok(out.includes('/api/proxy?url='), 'expected proxy URL');
+  assert.ok(out.includes(encodeURIComponent('https://example.com/design')), 'expected encoded src');
+  assert.ok(out.includes('proto-overlay'), 'expected SVG overlay on outer layer');
+  assert.ok(!out.includes('proto-overlay" src='), 'overlay must NOT be inside iframe src');
+});
+
+test('renderPrototype: mode=wireframe 含 proto-wireframe-canvas + SVG overlay', () => {
+  const block = {
+    id: 'proto3', type: 'prototype', mode: 'wireframe',
+    screen: {
+      id: 's1', name: '首页', widgets: [
+        { id: 'w1', cls: 'btn', x: 0.1, y: 0.2, w: 0.2, h: 0.05, text: '提交' },
+      ],
+    },
+  };
+  const out = renderPrototype(block);
+  assert.ok(out.includes('proto-wireframe-canvas'), 'expected wireframe canvas');
+  assert.ok(out.includes('提交'), 'expected widget text');
+  assert.ok(out.includes('proto-overlay'), 'expected SVG overlay');
+});
+
+test('renderPrototype: SVG overlay 在 iframe 外层（不在 iframe src 内）', () => {
+  const block = {
+    id: 'proto4', type: 'prototype', mode: 'iframe', src: 'https://ui.example.com',
+  };
+  const out = renderPrototype(block);
+  // SVG overlay 应在 iframe-wrap 里但在 iframe 外层
+  const iframePos  = out.indexOf('<iframe');
+  const overlayPos = out.indexOf('proto-overlay');
+  assert.ok(iframePos !== -1, 'expected <iframe>');
+  assert.ok(overlayPos !== -1, 'expected proto-overlay');
+  // overlay 出现在 iframe 之后（都在 iframe-wrap 内部，overlay 跟着 iframe）
+  assert.ok(overlayPos > iframePos, 'SVG overlay must appear after iframe tag (outer wrapper)');
+});
+
+test('renderPrototype: blockHtml 含 proto-container', () => {
+  const block = {
+    id: 'proto5', type: 'prototype', mode: 'image', imageUrl: '/x.png', _change: 'new',
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('data-block-id="proto5"'), 'expected block wrapper');
+  assert.ok(out.includes('proto-container'), 'expected proto-container in blockHtml');
 });
 
 test('renderZones: zoneCFyi 沉降区保留"AI 设默认"含义（_decidedInPrev 不影响 zoneCFyi）', () => {

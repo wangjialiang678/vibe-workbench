@@ -770,3 +770,191 @@ body {
   .embed-body { flex-direction: column; }
   .embed-rail { width: auto; position: static; max-height: 60vh; }
 }
+
+/* ===== Checklist block（§1.4 B，三态自定义按钮）===== */
+.checklist-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checklist-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--color-bg);
+}
+
+.checklist-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.checklist-item-label {
+  font-size: 14px;
+  font-weight: 500;
+  flex: 1;
+}
+
+.checklist-item-body {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.checklist-verdict-group {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.checklist-verdict-btn {
+  padding: 4px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.checklist-verdict-btn:hover { border-color: var(--color-focus); color: var(--color-focus); }
+.checklist-verdict-btn.selected {
+  background: var(--color-focus);
+  color: #fff;
+  border-color: var(--color-focus);
+  font-weight: 600;
+}
+
+/* ===== Prototype block（§1.4 A，自研零依赖 SVG pin 定位批注）===== */
+.proto-container {
+  position: relative;
+  display: block;
+}
+
+.proto-wireframe-canvas .proto-widget {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.proto-widget-btn {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-focus) 15%, transparent);
+  border-color: var(--color-focus);
+  color: var(--color-focus);
+}
+
+.proto-widget-input {
+  border-color: var(--color-zone-b);
+}
+
+/* SVG overlay（三种模式共用）*/
+svg.proto-overlay {
+  cursor: crosshair;
+}
+
+/* pin 标记：circle */
+.proto-pin circle.pin-circle {
+  transition: opacity .15s;
+}
+.proto-pin:hover circle.pin-circle {
+  opacity: 1 !important;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,.3));
+}
+
+/* pin 内联评论气泡 */
+.proto-pin-comment {
+  position: absolute;
+  min-width: 200px;
+  max-width: 300px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-focus);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  font-size: 13px;
+  z-index: 20;
+}
+
+.proto-pin-edit, .proto-pin-read {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proto-pin-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-focus);
+  border-radius: var(--radius);
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.proto-pin-input:focus { outline: none; border-color: var(--color-focus); }
+
+.proto-pin-text {
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.proto-pin-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.proto-pin-save-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.proto-pin-save-btn:hover { opacity: .85; }
+
+.proto-pin-edit-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.proto-pin-edit-btn:hover { border-color: var(--color-focus); }
+
+.proto-pin-del-btn {
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-zone-a);
+  background: none;
+  color: var(--color-zone-a);
+  font-size: 12px;
+  cursor: pointer;
+}
+.proto-pin-del-btn:hover { background: color-mix(in srgb, var(--color-zone-a) 10%, transparent); }
+
+.proto-hint {
+  user-select: none;
+}
