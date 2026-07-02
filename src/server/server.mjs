@@ -279,7 +279,8 @@ function handleRequest(req, res) {
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] || 'application/octet-stream';
     cors(res);
-    res.writeHead(200, { 'Content-Type': mime });
+    // 本地开发工具：静态资源不缓存，避免改了代码浏览器仍用旧的（普通刷新即拿最新）
+    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store, must-revalidate' });
     fs.createReadStream(filePath).pipe(res);
     return;
   }
