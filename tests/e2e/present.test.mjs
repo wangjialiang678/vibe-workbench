@@ -30,7 +30,8 @@ test('cmdPresent: 确保 server（已运行→already）+ 渲染 + 返回 URL', 
   assert.equal(r.ok, true);
   assert.equal(r.round, 1);
   assert.equal(r.server, 'already');
-  assert.ok(r.url.includes(`:${port}/render/?session=p1&round=1`), `url: ${r.url}`);
+  assert.ok(r.url.includes(`:${port}/render/?session=p1`) && !r.url.includes('round='), `url 应不带 round（跟随最新）: ${r.url}`);
+  assert.ok(r.urlPinned.includes('&round=1'), `urlPinned 应带 round: ${r.urlPinned}`);
   assert.equal(ws.readStatus('p1').state, 'rendered');
   const h = await fetch(`http://127.0.0.1:${port}/api/health`).then((x) => x.json());
   assert.equal(h.ok, true);

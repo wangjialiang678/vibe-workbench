@@ -139,8 +139,12 @@ async function ensureServer(port) {
 export async function cmdPresent(session, contentObj, { port = 8099 } = {}) {
   const server = await ensureServer(port);
   const { round } = await cmdRender(session, contentObj);
-  const url = `http://127.0.0.1:${port}/render/?session=${encodeURIComponent(session)}&round=${round}`;
-  return { ok: true, session, round, url, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
+  const base = `http://127.0.0.1:${port}/render/?session=${encodeURIComponent(session)}`;
+  // 默认给"不带 round"的链接 → 跟随最新轮（AI 出新一轮时页面自动推进，用户无需换链接）
+  const url = base;
+  // 需要固定看这一轮（回顾旧版）时才用带 round 的
+  const urlPinned = `${base}&round=${round}`;
+  return { ok: true, session, round, url, urlPinned, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
 }
 
 /** 阻塞轮询该轮 feedback，出现即返回其内容；超时返回 timeout。供 Agent 后台运行→提交即被唤醒。 */
