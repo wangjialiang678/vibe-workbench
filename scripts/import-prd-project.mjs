@@ -305,13 +305,15 @@ function convertProto(proto, blocks) {
       screen: {
         id: screen.id ?? id,
         name: screen.name ?? null,
+        // demo.js 控件坐标是相对手机内屏(约 340×720)的 px；renderPrototype 期望 0-1 比例(它再 ×100)，
+        // 故按屏幕尺寸归一化，否则 px 被当比例 ×100 会飞出画布外(如 x=20 → 2000%)。
         widgets: (screen.widgets ?? []).map((w) => ({
           id: w.id ?? slug(w.text ?? ''),
           cls: w.cls ?? 'box',
-          x: w.x ?? 0,
-          y: w.y ?? 0,
-          w: w.w ?? 100,
-          h: w.h ?? 40,
+          x: (w.x ?? 0) / 340,
+          y: (w.y ?? 0) / 720,
+          w: (w.w ?? 100) / 340,
+          h: (w.h ?? 40) / 720,
           text: w.text ?? '',
           goto: w.goto ?? null,
         })),
