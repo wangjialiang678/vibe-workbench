@@ -1,25 +1,29 @@
 // 注意力路由（DESIGN §4 + §13 P0-3）。浏览器安全（仅依赖 constants）。
 import { IMPORTANCE_RANK } from './constants.mjs';
 
-// 分区：zoneA 需决策·无推荐(最先) / zoneB 需决策·有推荐 / zoneCReview 已设默认·重要建议过目 / zoneCFyi 折叠
+// 分区：zoneContext 叙述(可见) / zoneA 需决策·无推荐 / zoneB 需决策·有推荐 / zoneCReview 重要默认 / zoneCFyi 折叠默认 / zoneSettled 本轮无变化·已决(折叠沉降)
+// 改动 A'（DESIGN §4）：_change 参与分区——unchanged 或上轮已决(_decidedInPrev) 的块默认降级到 zoneSettled 折叠；new/changed(或无 _change) 常显。
 export function routeBlocks(blocks = []) {
   const withIdx = (blocks || []).map((b, i) => ({ b, i }));
   const rank = (x) => (IMPORTANCE_RANK[x.b.importance] ?? 1);
   const sortStable = (arr) => arr.slice().sort((a, c) => (rank(a) - rank(c)) || (a.i - c.i)).map((x) => x.b);
-
-  const needs = withIdx.filter((x) => x.b.needsDecision);
-  const fyi = withIdx.filter((x) => !x.b.needsDecision);
   const hasDefault = (x) => x.b.default != null; // 真正"已设默认"才进折叠/过目区
+  const isStale = (x) => x.b._change === 'unchanged' || x.b._decidedInPrev === true; // 本轮无变化 / 上轮已决 → 沉降
+
+  const fresh = withIdx.filter((x) => !isStale(x)); // new/changed/无_change → 常显
+  const settled = withIdx.filter((x) => isStale(x)); // 折叠沉降
+  const freshNeeds = fresh.filter((x) => x.b.needsDecision);
+  const freshFyi = fresh.filter((x) => !x.b.needsDecision);
 
   return {
-    // 无需决策且无默认 = 纯叙述/图表内容（AI 的思考）→ 顶部可见，绝不折叠
-    zoneContext: fyi.filter((x) => !hasDefault(x)).map((x) => x.b),
-    zoneA: sortStable(needs.filter((x) => !x.b.hasRecommendation)),
-    zoneB: sortStable(needs.filter((x) => x.b.hasRecommendation)),
-    // 已设默认 + 重要 = 建议过目（半展开）
-    zoneCReview: sortStable(fyi.filter((x) => hasDefault(x) && x.b.importance === 'high')),
-    // 已设默认 + 普通/次要 = 折叠 FYI
-    zoneCFyi: fyi.filter((x) => hasDefault(x) && x.b.importance !== 'high').map((x) => x.b),
+    // 无需决策且无默认 + 本轮新增/改动 = 纯叙述/图表内容（AI 的思考）→ 顶部可见
+    zoneContext: freshFyi.filter((x) => !hasDefault(x)).map((x) => x.b),
+    zoneA: sortStable(freshNeeds.filter((x) => !x.b.hasRecommendation)),
+    zoneB: sortStable(freshNeeds.filter((x) => x.b.hasRecommendation)),
+    zoneCReview: sortStable(freshFyi.filter((x) => hasDefault(x) && x.b.importance === 'high')),
+    zoneCFyi: freshFyi.filter((x) => hasDefault(x) && x.b.importance !== 'high').map((x) => x.b),
+    // 本轮无变化 / 上轮已决 → 折叠沉降区（保留原顺序；渲染时按 _decidedInPrev 区分"已决"vs"未变"）
+    zoneSettled: settled.map((x) => x.b),
   };
 }
 

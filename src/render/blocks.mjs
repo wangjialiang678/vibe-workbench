@@ -159,6 +159,15 @@ function renderContent(block) {
   }
 }
 
+// body 上屏（§5.0）：markdown/diagram/code 已把 body 当主内容，其余类型若有 body 则在 title 后额外渲染。
+const BODY_AS_CONTENT_TYPES = new Set(['markdown', 'diagram', 'code']);
+
+function bodyHtml(block) {
+  if (BODY_AS_CONTENT_TYPES.has(block.type)) return ''; // 这三类已在 renderContent 里用 body
+  if (!block.body) return '';
+  return `<div class="block-body">${mdToHtml(block.body)}</div>`;
+}
+
 // 主导出：block → HTML 字符串
 export function blockHtml(block) {
   const id = escHtml(block.id ?? '');
@@ -170,6 +179,7 @@ export function blockHtml(block) {
   return `<section data-block-id="${id}" data-type="${type}" data-change="${change}" class="block block-${type}">
 ${badge ? `<div class="change-badge">${badge}</div>` : ''}
 ${titleHtml(block)}
+${bodyHtml(block)}
 <div class="block-content">${content}</div>
 ${commentEntry(block.id ?? '')}
 </section>`;

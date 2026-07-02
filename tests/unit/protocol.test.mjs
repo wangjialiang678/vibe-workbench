@@ -104,6 +104,51 @@ test('routeBlocks: zones + importance order + stable + zoneC split', () => {
   assert.deepEqual(z.zoneCFyi.map((b) => b.id), ['7']);        // 普通默认折叠
 });
 
+// ---------- routeBlocks _change 分区单测（改动 A'，§4）----------
+
+test('routeBlocks: unchanged blocks → zoneSettled, not zoneA/B/zoneContext', () => {
+  const blocks = [
+    { id: 'u1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'unchanged' },
+    { id: 'u2', type: 'markdown', needsDecision: false, _change: 'unchanged' },
+  ];
+  const z = routeBlocks(blocks);
+  assert.deepEqual(z.zoneSettled.map((b) => b.id), ['u1', 'u2'], 'unchanged → zoneSettled');
+  assert.deepEqual(z.zoneA, [], 'zoneA empty for unchanged');
+  assert.deepEqual(z.zoneContext, [], 'zoneContext empty for unchanged');
+});
+
+test('routeBlocks: new/changed blocks → 常显区 (zoneA/B/zoneContext), not zoneSettled', () => {
+  const blocks = [
+    { id: 'n1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'c1', type: 'choice', needsDecision: true, hasRecommendation: true, _change: 'changed',
+      options: [{ id: 'o1' }], recommendation: 'o1' },
+    { id: 'ctx1', type: 'markdown', needsDecision: false, _change: 'new' },
+  ];
+  const z = routeBlocks(blocks);
+  assert.deepEqual(z.zoneSettled, [], 'zoneSettled empty for new/changed');
+  assert.ok(z.zoneA.some((b) => b.id === 'n1'), 'new verdict → zoneA');
+  assert.ok(z.zoneB.some((b) => b.id === 'c1'), 'changed choice with rec → zoneB');
+  assert.ok(z.zoneContext.some((b) => b.id === 'ctx1'), 'new fyi markdown → zoneContext');
+});
+
+test('routeBlocks: 首轮全 new → zoneSettled 为空', () => {
+  const blocks = [
+    { id: 'a', type: 'verdict', needsDecision: true, _change: 'new' },
+    { id: 'b', type: 'markdown', needsDecision: false, _change: 'new' },
+  ];
+  const z = routeBlocks(blocks);
+  assert.deepEqual(z.zoneSettled, [], '首轮全 new 时 zoneSettled 应为空');
+});
+
+test('routeBlocks: _decidedInPrev=true → zoneSettled 即使无 _change 字段', () => {
+  const blocks = [
+    { id: 'dp1', type: 'verdict', needsDecision: true, _decidedInPrev: true },
+  ];
+  const z = routeBlocks(blocks);
+  assert.ok(z.zoneSettled.some((b) => b.id === 'dp1'), '_decidedInPrev=true → zoneSettled');
+  assert.deepEqual(z.zoneA, [], 'zoneA empty for _decidedInPrev');
+});
+
 test('decisionStats / unansweredDecisions / submitSummary', () => {
   const blocks = [
     { id: '1', needsDecision: true, hasRecommendation: false },

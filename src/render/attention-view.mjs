@@ -106,5 +106,14 @@ export function renderZones(diffedBlocks) {
 </details>`);
   }
 
+  // 沉降区（zoneSettled）：本轮无变化 / 上轮已决 → 默认折叠，不在主区打扰用户（§4 改动 A'，C6）
+  if (zones.zoneSettled && zones.zoneSettled.length > 0) {
+    const n = zones.zoneSettled.length;
+    parts.push(`<details id="zone-settled" class="zone zone-settled">
+  <summary class="zone-settled-summary">本轮无变化 · ${n} 项（点开查看）</summary>
+  <div class="zone-blocks">${renderBlockList(zones.zoneSettled)}</div>
+</details>`);
+  }
+
   return parts.join('\n');
 }

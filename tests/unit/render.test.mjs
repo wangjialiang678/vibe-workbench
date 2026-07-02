@@ -273,13 +273,15 @@ const mixedBlocks = [
   { id: 'ctx1', type: 'markdown', needsDecision: false, importance: 'normal', _change: 'new', body: 'AI叙述内容' },
 ];
 
-test('renderZones: zone A content appears before zoneCFyi', () => {
+// 改动 A'（§4）：unchanged 块进 zoneSettled；只有 new/changed 进常显区。
+// a2/b1/cr1/cf1 均为 unchanged → zoneSettled；a1(new)→ zoneA；ctx1(new)→ zoneContext。
+test('renderZones: zone A content (new) appears before zoneSettled (unchanged)', () => {
   const out = renderZones(mixedBlocks);
   const posA = out.indexOf('a1');
-  const posCFyi = out.indexOf('cf1');
+  const posSettled = out.indexOf('zone-settled');
   assert.ok(posA !== -1, `expected zoneA block a1 in output`);
-  assert.ok(posCFyi !== -1, `expected zoneCFyi block cf1 in output`);
-  assert.ok(posA < posCFyi, `zoneA (pos ${posA}) should appear before zoneCFyi (pos ${posCFyi})`);
+  assert.ok(posSettled !== -1, `expected zone-settled in output`);
+  assert.ok(posA < posSettled, `zoneA (pos ${posA}) should appear before zoneSettled (pos ${posSettled})`);
 });
 
 test('renderZones: shows decision count', () => {
@@ -326,4 +328,110 @@ test('renderZones: 纯叙述内容(无 default) 可见于 zone-context，不被�
   const posCtx = out.indexOf('ctx1');
   const posFold = out.indexOf('zone-c-fyi');
   assert.ok(posFold === -1 || posCtx < posFold, 'context should be visible above the fold');
+});
+
+// ---------- renderZones：_change 分区单测（改动 A' §4）----------
+
+test('renderZones: unchanged blocks go to zoneSettled (folded), not zoneA/B', () => {
+  const blocks = [
+    { id: 'u1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'unchanged' },
+    { id: 'u2', type: 'choice', needsDecision: true, hasRecommendation: true, _change: 'unchanged',
+      options: [{ id: 'o1', label: 'X' }], recommendation: 'o1' },
+  ];
+  const out = renderZones(blocks);
+  // Both unchanged → zoneSettled; zoneA/B sections must not be rendered
+  assert.ok(out.includes('zone-settled'), 'expected zone-settled in output');
+  assert.ok(out.includes('u1'), 'expected u1 in zoneSettled');
+  assert.ok(out.includes('u2'), 'expected u2 in zoneSettled');
+  // Check absence of actual zone sections (not just the href="#zone-a" in statusBar)
+  assert.ok(!out.includes('id="zone-a"'), 'zoneA section must be absent (no new/changed decision blocks)');
+  assert.ok(!out.includes('id="zone-b"'), 'zoneB section must be absent (no new/changed decision blocks)');
+});
+
+test('renderZones: new/changed blocks go to zoneA/B (常显)', () => {
+  const blocks = [
+    { id: 'n1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'c1', type: 'choice', needsDecision: true, hasRecommendation: true, _change: 'changed',
+      options: [{ id: 'o1', label: 'X' }], recommendation: 'o1' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('zone-a'), 'expected zone-a in output');
+  assert.ok(out.includes('zone-b'), 'expected zone-b in output');
+  // Should NOT be in zoneSettled
+  assert.ok(!out.includes('zone-settled'), 'zoneSettled must be absent when all blocks are new/changed');
+});
+
+test('renderZones: 首轮全 new — 不折叠任何块到 zoneSettled', () => {
+  // 首轮：server.mjs 对空 prevBlocks 全标 new；首轮行为正确，无沉降
+  const firstRoundBlocks = [
+    { id: 'f1', type: 'markdown', needsDecision: false, _change: 'new', body: '叙述内容' },
+    { id: 'f2', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'f3', type: 'choice', needsDecision: true, hasRecommendation: true, _change: 'new',
+      options: [{ id: 'o1', label: 'A' }], recommendation: 'o1' },
+  ];
+  const out = renderZones(firstRoundBlocks);
+  assert.ok(!out.includes('zone-settled'), '首轮全 new 时不应出现 zone-settled');
+  assert.ok(out.includes('f2'), 'f2 应在 zoneA 常显');
+  assert.ok(out.includes('f3'), 'f3 应在 zoneB 常显');
+});
+
+test('renderZones: zoneSettled 折叠标题含项目数', () => {
+  const blocks = [
+    { id: 's1', type: 'verdict', needsDecision: true, _change: 'unchanged' },
+    { id: 's2', type: 'markdown', needsDecision: false, _change: 'unchanged', body: 'x' },
+    { id: 's3', type: 'markdown', needsDecision: false, _change: 'unchanged', body: 'y' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('zone-settled'), 'expected zone-settled');
+  assert.ok(out.includes('3'), 'expected count 3 in zoneSettled summary');
+  assert.ok(out.includes('本轮无变化'), 'expected summary text in zoneSettled');
+});
+
+// ---------- blockHtml body 上屏断言（§5.0）----------
+
+test('blockHtml: verdict with body renders .block-body', () => {
+  const block = { id: 'v1', type: 'verdict', title: '是否删除？', body: '删除后无法恢复。', _change: 'new' };
+  const out = blockHtml(block);
+  assert.ok(out.includes('block-body'), `expected .block-body in: ${out}`);
+  assert.ok(out.includes('删除后无法恢复'), `expected body text in: ${out}`);
+});
+
+test('blockHtml: choice with body renders .block-body before block-content', () => {
+  const block = {
+    id: 'c1', type: 'choice', body: '请选择部署方式。', _change: 'new',
+    options: [{ id: 'o1', label: '方案A' }],
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('block-body'), `expected .block-body in: ${out}`);
+  assert.ok(out.includes('请选择部署方式'), `expected body text in: ${out}`);
+  // block-body 应在 block-content 之前
+  assert.ok(out.indexOf('block-body') < out.indexOf('block-content'), 'block-body must precede block-content');
+});
+
+test('blockHtml: markdown type does NOT double-render body as .block-body', () => {
+  const block = { id: 'm1', type: 'markdown', body: '# 标题内容', _change: 'new' };
+  const out = blockHtml(block);
+  // markdown 用 body 作主内容，不应再渲染 .block-body
+  assert.ok(!out.includes('block-body'), `markdown must NOT have .block-body, got: ${out}`);
+  assert.ok(out.includes('<h1'), 'markdown body should still render as HTML heading');
+});
+
+test('blockHtml: diagram type does NOT double-render body as .block-body', () => {
+  const block = { id: 'd1', type: 'diagram', body: 'graph TD\nA-->B', _change: 'new' };
+  const out = blockHtml(block);
+  assert.ok(!out.includes('block-body'), `diagram must NOT have .block-body`);
+  assert.ok(out.includes('mermaid'), 'diagram body should render as mermaid pre');
+});
+
+test('blockHtml: code type does NOT double-render body as .block-body', () => {
+  const block = { id: 'co1', type: 'code', lang: 'js', body: 'const x = 1;', _change: 'new' };
+  const out = blockHtml(block);
+  assert.ok(!out.includes('block-body'), `code must NOT have .block-body`);
+  assert.ok(out.includes('const x = 1;'), 'code body should render in pre/code');
+});
+
+test('blockHtml: block without body has no .block-body element', () => {
+  const block = { id: 'v2', type: 'verdict', _change: 'new' };
+  const out = blockHtml(block);
+  assert.ok(!out.includes('block-body'), `no body → no .block-body, got: ${out}`);
 });
