@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateContent, validateBlock, validateFeedback, blockFingerprint } from '../../src/protocol/schema.mjs';
 import { computeDiff, filterChanged, removedBlocks, diffSanity } from '../../src/protocol/diff.mjs';
-import { routeBlocks, decisionStats, unansweredDecisions, submitSummary } from '../../src/protocol/attention.mjs';
+import { routeBlocks, decisionStats, unansweredDecisions, submitSummary, roundDeltaStats } from '../../src/protocol/attention.mjs';
 import { displayState, errorRetryable, badgeFor } from '../../src/protocol/status.mjs';
 
 // ---------- schema ----------
@@ -164,6 +164,56 @@ test('decisionStats / unansweredDecisions / submitSummary', () => {
   assert.deepEqual(sum.unanswered, ['2']);
   assert.equal(sum.acceptedDefaults, 1);
   assert.deepEqual(sum.importantDefaults, ['3']);
+});
+
+// ---------- roundDeltaStats（改动 B，DESIGN §4）----------
+
+test('roundDeltaStats: 正常多轮场景——totalDecision/newDecision/changedDecision/newFyi', () => {
+  const blocks = [
+    { id: 'd1', needsDecision: true, _change: 'new' },
+    { id: 'd2', needsDecision: true, _change: 'changed' },
+    { id: 'd3', needsDecision: true, _change: 'unchanged' },
+    { id: 'f1', needsDecision: false, _change: 'new' },
+    { id: 'f2', needsDecision: false, _change: 'changed' },
+    { id: 'f3', needsDecision: false, _change: 'unchanged' },
+  ];
+  const s = roundDeltaStats(blocks);
+  assert.equal(s.totalDecision, 3, 'totalDecision = all needsDecision blocks');
+  assert.equal(s.newDecision, 1, 'newDecision = 1');
+  assert.equal(s.changedDecision, 1, 'changedDecision = 1');
+  assert.equal(s.newFyi, 1, 'newFyi = non-decision blocks with _change=new');
+});
+
+test('roundDeltaStats: 首轮全 new → newDecision === totalDecision, changedDecision === 0', () => {
+  const blocks = [
+    { id: 'a', needsDecision: true, _change: 'new' },
+    { id: 'b', needsDecision: true, _change: 'new' },
+    { id: 'c', needsDecision: false, _change: 'new' },
+  ];
+  const s = roundDeltaStats(blocks);
+  assert.equal(s.totalDecision, 2);
+  assert.equal(s.newDecision, 2, '首轮全 new: newDecision === totalDecision');
+  assert.equal(s.changedDecision, 0, '首轮无 changed');
+  assert.equal(s.newFyi, 1);
+});
+
+test('roundDeltaStats: 空数组不报错', () => {
+  const s = roundDeltaStats([]);
+  assert.equal(s.totalDecision, 0);
+  assert.equal(s.newDecision, 0);
+  assert.equal(s.changedDecision, 0);
+  assert.equal(s.newFyi, 0);
+});
+
+test('roundDeltaStats: 仅统计 needsDecision 块的 new/changed；FYI 块的 changed 不计入 changedDecision', () => {
+  const blocks = [
+    { id: 'x1', needsDecision: false, _change: 'changed' }, // FYI changed，不算 changedDecision
+    { id: 'x2', needsDecision: true, _change: 'changed' },  // decision changed
+  ];
+  const s = roundDeltaStats(blocks);
+  assert.equal(s.totalDecision, 1);
+  assert.equal(s.changedDecision, 1);
+  assert.equal(s.newFyi, 0, 'FYI changed 不算 newFyi');
 });
 
 // ---------- status (P0-2 心跳联合判定) ----------

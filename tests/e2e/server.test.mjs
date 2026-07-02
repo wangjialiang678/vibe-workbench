@@ -295,3 +295,86 @@ test('rewriteEmbedHtml: inserts <base> at document start when no <head>', () => 
   const out = rewriteEmbedHtml(input, 'https://example.com/path/');
   assert.ok(out.startsWith('<base href="https://example.com/path/">'), `expected base at start, got: ${out}`);
 });
+
+// ---- 改动 E: _respondedToPrev 注入（DESIGN §4）----
+
+test('GET /api/content?round=2 — _respondedToPrev=true when block was in prev feedback', async () => {
+  const s = 'ses_resp01';
+
+  // round-1 blocks
+  const round1blocks = [
+    { id: 'blk-responded', type: 'verdict', body: 'Q1', needsDecision: true },
+    { id: 'blk-silent', type: 'markdown', body: 'context' },
+  ];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+
+  // round-1 feedback: user responded to blk-responded only
+  writeJSON(paths.feedback(s, 1), {
+    session: s,
+    round: 1,
+    submittedAt: new Date().toISOString(),
+    items: [{ blockId: 'blk-responded', type: 'verdict', value: '赞成' }],
+  });
+
+  // round-2 blocks: blk-responded is unchanged, blk-silent is unchanged, blk-new is new
+  const round2blocks = [
+    { id: 'blk-responded', type: 'verdict', body: 'Q1', needsDecision: true },
+    { id: 'blk-silent', type: 'markdown', body: 'context' },
+    { id: 'blk-new', type: 'markdown', body: 'new content' },
+  ];
+  writeJSON(paths.content(s, 2), { session: s, round: 2, prevRound: 1, blocks: round2blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=2`));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.blocks));
+
+  const responded = body.blocks.find((b) => b.id === 'blk-responded');
+  const silent = body.blocks.find((b) => b.id === 'blk-silent');
+  const newBlk = body.blocks.find((b) => b.id === 'blk-new');
+
+  assert.ok(responded, 'blk-responded should be in result');
+  assert.equal(responded._respondedToPrev, true, 'blk-responded should have _respondedToPrev=true');
+
+  assert.ok(silent, 'blk-silent should be in result');
+  assert.ok(!silent._respondedToPrev, 'blk-silent was not in prev feedback → _respondedToPrev falsy');
+
+  assert.ok(newBlk, 'blk-new should be in result');
+  assert.equal(newBlk._change, 'new', 'blk-new is new');
+  assert.ok(!newBlk._respondedToPrev, 'blk-new not in prev feedback → no _respondedToPrev');
+});
+
+test('GET /api/content — null guard: 上轮 feedback 缺失时不注入 _respondedToPrev（无报错）', async () => {
+  const s = 'ses_nullfb01';
+
+  // round-1 content exists but NO feedback file
+  const round1blocks = [{ id: 'b1', type: 'verdict', body: 'Q' }];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+  // Deliberately do NOT write feedback for round 1
+
+  // round-2
+  const round2blocks = [{ id: 'b1', type: 'verdict', body: 'Q updated' }];
+  writeJSON(paths.content(s, 2), { session: s, round: 2, prevRound: 1, blocks: round2blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=2`));
+  assert.equal(res.status, 200, 'should not error when prev feedback is missing');
+  const body = await res.json();
+  assert.ok(Array.isArray(body.blocks));
+  const b1 = body.blocks.find((b) => b.id === 'b1');
+  assert.ok(b1, 'b1 should be in result');
+  assert.ok(!b1._respondedToPrev, 'no _respondedToPrev when prev feedback is missing (null guard)');
+});
+
+test('GET /api/content?round=1 — 首轮无前轮 feedback，无 _respondedToPrev（null guard 首轮）', async () => {
+  const s = 'ses_r1guard';
+  const round1blocks = [{ id: 'ga', type: 'markdown', body: 'hello' }];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=1`));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const ga = body.blocks.find((b) => b.id === 'ga');
+  assert.ok(ga);
+  assert.ok(!ga._respondedToPrev, '首轮不应有 _respondedToPrev');
+  assert.equal(ga._change, 'new', '首轮块均为 new');
+});

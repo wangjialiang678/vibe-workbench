@@ -260,6 +260,70 @@ test('diffToggleHtml: returns HTML with toggle control', () => {
   assert.ok(out.length > 0, `expected non-empty HTML`);
 });
 
+// ---------- changeBadge 改动 E 新徽章（DESIGN §4）----------
+
+test('changeBadge: changed + _respondedToPrev → 已采纳 badge', () => {
+  const out = changeBadge({ _change: 'changed', _respondedToPrev: true });
+  assert.ok(out.includes('已采纳'), `expected 已采纳 in: ${out}`);
+  assert.ok(out.includes('↩'), `expected ↩ in: ${out}`);
+  assert.ok(!out.includes('CHANGED'), `must not show CHANGED when adopted, got: ${out}`);
+});
+
+test('changeBadge: changed without _respondedToPrev → 普通 CHANGED badge', () => {
+  const out = changeBadge({ _change: 'changed', _respondedToPrev: false });
+  assert.ok(out.includes('CHANGED'), `expected CHANGED in: ${out}`);
+  assert.ok(!out.includes('已采纳'), `must not show 已采纳 without _respondedToPrev, got: ${out}`);
+});
+
+test('changeBadge: unchanged + _respondedToPrev → 维持 badge', () => {
+  const out = changeBadge({ _change: 'unchanged', _respondedToPrev: true });
+  assert.ok(out.includes('维持'), `expected 维持 in: ${out}`);
+  assert.ok(out.includes('—'), `expected — in: ${out}`);
+});
+
+test('changeBadge: unchanged without _respondedToPrev → 空字符串', () => {
+  const out = changeBadge({ _change: 'unchanged', _respondedToPrev: false });
+  assert.equal(out, '', `expected empty string for unchanged without respondedToPrev`);
+});
+
+test('changeBadge: unchanged (no _respondedToPrev field) → 空字符串', () => {
+  const out = changeBadge({ _change: 'unchanged' });
+  assert.equal(out, '', `expected empty string for plain unchanged`);
+});
+
+// ---------- renderZones statusBar 改动 B（DESIGN §4）----------
+
+test('renderZones: 首轮（round=1）状态条显示"首轮 · N 项待确认"而非 delta', () => {
+  const blocks = [
+    { id: 'r1a', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'r1b', type: 'markdown', needsDecision: false, _change: 'new' },
+  ];
+  const out = renderZones(blocks, { round: 1 });
+  assert.ok(out.includes('首轮'), `expected 首轮 in statusBar: ${out.slice(0, 500)}`);
+  assert.ok(!out.includes('新增') || !out.includes('改动'), 'first round should not show new/changed delta breakdown');
+});
+
+test('renderZones: 全部块为 new（推断首轮）→ 首轮文案', () => {
+  const blocks = [
+    { id: 'x1', type: 'verdict', needsDecision: true, _change: 'new' },
+    { id: 'x2', type: 'verdict', needsDecision: true, _change: 'new' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('首轮'), `all-new blocks → 首轮 statusBar: ${out.slice(0, 500)}`);
+});
+
+test('renderZones: 多轮（有 new+changed）状态条显示"本轮 N 项待你确认（新增 M · 改动 K）"', () => {
+  const blocks = [
+    { id: 'm1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'm2', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'changed' },
+    { id: 'm3', type: 'markdown', needsDecision: false, _change: 'unchanged' },
+  ];
+  const out = renderZones(blocks, { round: 2 });
+  assert.ok(out.includes('本轮'), `expected 本轮 in statusBar: ${out.slice(0, 500)}`);
+  assert.ok(out.includes('新增'), `expected 新增 in statusBar: ${out.slice(0, 500)}`);
+  assert.ok(out.includes('改动'), `expected 改动 in statusBar: ${out.slice(0, 500)}`);
+});
+
 // ---------- renderZones ----------
 
 const mixedBlocks = [

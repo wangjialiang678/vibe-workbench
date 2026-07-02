@@ -169,7 +169,22 @@ function handleRequest(req, res) {
     const diffed = computeDiff(content.blocks || [], prevBlocks);
     const removed = removedBlocks(content.blocks || [], prevBlocks);
     const sanity = diffSanity(diffed, removed);
-    json(res, 200, { ...content, blocks: diffed, removed, sanity });
+
+    // 改动 E（DESIGN §4）：注入 _respondedToPrev
+    // 读上一轮 feedback；null guard：缺失/第1轮/文件被删均安全跳过
+    const prevFeedback = prevRound > 0 ? readJSON(paths.feedback(session, prevRound), null) : null;
+    let finalBlocks = diffed;
+    if (prevFeedback && Array.isArray(prevFeedback.items)) {
+      const respondedIds = new Set(prevFeedback.items.map((it) => it.blockId).filter(Boolean));
+      finalBlocks = diffed.map((b) => {
+        if (respondedIds.has(b.id)) {
+          return { ...b, _respondedToPrev: true };
+        }
+        return b;
+      });
+    }
+
+    json(res, 200, { ...content, blocks: finalBlocks, removed, sanity });
     return;
   }
 

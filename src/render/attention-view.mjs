@@ -1,14 +1,16 @@
 // 注意力分区视图。纯函数，返回 HTML 字符串。
 // 使用 routeBlocks / decisionStats（protocol/attention.mjs）分四区渲染。
-import { routeBlocks, decisionStats } from '../protocol/attention.mjs';
+import { routeBlocks, decisionStats, roundDeltaStats } from '../protocol/attention.mjs';
 import { blockHtml } from './blocks.mjs';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// 顶部状态条：决策进度
-function statusBar(stats, blocks) {
+// 顶部状态条：决策进度（改动 B，DESIGN §4）
+// opts.round: 当前轮次（可选，用于首轮特判）
+// opts.isFirstRound: 明确标记为首轮（所有 block._change==='new' 时降级文案）
+function statusBar(stats, blocks, opts = {}) {
   if (stats.needsDecision === 0) {
     // 退化态：全默认
     return `<div class="status-bar status-bar--nodecision" role="status">
@@ -16,9 +18,25 @@ function statusBar(stats, blocks) {
   <span class="status-text">无需你决策，确认即可</span>
 </div>`;
   }
+
+  const delta = roundDeltaStats(blocks || []);
+
+  // 首轮特判：round===1 或全部块均为 new 时 → 降级为"首轮 · N 项待确认"（不显示 delta，无信息量）
+  const allNew = (blocks || []).length > 0 && (blocks || []).every((b) => b._change === 'new');
+  const isFirstRound = opts.round === 1 || opts.isFirstRound || allNew;
+
+  if (isFirstRound) {
+    return `<div class="status-bar" role="status">
+  <span class="status-icon">◆</span>
+  <span class="status-text">首轮 · <strong>${delta.totalDecision}</strong> 项待确认</span>
+  <progress class="decision-progress" value="0" max="${stats.needsDecision}" aria-label="决策进度"></progress>
+  <a href="#zone-a" class="status-jump">跳到待决策</a>
+</div>`;
+  }
+
   return `<div class="status-bar" role="status">
   <span class="status-icon">◆</span>
-  <span class="status-text">需你决策 <strong>${stats.needsDecision}</strong> 项（其中 <strong>${stats.noRecommendation}</strong> 项无预设）</span>
+  <span class="status-text">本轮 <strong>${delta.totalDecision}</strong> 项待你确认（新增 <strong>${delta.newDecision}</strong> · 改动 <strong>${delta.changedDecision}</strong>）</span>
   <progress class="decision-progress" value="0" max="${stats.needsDecision}" aria-label="决策进度"></progress>
   <a href="#zone-a" class="status-jump">跳到待决策</a>
 </div>`;
@@ -41,15 +59,16 @@ function fyiSummary(blocks) {
 }
 
 // 主导出：diffedBlocks（已带 _change）→ 完整四区 HTML
-export function renderZones(diffedBlocks) {
+// opts.round: 可选，传入 content.round（用于首轮特判）
+export function renderZones(diffedBlocks, opts = {}) {
   const blocks = diffedBlocks ?? [];
   const zones = routeBlocks(blocks);
   const stats = decisionStats(blocks);
 
   const parts = [];
 
-  // 顶部状态条
-  parts.push(statusBar(stats, blocks));
+  // 顶部状态条（改动 B：传入 opts.round 供首轮特判）
+  parts.push(statusBar(stats, blocks, opts));
 
   // 叙述/图表内容（AI 的思考）：顶部可见，绝不折叠
   if (zones.zoneContext && zones.zoneContext.length > 0) {

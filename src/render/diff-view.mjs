@@ -12,15 +12,27 @@ function escHtml(str) {
 }
 
 // 形状图标 + 文字双重语义（§13 P2 可访问性）
+// 改动 E（DESIGN §4）：_respondedToPrev 触发"↩ 已采纳"/"— 维持"徽章
 export function changeBadge(block) {
   const c = block._change;
   if (c === 'new') {
     return `<span class="badge badge-new" aria-label="新增">＋NEW</span>`;
   }
   if (c === 'changed') {
+    // AI 基于上轮反馈改了 → 显示"↩ 已采纳"
+    if (block._respondedToPrev) {
+      return `<span class="badge badge-changed badge-adopted" aria-label="AI已采纳上轮反馈">↩ 已采纳</span>`;
+    }
     return `<span class="badge badge-changed" aria-label="有改动">～CHANGED</span>`;
   }
-  // unchanged → 空字符串
+  if (c === 'unchanged') {
+    // AI 维持上轮内容且上轮有反馈 → 显示"— 维持"
+    if (block._respondedToPrev) {
+      return `<span class="badge badge-unchanged badge-maintained" aria-label="AI维持上轮内容">— 维持</span>`;
+    }
+    return '';
+  }
+  // 无 _change 字段 → 空字符串
   return '';
 }
 

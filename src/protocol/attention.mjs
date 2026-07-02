@@ -39,6 +39,18 @@ export function unansweredDecisions(blocks = [], answeredIds = []) {
   return (blocks || []).filter((b) => b.needsDecision && !answered.has(b.id)).map((b) => b.id);
 }
 
+// roundDeltaStats: 本轮增量统计（改动 B，DESIGN §4）
+// blocks 为已带 _change 的 diffed blocks（/api/content 返回值）
+export function roundDeltaStats(blocks = []) {
+  const d = (blocks || []).filter((b) => b.needsDecision);
+  return {
+    totalDecision: d.length,
+    newDecision: d.filter((b) => b._change === 'new').length,
+    changedDecision: d.filter((b) => b._change === 'changed').length,
+    newFyi: (blocks || []).filter((b) => !b.needsDecision && b._change === 'new').length,
+  };
+}
+
 // 提交摘要：用于确认弹层文案
 export function submitSummary(blocks = [], answeredIds = []) {
   const answered = new Set(answeredIds);
