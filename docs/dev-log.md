@@ -26,3 +26,11 @@
 | 解析校验 | ✅ | — | 19 个 .mjs 全 node --check 过；app.mjs 导入解析到位 |
 
 最终：118 自动化测试 + 端到端集成全绿，退出码 0。详见 docs/delivery-report.md。
+
+## 批次 5：PRD Review Studio 迁移收尾（2026-07-02，DESIGN §1.5/§1.6/§1.7）
+
+- 新增 `scripts/import-prd-project.mjs`：读取 prd-review-studio 的 `demo.js`（用正则+Function 沙箱取出 `window.PROJECT_DATA`），按 §1.3 六面映射逐面生成 Vibe block 数组，落成 `workspace/imported-demo/round-1/content.json`（19 个 blocks，类型：verdict/diagram/choice/code/checklist/prototype）；运行 `validateContent` 校验全部通过（ok: true）。
+- PRD Review Studio README 顶部加【已弃用 Deprecated】段，说明功能已并入 Vibe Workbench、仓库停止维护仅存档；无文件删除。
+- 迁移完成说明：PRD 六面已全量导入并通过 schema 校验（§1.7 判据 1 达成）。
+- 注意：§1.7"需真实 ≥2 轮评审"（判据 4）留待用户在 Vibe Workbench 上完整走完后确认；定位批注（判据 2）依赖批次 4（构建步骤 + Annotorious）尚未启动；completeness checklist 提交（判据 3）可在当前渲染层验证。
+- node --test：209 pass / 0 fail（全量累积，无回归）。
