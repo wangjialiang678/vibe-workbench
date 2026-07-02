@@ -13,6 +13,9 @@ const URL_ROUND = params.get('round') ?? '';   // 可空：留空 = 自动跟随
 
 // 当前展示的轮次；为 null 时在 bootstrap 里解析为服务端最新一轮，并可随新轮自动推进
 let currentRound = URL_ROUND !== '' ? Number(URL_ROUND) : null;
+// URL 未带 round = "跟随最新轮"模式（bootstrap 解析最新 + 轮询自动推进）；
+// 带了 round=N = 用户锁定该轮，绝不自动跳走。
+const FOLLOW_LATEST = URL_ROUND === '';
 
 function draftKey() { return `wb:${SESSION}:${currentRound}:fb`; }
 
@@ -678,9 +681,9 @@ async function pollStatus() {
     if (!resp.ok) return;
     const status = await resp.json();
 
-    // 自动推进：服务端出现更高轮次 → 就地载入新一轮（无需手动刷新 / 换链接）
+    // 自动推进：仅在"跟随最新轮"模式（URL 未锁定 round）下，服务端出现更高轮次才就地载入
     const latest = status?.status?.round;
-    if (Number.isInteger(latest) && currentRound != null && latest > currentRound) {
+    if (FOLLOW_LATEST && Number.isInteger(latest) && currentRound != null && latest > currentRound) {
       await advanceToRound(latest);
       return;
     }
