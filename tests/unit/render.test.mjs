@@ -350,8 +350,10 @@ test('renderZones: zone A content (new) appears before zoneSettled (unchanged)',
 
 test('renderZones: shows decision count', () => {
   const out = renderZones(mixedBlocks);
-  // decisionStats: 3 needsDecision blocks (a1, a2, b1), 2 noRecommendation (a1, a2)
-  assert.ok(out.includes('3') || out.includes('需你决策'), `expected decision count in: ${out}`);
+  // 改动B：顶部显示"本轮 N 项待你确认（新增 M · 改动 K）"；N = 新增+改动（不含已沉降的 unchanged）
+  // mixedBlocks: a1=new(决策) / a2,b1=unchanged(沉降) → 待确认 1（新增 1 · 改动 0）
+  assert.ok(out.includes('待确认'), `expected 待确认 counter in: ${out}`);
+  assert.ok(out.includes('新增'), `expected 新增 delta in: ${out}`);
 });
 
 test('renderZones: zone A label contains 需你定·无预设 or similar', () => {

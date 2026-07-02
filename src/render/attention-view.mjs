@@ -34,10 +34,12 @@ function statusBar(stats, blocks, opts = {}) {
 </div>`;
   }
 
+  // "待你确认" = 本轮浮上来的(新增+改动)，不含已沉降的已决/无变化项（否则重新制造"虚高/重复"感）
+  const pending = delta.newDecision + delta.changedDecision;
   return `<div class="status-bar" role="status">
   <span class="status-icon">◆</span>
-  <span class="status-text">本轮 <strong>${delta.totalDecision}</strong> 项待你确认（新增 <strong>${delta.newDecision}</strong> · 改动 <strong>${delta.changedDecision}</strong>）</span>
-  <progress class="decision-progress" value="0" max="${stats.needsDecision}" aria-label="决策进度"></progress>
+  <span class="status-text">本轮 <strong>${pending}</strong> 项待你确认（新增 <strong>${delta.newDecision}</strong> · 改动 <strong>${delta.changedDecision}</strong>）</span>
+  <progress class="decision-progress" value="0" max="${pending || 1}" aria-label="决策进度"></progress>
   <a href="#zone-a" class="status-jump">跳到待决策</a>
 </div>`;
 }
