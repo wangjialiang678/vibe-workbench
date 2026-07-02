@@ -170,15 +170,18 @@ function handleRequest(req, res) {
     const removed = removedBlocks(content.blocks || [], prevBlocks);
     const sanity = diffSanity(diffed, removed);
 
-    // 改动 E（DESIGN §4）：注入 _respondedToPrev
-    // 读上一轮 feedback；null guard：缺失/第1轮/文件被删均安全跳过
+    // 改动 E + 改动 C（DESIGN §4）：注入 _respondedToPrev 与 _decidedInPrev
+    // 读上一轮 feedback；null guard：缺失/第1轮/文件被删均安全跳过，绝不报错
     const prevFeedback = prevRound > 0 ? readJSON(paths.feedback(session, prevRound), null) : null;
     let finalBlocks = diffed;
     if (prevFeedback && Array.isArray(prevFeedback.items)) {
       const respondedIds = new Set(prevFeedback.items.map((it) => it.blockId).filter(Boolean));
       finalBlocks = diffed.map((b) => {
         if (respondedIds.has(b.id)) {
-          return { ...b, _respondedToPrev: true };
+          const patch = { _respondedToPrev: true };
+          // 改动 C：本轮 unchanged + 上轮已反馈 → 已决项沉降标记
+          if (b._change === 'unchanged') patch._decidedInPrev = true;
+          return { ...b, ...patch };
         }
         return b;
       });

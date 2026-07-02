@@ -499,3 +499,53 @@ test('blockHtml: block without body has no .block-body element', () => {
   const out = blockHtml(block);
   assert.ok(!out.includes('block-body'), `no body → no .block-body, got: ${out}`);
 });
+
+// ---------- renderZones zoneSettled 分组语义化（改动 D，DESIGN §4 批次2）----------
+
+test('renderZones: zoneSettled 含 _decidedInPrev 时显示"已决 N 项（上轮已确认·本轮无变化）"', () => {
+  const blocks = [
+    // 上轮已决 + 本轮无变化
+    { id: 'd1', type: 'verdict', needsDecision: true, _change: 'unchanged', _decidedInPrev: true },
+    { id: 'd2', type: 'markdown', needsDecision: false, _change: 'unchanged', _decidedInPrev: true, body: 'x' },
+    // 本轮无变化但上轮未被反馈
+    { id: 'u1', type: 'markdown', needsDecision: false, _change: 'unchanged', body: 'y' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('zone-settled'), 'expected zone-settled in output');
+  assert.ok(out.includes('已决 2 项'), 'expected 已决 2 项 in zoneSettled summary');
+  assert.ok(out.includes('上轮已确认·本轮无变化'), 'expected 上轮已确认·本轮无变化 in summary');
+  assert.ok(out.includes('本轮无变化 1 项'), 'expected 本轮无变化 1 项 in summary');
+});
+
+test('renderZones: zoneSettled 全为 _decidedInPrev 时只显示已决组，无"本轮无变化 M 项"', () => {
+  const blocks = [
+    { id: 'd1', type: 'verdict', needsDecision: true, _change: 'unchanged', _decidedInPrev: true },
+    { id: 'd2', type: 'verdict', needsDecision: true, _change: 'unchanged', _decidedInPrev: true },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('已决 2 项'), 'expected 已决 2 项');
+  // 无纯 unchanged 的 → 不出现 "本轮无变化 M 项"
+  assert.ok(!out.includes('本轮无变化 0 项'), 'must not show 本轮无变化 0 项');
+});
+
+test('renderZones: zoneSettled 全无 _decidedInPrev 时只显示"本轮无变化 M 项"，无"已决 N 项"', () => {
+  const blocks = [
+    { id: 'u1', type: 'verdict', needsDecision: true, _change: 'unchanged' },
+    { id: 'u2', type: 'markdown', needsDecision: false, _change: 'unchanged', body: 'z' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('本轮无变化 2 项'), 'expected 本轮无变化 2 项 in summary');
+  assert.ok(!out.includes('已决 0 项'), 'must not show 已决 0 项');
+});
+
+test('renderZones: zoneCFyi 沉降区保留"AI 设默认"含义（_decidedInPrev 不影响 zoneCFyi）', () => {
+  // zoneCFyi 块是 fresh(new/changed) + 有 default + 非 high importance
+  const blocks = [
+    { id: 'fyi1', type: 'markdown', needsDecision: false, default: 'yes', importance: 'normal', _change: 'new', body: 'fyi content' },
+  ];
+  const out = renderZones(blocks);
+  // zoneCFyi 仍按原有逻辑，不应受 _decidedInPrev 影响
+  assert.ok(out.includes('zone-c-fyi'), 'expected zone-c-fyi for fresh fyi blocks');
+  // zoneSettled 不应出现
+  assert.ok(!out.includes('zone-settled'), 'zoneSettled must not appear for fresh blocks');
+});

@@ -378,3 +378,110 @@ test('GET /api/content?round=1 — 首轮无前轮 feedback，无 _respondedToPr
   assert.ok(!ga._respondedToPrev, '首轮不应有 _respondedToPrev');
   assert.equal(ga._change, 'new', '首轮块均为 new');
 });
+
+// ---- 改动 C: _decidedInPrev 注入（DESIGN §4 批次2）----
+
+test('GET /api/content round=2 — _decidedInPrev=true: 上轮有反馈 + 本轮 unchanged', async () => {
+  const s = 'ses_decided01';
+
+  // round-1 blocks
+  const round1blocks = [
+    { id: 'blk-decided', type: 'verdict', body: 'Q', needsDecision: true },
+    { id: 'blk-new-r2', type: 'markdown', body: 'old context' },
+  ];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+
+  // round-1 feedback: user gave feedback on blk-decided
+  writeJSON(paths.feedback(s, 1), {
+    session: s, round: 1,
+    submittedAt: new Date().toISOString(),
+    items: [{ blockId: 'blk-decided', type: 'verdict', value: '赞成' }],
+  });
+
+  // round-2: blk-decided unchanged (same body), blk-new-r2 changed, blk-extra new
+  const round2blocks = [
+    { id: 'blk-decided', type: 'verdict', body: 'Q', needsDecision: true },   // unchanged
+    { id: 'blk-new-r2', type: 'markdown', body: 'new context updated' },       // changed
+    { id: 'blk-extra', type: 'markdown', body: 'brand new' },                  // new
+  ];
+  writeJSON(paths.content(s, 2), { session: s, round: 2, prevRound: 1, blocks: round2blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=2`));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Array.isArray(body.blocks));
+
+  const decided = body.blocks.find((b) => b.id === 'blk-decided');
+  const changed = body.blocks.find((b) => b.id === 'blk-new-r2');
+  const extra = body.blocks.find((b) => b.id === 'blk-extra');
+
+  assert.ok(decided, 'blk-decided should be present');
+  assert.equal(decided._change, 'unchanged', 'blk-decided body same → unchanged');
+  assert.equal(decided._decidedInPrev, true, '上轮有反馈 + 本轮 unchanged → _decidedInPrev=true');
+  assert.equal(decided._respondedToPrev, true, '上轮有反馈 → _respondedToPrev=true also');
+
+  assert.ok(changed, 'blk-new-r2 should be present');
+  assert.equal(changed._change, 'changed', 'blk-new-r2 body changed');
+  assert.ok(!changed._decidedInPrev, 'changed block → no _decidedInPrev (not unchanged)');
+
+  assert.ok(extra, 'blk-extra should be present');
+  assert.equal(extra._change, 'new', 'blk-extra is new');
+  assert.ok(!extra._decidedInPrev, 'new block → no _decidedInPrev');
+});
+
+test('GET /api/content — 改动C null guard: 前轮 feedback 缺失 → 不注入 _decidedInPrev，不报错', async () => {
+  const s = 'ses_decided_null01';
+
+  const round1blocks = [
+    { id: 'bx', type: 'verdict', body: 'Q', needsDecision: true },
+  ];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+  // 故意不写 feedback
+
+  const round2blocks = [
+    { id: 'bx', type: 'verdict', body: 'Q', needsDecision: true },  // unchanged
+  ];
+  writeJSON(paths.content(s, 2), { session: s, round: 2, prevRound: 1, blocks: round2blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=2`));
+  assert.equal(res.status, 200, 'null guard: 前轮 feedback 缺失时不报错');
+  const body = await res.json();
+  const bx = body.blocks.find((b) => b.id === 'bx');
+  assert.ok(bx, 'bx should be present');
+  assert.equal(bx._change, 'unchanged', 'bx is unchanged');
+  assert.ok(!bx._decidedInPrev, '无前轮 feedback → 不注入 _decidedInPrev');
+  assert.ok(!bx._respondedToPrev, '无前轮 feedback → 不注入 _respondedToPrev');
+});
+
+test('GET /api/content — 上轮无反馈的 unchanged 块不得 _decidedInPrev', async () => {
+  const s = 'ses_decided02';
+
+  const round1blocks = [
+    { id: 'blk-a', type: 'verdict', body: 'Q', needsDecision: true },
+    { id: 'blk-b', type: 'markdown', body: 'ctx' },
+  ];
+  writeJSON(paths.content(s, 1), { session: s, round: 1, prevRound: 0, blocks: round1blocks });
+
+  // feedback 只给了 blk-a，blk-b 没有反馈
+  writeJSON(paths.feedback(s, 1), {
+    session: s, round: 1,
+    submittedAt: new Date().toISOString(),
+    items: [{ blockId: 'blk-a', type: 'verdict', value: '赞成' }],
+  });
+
+  const round2blocks = [
+    { id: 'blk-a', type: 'verdict', body: 'Q', needsDecision: true },  // unchanged + decided
+    { id: 'blk-b', type: 'markdown', body: 'ctx' },                     // unchanged but NOT in feedback
+  ];
+  writeJSON(paths.content(s, 2), { session: s, round: 2, prevRound: 1, blocks: round2blocks });
+
+  const res = await fetch(url(`/api/content?session=${s}&round=2`));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const blkA = body.blocks.find((b) => b.id === 'blk-a');
+  const blkB = body.blocks.find((b) => b.id === 'blk-b');
+
+  assert.equal(blkA._decidedInPrev, true, 'blk-a 上轮有反馈 + unchanged → _decidedInPrev=true');
+  assert.ok(!blkB._decidedInPrev, 'blk-b 上轮无反馈 → 不得 _decidedInPrev（即使 unchanged）');
+});

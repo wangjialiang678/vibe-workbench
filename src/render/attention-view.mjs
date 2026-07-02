@@ -126,10 +126,16 @@ export function renderZones(diffedBlocks, opts = {}) {
   }
 
   // 沉降区（zoneSettled）：本轮无变化 / 上轮已决 → 默认折叠，不在主区打扰用户（§4 改动 A'，C6）
+  // 改动 D（DESIGN §4）：按 _decidedInPrev 分两组计数，语义化标题
   if (zones.zoneSettled && zones.zoneSettled.length > 0) {
-    const n = zones.zoneSettled.length;
+    const decidedN = zones.zoneSettled.filter((b) => b._decidedInPrev).length;
+    const unchangedM = zones.zoneSettled.length - decidedN;
+    let summaryParts = [];
+    if (decidedN > 0) summaryParts.push(`已决 ${decidedN} 项（上轮已确认·本轮无变化）`);
+    if (unchangedM > 0) summaryParts.push(`本轮无变化 ${unchangedM} 项`);
+    const summaryText = summaryParts.join(' · ') + '（点开查看）';
     parts.push(`<details id="zone-settled" class="zone zone-settled">
-  <summary class="zone-settled-summary">本轮无变化 · ${n} 项（点开查看）</summary>
+  <summary class="zone-settled-summary">${escHtml(summaryText)}</summary>
   <div class="zone-blocks">${renderBlockList(zones.zoneSettled)}</div>
 </details>`);
   }
