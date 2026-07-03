@@ -8,7 +8,7 @@
 
 ```bash
 # 1. 跑测试（零依赖，Node ≥20）
-npm test                         # 118 单元/集成测试
+npm test                         # 234 单元/集成测试
 
 # 2. 起服务（HTTP + 异步唤醒 listener）
 node bin/workbench.mjs up --port 8099     # serve + watch（监管自愈）
@@ -38,14 +38,18 @@ open "http://127.0.0.1:8099/render/?session=<session>&round=1"
 | `src/server/` | 零依赖 HTTP + API（content 注入 diff / feedback / status / retry） |
 | `src/loop/` | 异步唤醒 listener（对账幂等 + 独立心跳 + 容错）/ claude-exec / session-store |
 | `src/render/` | 前端：纯函数 HTML 渲染 + 四区注意力 + diff 徽章 + 状态/重试 |
-| `templates/` | think-discuss（思考共创）/ dev-review（研发评审）—— PRD 工作台只是一个模板 |
+| `templates/` | think-discuss（思考共创/文档审阅）/ dev-review（PRD 审核·研发评审）/ design-review（UI·交互设计评审）—— 模板 = block 组合工厂 |
 | `bin/workbench.mjs` | CLI：render / serve / watch / up（监管自愈） |
 
 ## 文档
+- [docs/项目与技能说明.md](docs/项目与技能说明.md) · [网页版](docs/项目与技能说明.html) — **项目 + 技能总览（先看这个）**
 - [docs/PRD.md](docs/PRD.md) — 需求与决策（D1-D8 / FR-1~FR-8）
-- [docs/DESIGN.md](docs/DESIGN.md) — 完整设计（§13 为 UX 自审修订）
+- [docs/DESIGN.md](docs/DESIGN.md) — 完整设计（§13 为 UX 自审修订，含批次 6 落地标注）
 - [docs/design/scenarios.md](docs/design/scenarios.md) — 用户场景
-- [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md)
+- [docs/research/2026-07-02-hci-clarification-community-and-project-review.md](docs/research/2026-07-02-hci-clarification-community-and-project-review.md) — 社区调研 + 独立设计评审
+- [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-MVP 全量实现完成，118 自动化测试 + 端到端集成全绿。后续：真实浏览器视觉 dogfood、daemon 化（无人值守/移动）、飞书载体适配器、FR-7/8 进阶项（字段级 diff 视图、长页面进度、Notification）。
+MVP 实现完成，**234 自动化测试 + 端到端集成全绿**；§13 UX 自审已落地（批次 6，2026-07-03）。
+诚实缺口：**真实浏览器 E2E 尚未覆盖**（现为黑盒 unit/mock）；要当"澄清台"还缺 `clarification`/`acceptance-criterion` 等 block 类型；embed/proxy 仅可靠支持静态展示页。
+后续：真实浏览器视觉 dogfood、澄清类 block、embed/proxy 安全加固、daemon 化（无人值守/移动）、飞书载体适配器。
