@@ -4,7 +4,7 @@
 import { renderZones } from './attention-view.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
-import { submitSummary, unansweredDecisions } from '../protocol/attention.mjs';
+import { unansweredDecisions, confirmModel, countAnsweredDecisions } from '../protocol/attention.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -25,6 +25,7 @@ const $statusMount  = document.getElementById('status-badge-mount');
 const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
 const $sessionLabel = document.getElementById('session-label');
+const $confirmDialog = document.getElementById('confirm-dialog');
 
 function updateSessionLabel() {
   $sessionLabel.textContent = SESSION
@@ -62,11 +63,21 @@ async function loadAndRender() {
   _blocks = data.blocks ?? [];
   $zones.innerHTML = renderZones(_blocks);
 
+  // 议题重组提示（DESIGN §5 + §13 P1）：服务端注入 sanity.suspect 时顶部横幅（前端消费）
+  if (data.sanity && data.sanity.suspect) {
+    $zones.insertAdjacentHTML('afterbegin', reintroBannerHtml());
+    const closeBtn = $zones.querySelector('.reintro-banner .reintro-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => closeBtn.closest('.reintro-banner')?.remove());
+  }
+
   // 注入 diff 开关
   $diffMount.innerHTML = diffToggleHtml();
 
   // 恢复草稿 UI（简单：遍历 textarea/input）
   restoreDraftUI(loadDraft());
+
+  // 决策进度：按已恢复草稿初始化「已填 m/X」（DESIGN §13 P2）
+  updateDecisionProgress();
 
   // 激活 mermaid
   if (window.mermaid) {
@@ -760,21 +771,97 @@ $submitBtn.addEventListener('click', () => {
   const draft = loadDraft();
   const answeredIds = Object.keys(draft);
   const unanswered = unansweredDecisions(_blocks, answeredIds);
-  const summary = submitSummary(_blocks, answeredIds);
-
-  // 提交前确认（§13 P0-1）
-  const msg = [
-    `你将：`,
-    `· 决策 ${summary.decided} 项`,
-    `· 接受 ${summary.acceptedDefaults} 项默认（含 ${summary.importantDefaults.length} 项重要）`,
-    summary.unanswered.length > 0 ? `· ${summary.unanswered.length} 项未表态（${summary.unanswered.join(', ')}）` : '',
-    `\n确认提交？`,
-  ].filter(Boolean).join('\n');
-
-  if (!confirm(msg)) return;
-
-  doSubmit(draft, answeredIds, unanswered);
+  const model = confirmModel(_blocks, answeredIds);
+  openConfirmDialog(model, () => doSubmit(draft, answeredIds, unanswered));
 });
+
+// 提交前确认模态（DESIGN §13 P0-1）：可就地展开未表态/重要默认项并跳转补填
+function openConfirmDialog(model, onConfirm) {
+  // 降级：环境无 <dialog> 支持 → 退回原生 confirm，绝不阻断提交
+  if (!$confirmDialog || typeof $confirmDialog.showModal !== 'function') {
+    const lines = [
+      '你将：',
+      `· 决策 ${model.decided} 项`,
+      `· 接受 ${model.acceptedDefaults} 项默认（含 ${model.importantDefaults.length} 项重要）`,
+      model.unanswered.length > 0 ? `· ${model.unanswered.length} 项未表态` : '',
+      '\n确认提交？',
+    ].filter(Boolean).join('\n');
+    if (confirm(lines)) onConfirm();
+    return;
+  }
+  $confirmDialog.innerHTML = confirmDialogHtml(model);
+  $confirmDialog.querySelector('[data-act="cancel"]')?.addEventListener('click', () => $confirmDialog.close());
+  $confirmDialog.querySelector('[data-act="confirm"]')?.addEventListener('click', () => {
+    $confirmDialog.close();
+    onConfirm();
+  });
+  $confirmDialog.querySelectorAll('[data-jump]').forEach((el) => {
+    el.addEventListener('click', () => { $confirmDialog.close(); jumpToBlock(el.dataset.jump); });
+  });
+  $confirmDialog.showModal();
+}
+
+function confirmDialogHtml(model) {
+  const importantBlock = model.importantDefaults.length > 0
+    ? `<details class="confirm-group" open>
+    <summary>接受 ${model.acceptedDefaults} 项默认（含 <strong>${model.importantDefaults.length}</strong> 项重要·建议过目）</summary>
+    <ul class="confirm-list">${model.importantDefaults.map((d) => `<li><button type="button" class="confirm-jump" data-jump="${escapeAttr(d.id)}">${escapeHtml(d.title)}</button><span class="confirm-def">默认：${escapeHtml(String(d.default ?? ''))}</span></li>`).join('')}</ul>
+  </details>`
+    : `<div class="confirm-line">接受 <strong>${model.acceptedDefaults}</strong> 项默认</div>`;
+  const unansweredBlock = model.unanswered.length > 0
+    ? `<details class="confirm-group confirm-warn" open>
+    <summary><strong>${model.unanswered.length}</strong> 项未表态（提交后按默认/留空处理，点击可去补填）</summary>
+    <ul class="confirm-list">${model.unanswered.map((u) => `<li><button type="button" class="confirm-jump" data-jump="${escapeAttr(u.id)}">${escapeHtml(u.title)}</button>${u.importance === 'high' ? '<span class="confirm-imp">重要</span>' : ''}</li>`).join('')}</ul>
+  </details>`
+    : '';
+  return `<div class="confirm-form">
+  <h2 class="confirm-title">确认提交</h2>
+  <div class="confirm-line">已决策 <strong>${model.decided}</strong> 项</div>
+  ${importantBlock}
+  ${unansweredBlock}
+  <div class="confirm-actions">
+    <button type="button" class="confirm-btn confirm-cancel" data-act="cancel">返回补填</button>
+    <button type="button" class="confirm-btn confirm-ok" data-act="confirm">确认提交</button>
+  </div>
+</div>`;
+}
+
+function reintroBannerHtml() {
+  return `<div class="reintro-banner" role="alert">
+  <span class="reintro-icon" aria-hidden="true">⚠️</span>
+  <span class="reintro-text">本轮议题可能重组，已突出新增/改动项。建议开启「只看变更」对照前后差异，或联系 AI 澄清。</span>
+  <button type="button" class="reintro-close" aria-label="关闭提示">✕</button>
+</div>`;
+}
+
+// 跳转到指定 block（提交确认模态内点击未表态/重要默认项时）
+function jumpToBlock(id) {
+  if (!id) return;
+  // 防守：id 含特殊字符（引号等）时用 CSS.escape 避免选择器失效
+  const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(id) : id;
+  const el = $zones.querySelector(`[data-block-id="${safe}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('block-flash');
+  setTimeout(() => el.classList.remove('block-flash'), 1600);
+}
+
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
+}
+
+// 决策进度实时更新（DESIGN §13 P2）：statusBar 的 <progress> + 「已填 m/X」
+function updateDecisionProgress() {
+  const prog = $zones.querySelector('.decision-progress');
+  if (!prog) return;
+  const answered = countAnsweredDecisions(_blocks, loadDraft());
+  prog.value = answered;
+  const count = $zones.querySelector('.decision-count');
+  if (count) {
+    const total = Number(count.dataset.total) || Number(prog.max) || 0;
+    count.textContent = `已填 ${answered}/${total}`;
+  }
+}
 
 async function doSubmit(draft, answeredIds, unanswered) {
   // 构造 items
@@ -970,6 +1057,11 @@ async function handleRetry(force = false) {
 
 // 每 3s 轮询
 setInterval(pollStatus, 3000);
+
+// 决策进度：委托监听 $zones（一次绑定，innerHTML 重渲后仍生效）——决策类交互后刷新「已填 m/X」
+['change', 'input', 'click'].forEach((evt) => {
+  $zones.addEventListener(evt, updateDecisionProgress);
+});
 
 // ── 初始化 ────────────────────────────────────────────────
 bootstrap();

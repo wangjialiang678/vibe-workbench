@@ -1,6 +1,6 @@
 // 注意力分区视图。纯函数，返回 HTML 字符串。
 // 使用 routeBlocks / decisionStats（protocol/attention.mjs）分四区渲染。
-import { routeBlocks, decisionStats, roundDeltaStats } from '../protocol/attention.mjs';
+import { routeBlocks, decisionStats, roundDeltaStats, pendingDecisionBlocks } from '../protocol/attention.mjs';
 import { blockHtml } from './blocks.mjs';
 
 function escHtml(str) {
@@ -20,6 +20,8 @@ function statusBar(stats, blocks, opts = {}) {
   }
 
   const delta = roundDeltaStats(blocks || []);
+  // 进度分母：本轮待决策块数（needsDecision 且非 unchanged）——与"已填 m/X"同分母
+  const pendN = pendingDecisionBlocks(blocks || []).length;
 
   // 首轮特判：round===1 或全部块均为 new 时 → 降级为"首轮 · N 项待确认"（不显示 delta，无信息量）
   const allNew = (blocks || []).length > 0 && (blocks || []).every((b) => b._change === 'new');
@@ -28,18 +30,27 @@ function statusBar(stats, blocks, opts = {}) {
   if (isFirstRound) {
     return `<div class="status-bar" role="status">
   <span class="status-icon">◆</span>
-  <span class="status-text">首轮 · <strong>${delta.totalDecision}</strong> 项待确认</span>
-  <progress class="decision-progress" value="0" max="${stats.needsDecision}" aria-label="决策进度"></progress>
+  <span class="status-text">首轮 · <strong>${pendN}</strong> 项待确认</span>
+  <progress class="decision-progress" value="0" max="${pendN || 1}" aria-label="决策进度"></progress>
+  <span class="decision-count" data-total="${pendN}">已填 0/${pendN}</span>
   <a href="#zone-a" class="status-jump">跳到待决策</a>
 </div>`;
   }
 
+  // 本轮所有需决策项均已沉降（历史已决/无变化）→ 无新决策，避免"本轮 0 项"歧义
+  if (pendN === 0) {
+    return `<div class="status-bar status-bar--nodecision" role="status">
+  <span class="status-icon">✅</span>
+  <span class="status-text">本轮无新决策项（历史决策已折叠），确认即可</span>
+</div>`;
+  }
+
   // "待你确认" = 本轮浮上来的(新增+改动)，不含已沉降的已决/无变化项（否则重新制造"虚高/重复"感）
-  const pending = delta.newDecision + delta.changedDecision;
   return `<div class="status-bar" role="status">
   <span class="status-icon">◆</span>
-  <span class="status-text">本轮 <strong>${pending}</strong> 项待你确认（新增 <strong>${delta.newDecision}</strong> · 改动 <strong>${delta.changedDecision}</strong>）</span>
-  <progress class="decision-progress" value="0" max="${pending || 1}" aria-label="决策进度"></progress>
+  <span class="status-text">本轮 <strong>${pendN}</strong> 项待你确认（新增 <strong>${delta.newDecision}</strong> · 改动 <strong>${delta.changedDecision}</strong>）</span>
+  <progress class="decision-progress" value="0" max="${pendN}" aria-label="决策进度"></progress>
+  <span class="decision-count" data-total="${pendN}">已填 0/${pendN}</span>
   <a href="#zone-a" class="status-jump">跳到待决策</a>
 </div>`;
 }
@@ -49,15 +60,15 @@ function renderBlockList(blocks) {
   return blocks.map((b) => blockHtml(b)).join('\n');
 }
 
-// zoneCFyi 标题摘要：列出各 block 的 default 值
+// zoneCFyi 标题摘要：列出各 block 的 "标题: 默认值"（已 HTML 转义，直接内插）
+// 注：routeBlocks 已保证进入 zoneCFyi 的块 default != null（无需再判空）
 function fyiSummary(blocks) {
   if (blocks.length === 0) return '';
-  const items = blocks.map((b) => {
-    const val = b.default != null ? escHtml(String(b.default)) : '（无默认值）';
+  return blocks.map((b) => {
+    const val = escHtml(String(b.default));
     const title = b.title ? escHtml(b.title) : escHtml(b.id ?? '');
     return `${title}: ${val}`;
   }).join(' · ');
-  return `默认已设好（${blocks.length} 项）· ${items}`;
 }
 
 // 主导出：diffedBlocks（已带 _change）→ 完整四区 HTML
@@ -122,7 +133,7 @@ export function renderZones(diffedBlocks, opts = {}) {
   if (zones.zoneCFyi.length > 0) {
     const summary = fyiSummary(zones.zoneCFyi);
     parts.push(`<details id="zone-c-fyi" class="zone zone-c-fyi">
-  <summary class="zone-fyi-summary">已为你设好默认（${zones.zoneCFyi.length} 项）· ${escHtml(summary.replace(/^已为你设好.*·\s*/, ''))}</summary>
+  <summary class="zone-fyi-summary">已为你设好默认（${zones.zoneCFyi.length} 项）· ${summary}</summary>
   <div class="zone-blocks">${renderBlockList(zones.zoneCFyi)}</div>
 </details>`);
   }

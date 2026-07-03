@@ -128,6 +128,12 @@ body {
   min-width: 80px;
 }
 
+.decision-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
 .status-jump {
   font-size: 13px;
   color: var(--color-focus);
@@ -260,6 +266,10 @@ body {
 
 .badge-new { background: var(--color-new); color: #fff; }
 .badge-changed { background: var(--color-changed); color: #fff; }
+/* 改动 E 徽章（DESIGN §4/§13 P1）：↩已采纳=蓝、—维持=灰边、unchanged 基线无背景 */
+.badge-unchanged { background: none; color: var(--color-text-muted); }
+.badge-adopted { background: var(--color-zone-cr); color: #fff; }
+.badge-maintained { background: none; color: var(--color-text-muted); border: 1px solid var(--color-border); }
 
 /* ===== 内联批注入口 ===== */
 .comment-btn {
@@ -958,3 +968,122 @@ svg.proto-overlay {
 .proto-hint {
   user-select: none;
 }
+
+/* ===== 议题重组横幅（DESIGN §5 + §13 P1）===== */
+.reintro-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--color-zone-b);
+  border-left: var(--bar-width) solid var(--color-zone-b);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-zone-b) 8%, transparent);
+  font-size: 14px;
+}
+.reintro-text { flex: 1; line-height: 1.5; }
+.reintro-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.reintro-close:hover { color: var(--color-text); }
+
+/* ===== 提交前确认模态（DESIGN §13 P0-1）===== */
+.confirm-dialog {
+  border: none;
+  border-radius: 10px;
+  padding: 0;
+  max-width: 460px;
+  width: 92vw;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 8px 40px rgba(0,0,0,.3);
+}
+.confirm-dialog::backdrop { background: rgba(0,0,0,.4); }
+
+.confirm-form {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.confirm-title { font-size: 16px; font-weight: 700; }
+.confirm-line { font-size: 14px; }
+
+.confirm-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.confirm-group summary { cursor: pointer; }
+.confirm-warn { border-color: var(--color-zone-a); }
+
+.confirm-list {
+  list-style: none;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.confirm-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.confirm-jump {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-focus);
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: underline dotted;
+}
+.confirm-def { font-size: 12px; color: var(--color-text-muted); }
+.confirm-imp {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-zone-a);
+  border: 1px solid var(--color-zone-a);
+  border-radius: 8px;
+  padding: 0 5px;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.confirm-btn {
+  padding: 6px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.confirm-cancel {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.confirm-ok {
+  border: none;
+  background: var(--color-focus);
+  color: #fff;
+}
+
+/* 跳转高亮（提交确认模态 → 定位到块）*/
+@keyframes block-flash-kf {
+  0%, 100% { box-shadow: var(--shadow); }
+  30% { box-shadow: 0 0 0 3px var(--color-focus); }
+}
+.block-flash { animation: block-flash-kf 1.5s ease; }

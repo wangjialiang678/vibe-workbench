@@ -65,3 +65,42 @@ export function submitSummary(blocks = [], answeredIds = []) {
     importantDefaults: importantDefaults.map((b) => b.id),
   };
 }
+
+// 提交前确认模型（DESIGN §13 P0-1）：把 id 映射为含 title/importance 的对象，供模态就地展开复核/跳转
+export function confirmModel(blocks = [], answeredIds = []) {
+  const list = blocks || [];
+  const byId = (id) => list.find((b) => b.id === id) || {};
+  const answered = new Set(answeredIds);
+  const decided = list.filter((b) => b.needsDecision && answered.has(b.id)).length;
+  const defaults = list.filter((b) => !b.needsDecision && b.default != null);
+  const unanswered = unansweredDecisions(list, answeredIds).map((id) => {
+    const b = byId(id);
+    return { id, title: b.title || id, importance: b.importance || 'normal' };
+  });
+  const importantDefaults = defaults
+    .filter((b) => b.importance === 'high')
+    .map((b) => ({ id: b.id, title: b.title || b.id, default: b.default }));
+  return { decided, acceptedDefaults: defaults.length, unanswered, importantDefaults };
+}
+
+// 本轮"待决策"块（DESIGN §13 P2 进度分母）：needsDecision 且非 unchanged（沉降/已决项不计入本轮进度）
+export function pendingDecisionBlocks(blocks = []) {
+  return (blocks || []).filter((b) => b.needsDecision && b._change !== 'unchanged');
+}
+
+// 单块是否已做出"决策"（非仅评论）——用于进度计数
+function isDecisionFilled(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.verdict) return true;
+  if (item.select != null && item.select !== '') return true;
+  if (typeof item.text === 'string' && item.text.trim() !== '') return true;
+  if (item.checklistItems && typeof item.checklistItems === 'object'
+      && Object.keys(item.checklistItems).length > 0) return true;
+  return false;
+}
+
+// 已完成决策计数（DESIGN §13 P2）：仅计已做出决策的待决策块（纯评论不计入）
+export function countAnsweredDecisions(blocks = [], draft = {}) {
+  const d = draft || {};
+  return pendingDecisionBlocks(blocks).filter((b) => isDecisionFilled(d[b.id])).length;
+}

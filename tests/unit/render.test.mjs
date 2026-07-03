@@ -662,3 +662,38 @@ test('renderZones: zoneCFyi 沉降区保留"AI 设默认"含义（_decidedInPrev
   // zoneSettled 不应出现
   assert.ok(!out.includes('zone-settled'), 'zoneSettled must not appear for fresh blocks');
 });
+
+// ---------- §13 落地校验批次 ----------
+
+// P2：diff「↩已采纳/—维持」徽章类（配套 app.css 样式）
+test('changeBadge: changed + _respondedToPrev → 含 badge-adopted 类', () => {
+  const out = changeBadge({ _change: 'changed', _respondedToPrev: true });
+  assert.ok(out.includes('badge-adopted'), `expected badge-adopted class in: ${out}`);
+});
+
+test('changeBadge: unchanged + _respondedToPrev → 含 badge-maintained 类', () => {
+  const out = changeBadge({ _change: 'unchanged', _respondedToPrev: true });
+  assert.ok(out.includes('badge-maintained'), `expected badge-maintained class in: ${out}`);
+});
+
+// P2：进度条「已填 m/X」文字随渲染出现（初值 0）
+test('renderZones: 状态条含决策进度「已填 0/X」', () => {
+  const blocks = [
+    { id: 'p1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'p2', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'changed' },
+    { id: 'u1', type: 'markdown', needsDecision: false, _change: 'unchanged' },
+  ];
+  const out = renderZones(blocks, { round: 2 });
+  assert.ok(out.includes('decision-count'), `expected decision-count span in: ${out.slice(0, 500)}`);
+  assert.ok(out.includes('已填 0/2'), `expected 已填 0/2 (new+changed decisions) in: ${out.slice(0, 500)}`);
+});
+
+// P2：zoneCFyi 折叠标题不再重复前缀（fyiSummary 修复）
+test('renderZones: zoneCFyi 折叠标题无重复前缀', () => {
+  const blocks = [
+    { id: 'fyiX', type: 'markdown', needsDecision: false, default: 'yes', importance: 'normal', _change: 'new', body: 'x' },
+  ];
+  const out = renderZones(blocks);
+  assert.ok(out.includes('已为你设好默认（1 项）· fyiX: yes'), `expected single-prefixed summary in: ${out}`);
+  assert.ok(!out.includes('默认已设好'), `should not contain the old inner prefix 默认已设好 in: ${out}`);
+});

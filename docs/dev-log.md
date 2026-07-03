@@ -34,3 +34,19 @@
 - 迁移完成说明：PRD 六面已全量导入并通过 schema 校验（§1.7 判据 1 达成）。
 - 注意：§1.7"需真实 ≥2 轮评审"（判据 4）留待用户在 Vibe Workbench 上完整走完后确认；定位批注（判据 2）依赖批次 4（构建步骤 + Annotorious）尚未启动；completeness checklist 提交（判据 3）可在当前渲染层验证。
 - node --test：209 pass / 0 fail（全量累积，无回归）。
+
+## 批次 6：§13 落地校验（2026-07-03，DESIGN §13 纸面→代码对账）
+
+背景：调研+独立评审（docs/research/2026-07-02-hci-...-review.md「元发现 A」）发现 §13 多条采纳项只写进文档、实现层断了。本批次逐条补齐 + 加测试断言，防再次纸面化。
+
+| 项 | §13 出处 | 修法 | 文件 |
+|----|----------|------|------|
+| P0-1 提交确认可就地展开/跳转补填 | §13 P0-1 | `confirm()` → 原生 `<dialog>` 模态：已决/接受默认（重要项逐条列 title+默认值）/未表态（逐条 title+可跳转，重要标红）；新增纯函数 `confirmModel`；无 `<dialog>` 环境降级回 `confirm` | attention.mjs, app.mjs, index.html, app.css |
+| P2 决策进度「已填 m/X」 | §13 P2 | `<progress>` 分母改本轮待决策数（`pendingDecisionBlocks`=needsDecision且非unchanged）+ 加 `.decision-count` 文字；`countAnsweredDecisions` 计已决数；委托监听 `$zones` 实时刷新 | attention.mjs, attention-view.mjs, app.mjs, app.css |
+| P1 议题重组提示 | §13 P1 | 服务端本已回传 `sanity`（无需改）；前端 `loadAndRender` 消费 `sanity.suspect`→顶部可关闭横幅 `.reintro-banner` | app.mjs, app.css |
+| P2「↩已采纳/—维持」徽章 | §13 P1 改动E | 补 `.badge-adopted`(蓝)/`.badge-maintained`(灰边)/`.badge-unchanged` 样式（原仅 new/changed） | app.css |
+| P2 zoneC-Fyi 折叠标题前缀重复 | §13 P0-3 | 修 `fyiSummary` 双前缀 bug（原渲染成「已为你设好默认（N）· 默认已设好（N）· …」）；删死分支「（无默认值）」。**注：评审所指"无默认值块混入分区"经读码不成立——`routeBlocks` 的 `hasDefault` 已正确过滤** | attention-view.mjs |
+
+测试：新增 `tests/unit/attention-confirm.test.mjs`(5) + `attention-progress.test.mjs`(5) + 扩 `render.test.mjs`(徽章类/进度文字/无重复前缀 4 条)。
+结果：`npm test` 234 pass / 0 fail（较批次前 +14），三个改动文件 `node --check` 通过。
+未做（属其它批次）：新 block 类型、embed/proxy 安全加固、真实浏览器 E2E、暗色对比度全面复核。
