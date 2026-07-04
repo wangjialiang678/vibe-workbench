@@ -1,5 +1,5 @@
 // 注意力路由（DESIGN §4 + §13 P0-3）。浏览器安全（仅依赖 constants）。
-import { IMPORTANCE_RANK } from './constants.mjs';
+import { IMPORTANCE_RANK, DEFAULT_SECTIONS, MISC_SECTION } from './constants.mjs';
 
 // 分区：zoneContext 叙述(可见) / zoneA 需决策·无推荐 / zoneB 需决策·有推荐 / zoneCReview 重要默认 / zoneCFyi 折叠默认 / zoneSettled 本轮无变化·已决(折叠沉降)
 // 改动 A'（DESIGN §4）：_change 参与分区——unchanged 或上轮已决(_decidedInPrev) 的块默认降级到 zoneSettled 折叠；new/changed(或无 _change) 常显。
@@ -73,14 +73,16 @@ export function confirmModel(blocks = [], answeredIds = []) {
   const answered = new Set(answeredIds);
   const decided = list.filter((b) => b.needsDecision && answered.has(b.id)).length;
   const defaults = list.filter((b) => !b.needsDecision && b.default != null);
-  const unanswered = unansweredDecisions(list, answeredIds).map((id) => {
-    const b = byId(id);
-    return { id, title: b.title || id, importance: b.importance || 'normal' };
-  });
+  const toRef = (b) => ({ id: b.id, title: b.title || b.id, importance: b.importance || 'normal', section: b.section || null });
+  const unansweredBlocks = list.filter((b) => b.needsDecision && !answered.has(b.id));
+  // 拆两类：必须决策(无推荐) vs 可接受默认(有推荐)——提交时对"必须决策"未确定重点警示
+  const unansweredMust = unansweredBlocks.filter((b) => !b.hasRecommendation).map(toRef);
+  const unansweredOptional = unansweredBlocks.filter((b) => b.hasRecommendation).map(toRef);
+  const unanswered = unansweredBlocks.map(toRef); // 兼容既有调用
   const importantDefaults = defaults
     .filter((b) => b.importance === 'high')
     .map((b) => ({ id: b.id, title: b.title || b.id, default: b.default }));
-  return { decided, acceptedDefaults: defaults.length, unanswered, importantDefaults };
+  return { decided, acceptedDefaults: defaults.length, unanswered, unansweredMust, unansweredOptional, importantDefaults };
 }
 
 // 本轮"待决策"块（DESIGN §13 P2 进度分母）：needsDecision 且非 unchanged（沉降/已决项不计入本轮进度）
@@ -103,4 +105,45 @@ function isDecisionFilled(item) {
 export function countAnsweredDecisions(blocks = [], draft = {}) {
   const d = draft || {};
   return pendingDecisionBlocks(blocks).filter((b) => isDecisionFilled(d[b.id])).length;
+}
+
+// ── tab 分面导航（restore prd-studio 六面）────────────────────────────
+
+// 是否启用 tab 模式：content 显式给了 sections，或任何块带 section
+export function hasSections(blocks = [], sections = null) {
+  if (Array.isArray(sections) && sections.length) return true;
+  return (blocks || []).some((b) => typeof b.section === 'string' && b.section);
+}
+
+// 按类目分组。sectionOrder = canonical 顺序（DEFAULT_SECTIONS 或 content.sections）。
+// 返回 [{section, blocks}]：canonical 面全保留（空=灰 tab）；自定义面（出现但不在 canonical）追加；无 section 块 → 「其他」（仅非空时出现）。
+export function groupBySection(blocks = [], sectionOrder = DEFAULT_SECTIONS) {
+  const list = blocks || [];
+  const order = (Array.isArray(sectionOrder) && sectionOrder.length) ? sectionOrder.slice() : DEFAULT_SECTIONS.slice();
+  const bySection = new Map();
+  for (const name of order) bySection.set(name, []);
+  const extra = []; // 出现但不在 canonical 的自定义面（保序）
+  const misc = [];
+  for (const b of list) {
+    const s = (typeof b.section === 'string' && b.section) ? b.section : null;
+    if (!s) { misc.push(b); continue; }
+    if (bySection.has(s)) { bySection.get(s).push(b); continue; }
+    let g = extra.find((x) => x.section === s);
+    if (!g) { g = { section: s, blocks: [] }; extra.push(g); }
+    g.blocks.push(b);
+  }
+  const groups = order.map((name) => ({ section: name, blocks: bySection.get(name) }));
+  groups.push(...extra);
+  if (misc.length) groups.push({ section: MISC_SECTION, blocks: misc });
+  return groups;
+}
+
+// 某面未确认决策统计：must=必须(无推荐)、optional=可接受(有推荐)——驱动 tab 角标颜色与提交警示
+export function sectionPendingStats(sectionBlocks = [], draft = {}) {
+  const d = draft || {};
+  const pend = pendingDecisionBlocks(sectionBlocks).filter((b) => !isDecisionFilled(d[b.id]));
+  return {
+    must: pend.filter((b) => !b.hasRecommendation).length,
+    optional: pend.filter((b) => b.hasRecommendation).length,
+  };
 }

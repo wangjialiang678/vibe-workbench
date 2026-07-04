@@ -57,6 +57,7 @@ export default function designReview({ screens = [], checklist = null } = {}) {
       key,
       title = null,
       mode = 'image',
+      section: screenSection = 'UI 设计',   // 可覆盖为 '交互设计' 等
       src,
       imageUrl,
       screen: wireframeScreen,
@@ -67,6 +68,7 @@ export default function designReview({ screens = [], checklist = null } = {}) {
     // prototype block（§1.4 A）
     const protoBlock = {
       id: 'b-proto-' + slug(key),
+      section: screenSection,
       type: 'prototype',
       title: title ?? null,
       mode,
@@ -84,6 +86,7 @@ export default function designReview({ screens = [], checklist = null } = {}) {
       const { key: vKey, title: vTitle, body: vBody, importance: vImp = 'normal' } = verdictSpec;
       blocks.push({
         id: 'b-proto-vrd-' + slug(vKey ?? key),
+        section: screenSection,
         type: 'verdict',
         title: vTitle ?? null,
         body: vBody ?? null,
@@ -107,6 +110,7 @@ export default function designReview({ screens = [], checklist = null } = {}) {
       const hasRec = recommendation != null && options.some((o) => o.id === recommendation);
       blocks.push({
         id: 'b-proto-cho-' + slug(cKey ?? key),
+        section: screenSection,
         type: 'choice',
         title: cTitle ?? null,
         body: cBody ?? null,
@@ -124,6 +128,7 @@ export default function designReview({ screens = [], checklist = null } = {}) {
     const { key: ckKey, title: ckTitle, verdictLabels = ['已覆盖', '明确不做', '待定'], items = [] } = checklist;
     blocks.push({
       id: 'b-chk-' + slug(ckKey),
+      section: '测试',
       type: 'checklist',
       title: ckTitle ?? null,
       verdictLabels,

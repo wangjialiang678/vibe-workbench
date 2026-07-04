@@ -4,7 +4,7 @@
 import { renderZones } from './attention-view.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
-import { unansweredDecisions, confirmModel, countAnsweredDecisions } from '../protocol/attention.mjs';
+import { unansweredDecisions, confirmModel, countAnsweredDecisions, groupBySection, sectionPendingStats } from '../protocol/attention.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -47,7 +47,8 @@ function saveDraft(patch) {
 }
 
 // ── 渲染 ─────────────────────────────────────────────────
-let _blocks = [];   // 当前轮 blocks（带 _change）
+let _blocks = [];        // 当前轮 blocks（带 _change）
+let _sectionData = null; // content.sections（tab 分面类目顺序，可空）
 
 async function loadAndRender() {
   let data;
@@ -61,7 +62,8 @@ async function loadAndRender() {
   }
 
   _blocks = data.blocks ?? [];
-  $zones.innerHTML = renderZones(_blocks);
+  _sectionData = data.sections ?? null;
+  $zones.innerHTML = renderZones(_blocks, { round: currentRound, sections: _sectionData });
 
   // 议题重组提示（DESIGN §5 + §13 P1）：服务端注入 sanity.suspect 时顶部横幅（前端消费）
   if (data.sanity && data.sanity.suspect) {
@@ -76,8 +78,11 @@ async function loadAndRender() {
   // 恢复草稿 UI（简单：遍历 textarea/input）
   restoreDraftUI(loadDraft());
 
-  // 决策进度：按已恢复草稿初始化「已填 m/X」（DESIGN §13 P2）
+  // 决策进度：按已恢复草稿初始化「已填 m/X」（DESIGN §13 P2）+ tab 角标
   updateDecisionProgress();
+
+  // tab 分面：按草稿选默认激活面（第一个含未确认必须决策的非空面）
+  activateDefaultFacet();
 
   // 激活 mermaid
   if (window.mermaid) {
@@ -779,11 +784,12 @@ $submitBtn.addEventListener('click', () => {
 function openConfirmDialog(model, onConfirm) {
   // 降级：环境无 <dialog> 支持 → 退回原生 confirm，绝不阻断提交
   if (!$confirmDialog || typeof $confirmDialog.showModal !== 'function') {
+    const mustN = (model.unansweredMust || []).length;
     const lines = [
       '你将：',
       `· 决策 ${model.decided} 项`,
       `· 接受 ${model.acceptedDefaults} 项默认（含 ${model.importantDefaults.length} 项重要）`,
-      model.unanswered.length > 0 ? `· ${model.unanswered.length} 项未表态` : '',
+      mustN > 0 ? `⚠️ 还有 ${mustN} 个必须决策的点没确定` : '',
       '\n确认提交？',
     ].filter(Boolean).join('\n');
     if (confirm(lines)) onConfirm();
@@ -802,26 +808,41 @@ function openConfirmDialog(model, onConfirm) {
 }
 
 function confirmDialogHtml(model) {
-  const importantBlock = model.importantDefaults.length > 0
+  const must = model.unansweredMust || [];
+  const opt = model.unansweredOptional || [];
+  const secTag = (u) => (u.section ? `<span class="confirm-sec">${escapeHtml(u.section)}</span>` : '');
+
+  // 必须决策未确定 → 顶部红字明确警示（用户要求）
+  const mustWarn = must.length > 0
+    ? `<div class="confirm-must-warn" role="alert">⚠️ 还有 <strong>${must.length}</strong> 个必须决策的点没确定</div>
+  <ul class="confirm-list">${must.map((u) => `<li><button type="button" class="confirm-jump confirm-jump-must" data-jump="${escapeAttr(u.id)}">${escapeHtml(u.title)}</button>${secTag(u)}</li>`).join('')}</ul>`
+    : '';
+
+  // 可接受默认/推荐但未表态（次级）
+  const optBlock = opt.length > 0
     ? `<details class="confirm-group" open>
+    <summary><strong>${opt.length}</strong> 项可接受推荐/默认未表态（不填按推荐处理）</summary>
+    <ul class="confirm-list">${opt.map((u) => `<li><button type="button" class="confirm-jump" data-jump="${escapeAttr(u.id)}">${escapeHtml(u.title)}</button>${secTag(u)}</li>`).join('')}</ul>
+  </details>`
+    : '';
+
+  const importantBlock = model.importantDefaults.length > 0
+    ? `<details class="confirm-group">
     <summary>接受 ${model.acceptedDefaults} 项默认（含 <strong>${model.importantDefaults.length}</strong> 项重要·建议过目）</summary>
     <ul class="confirm-list">${model.importantDefaults.map((d) => `<li><button type="button" class="confirm-jump" data-jump="${escapeAttr(d.id)}">${escapeHtml(d.title)}</button><span class="confirm-def">默认：${escapeHtml(String(d.default ?? ''))}</span></li>`).join('')}</ul>
   </details>`
     : `<div class="confirm-line">接受 <strong>${model.acceptedDefaults}</strong> 项默认</div>`;
-  const unansweredBlock = model.unanswered.length > 0
-    ? `<details class="confirm-group confirm-warn" open>
-    <summary><strong>${model.unanswered.length}</strong> 项未表态（提交后按默认/留空处理，点击可去补填）</summary>
-    <ul class="confirm-list">${model.unanswered.map((u) => `<li><button type="button" class="confirm-jump" data-jump="${escapeAttr(u.id)}">${escapeHtml(u.title)}</button>${u.importance === 'high' ? '<span class="confirm-imp">重要</span>' : ''}</li>`).join('')}</ul>
-  </details>`
-    : '';
+
+  const okLabel = must.length > 0 ? '仍要提交' : '确认提交';
   return `<div class="confirm-form">
   <h2 class="confirm-title">确认提交</h2>
   <div class="confirm-line">已决策 <strong>${model.decided}</strong> 项</div>
+  ${mustWarn}
+  ${optBlock}
   ${importantBlock}
-  ${unansweredBlock}
   <div class="confirm-actions">
     <button type="button" class="confirm-btn confirm-cancel" data-act="cancel">返回补填</button>
-    <button type="button" class="confirm-btn confirm-ok" data-act="confirm">确认提交</button>
+    <button type="button" class="confirm-btn confirm-ok${must.length > 0 ? ' confirm-ok-warn' : ''}" data-act="confirm">${okLabel}</button>
   </div>
 </div>`;
 }
@@ -841,6 +862,9 @@ function jumpToBlock(id) {
   const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(id) : id;
   const el = $zones.querySelector(`[data-block-id="${safe}"]`);
   if (!el) return;
+  // 若目标块在隐藏的 tab 面里 → 先切到该面（保证从提交弹层能跳进隐藏 tab，防盲签）
+  const facet = el.closest('.facet');
+  if (facet && facet.hidden) activateFacet(Number(facet.dataset.facet));
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   el.classList.add('block-flash');
   setTimeout(() => el.classList.remove('block-flash'), 1600);
@@ -850,17 +874,55 @@ function escapeAttr(str) {
   return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
-// 决策进度实时更新（DESIGN §13 P2）：statusBar 的 <progress> + 「已填 m/X」
+// 决策进度实时更新（DESIGN §13 P2）：statusBar 的 <progress> + 「已填 m/X」+ tab 角标
 function updateDecisionProgress() {
   const prog = $zones.querySelector('.decision-progress');
-  if (!prog) return;
-  const answered = countAnsweredDecisions(_blocks, loadDraft());
-  prog.value = answered;
-  const count = $zones.querySelector('.decision-count');
-  if (count) {
-    const total = Number(count.dataset.total) || Number(prog.max) || 0;
-    count.textContent = `已填 ${answered}/${total}`;
+  if (prog) {
+    const answered = countAnsweredDecisions(_blocks, loadDraft());
+    prog.value = answered;
+    const count = $zones.querySelector('.decision-count');
+    if (count) {
+      const total = Number(count.dataset.total) || Number(prog.max) || 0;
+      count.textContent = `已填 ${answered}/${total}`;
+    }
   }
+  updateFacetBadges();
+}
+
+// ── tab 分面导航（DESIGN §15）─────────────────────────────
+function activateFacet(idx) {
+  $zones.querySelectorAll('.facet').forEach((f) => { f.hidden = Number(f.dataset.facet) !== idx; });
+  $zones.querySelectorAll('.tab-nav .tab').forEach((t) => {
+    const on = Number(t.dataset.facet) === idx;
+    t.classList.toggle('tab-active', on);
+    if (!t.disabled) t.setAttribute('aria-selected', String(on));
+  });
+}
+
+// 按当前草稿选默认激活面：第一个"含未确认必须决策"的非空面；否则第一个非空面
+function activateDefaultFacet() {
+  if (!$zones.querySelector('.tab-nav')) return;   // 非 tab 模式
+  const groups = groupBySection(_blocks, _sectionData);
+  const draft = loadDraft();
+  let idx = groups.findIndex((g) => g.blocks.length && sectionPendingStats(g.blocks, draft).must > 0);
+  if (idx === -1) idx = groups.findIndex((g) => g.blocks.length);
+  if (idx === -1) idx = 0;
+  activateFacet(idx);
+}
+
+// 更新每个 tab 角标（未确认决策数 + 颜色：红=含必须、橙=只剩可接受、灰=已清零）
+function updateFacetBadges() {
+  const nav = $zones.querySelector('.tab-nav');
+  if (!nav) return;
+  const groups = groupBySection(_blocks, _sectionData);
+  const draft = loadDraft();
+  groups.forEach((g, i) => {
+    const badge = nav.querySelector(`.tab-badge[data-facet="${i}"]`);
+    if (!badge) return;
+    const st = sectionPendingStats(g.blocks, draft);
+    badge.textContent = String(st.must + st.optional);
+    badge.className = `tab-badge tab-badge-${st.must > 0 ? 'must' : (st.optional > 0 ? 'optional' : 'done')}`;
+  });
 }
 
 async function doSubmit(draft, answeredIds, unanswered) {
@@ -1061,6 +1123,14 @@ setInterval(pollStatus, 3000);
 // 决策进度：委托监听 $zones（一次绑定，innerHTML 重渲后仍生效）——决策类交互后刷新「已填 m/X」
 ['change', 'input', 'click'].forEach((evt) => {
   $zones.addEventListener(evt, updateDecisionProgress);
+});
+
+// tab 分面切换（委托，一次绑定）：点非灰 tab → 切到该面
+$zones.addEventListener('click', (e) => {
+  const tab = e.target.closest('.tab');
+  if (tab && !tab.classList.contains('tab-empty') && !tab.disabled) {
+    activateFacet(Number(tab.dataset.facet));
+  }
 });
 
 // ── 初始化 ────────────────────────────────────────────────

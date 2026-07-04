@@ -68,6 +68,7 @@ export default function devReview({
   for (const { key, title, body, importance = 'normal' } of prdItems) {
     blocks.push({
       id: 'b-prd-' + slug(key),
+      section: '需求',
       type: 'verdict',
       title: title ?? null,
       body: body ?? null,
@@ -82,6 +83,7 @@ export default function devReview({
   for (const { key, title, mermaid, rationale } of archDiagrams) {
     blocks.push({
       id: 'b-arch-' + slug(key),
+      section: '架构',
       type: 'diagram',
       title: title ?? null,
       body: mermaid,
@@ -99,6 +101,7 @@ export default function devReview({
   for (const { key, title, body, importance = 'normal' } of archAssertions) {
     blocks.push({
       id: 'b-assert-' + slug(key),
+      section: '架构',
       type: 'verdict',
       title: title ?? null,
       body: body ?? null,
@@ -115,6 +118,7 @@ export default function devReview({
     const hasRec = recommendation != null && options.some((o) => o.id === recommendation);
     blocks.push({
       id: 'b-alt-' + slug(key),
+      section: '架构',
       type: 'choice',
       title: title ?? null,
       body: body ?? null,
@@ -131,6 +135,7 @@ export default function devReview({
   for (const { key, name, expect } of testScenarios) {
     blocks.push({
       id: 'b-test-' + slug(key),
+      section: '测试',
       type: 'verdict',
       title: name ?? null,
       body: expect ?? null,
@@ -146,6 +151,7 @@ export default function devReview({
   for (const { key, name, gherkin } of testCases) {
     blocks.push({
       id: 'b-case-' + slug(key),
+      section: '测试',
       type: 'code',
       title: name ?? null,
       body: gherkin ?? '',

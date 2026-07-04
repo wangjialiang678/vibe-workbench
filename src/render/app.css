@@ -1087,3 +1087,86 @@ svg.proto-overlay {
   30% { box-shadow: 0 0 0 3px var(--color-focus); }
 }
 .block-flash { animation: block-flash-kf 1.5s ease; }
+
+/* ===== tab 分面导航（DESIGN §15）===== */
+.tab-nav {
+  position: sticky;
+  top: var(--topbar-height, 48px);
+  z-index: 90;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 2px;
+  margin-bottom: 16px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  scrollbar-width: thin;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 18px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  flex: none;
+}
+.tab:hover { border-color: var(--color-focus); }
+.tab-active {
+  background: var(--color-focus);
+  color: #fff;
+  border-color: var(--color-focus);
+  font-weight: 600;
+}
+.tab-empty {
+  color: var(--color-text-muted);
+  opacity: .5;
+  cursor: not-allowed;
+  background: none;
+}
+.tab-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  color: #fff;
+}
+.tab-badge-must { background: var(--color-zone-a); }       /* 含必须确认 = 红 */
+.tab-badge-optional { background: var(--color-zone-b); }   /* 只剩可接受 = 橙 */
+.tab-badge-done { background: var(--color-status-ok); }    /* 已清零 = 绿 */
+.tab-active .tab-badge { box-shadow: 0 0 0 1.5px #fff; }
+
+.facet-empty {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 20px 4px;
+}
+
+/* 提交确认：必须决策未确定警示（用户要求）*/
+.confirm-must-warn {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-zone-a) 12%, transparent);
+  border: 1px solid var(--color-zone-a);
+  color: var(--color-zone-a);
+  font-size: 14px;
+  font-weight: 600;
+}
+.confirm-jump-must { color: var(--color-zone-a); font-weight: 600; }
+.confirm-sec {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.confirm-ok-warn { background: var(--color-zone-a); }

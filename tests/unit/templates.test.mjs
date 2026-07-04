@@ -559,3 +559,30 @@ describe('designReview', () => {
     assert.ok(ids.indexOf('b-proto-b') < ids.indexOf('b-proto-c'), 'b before c');
   });
 });
+
+// ---------- 模板 section（DESIGN §15 tab 分面）----------
+
+test('devReview: 块带正确 section（需求/架构/测试）', () => {
+  const blocks = devReview({
+    prdItems: [{ key: 'a', title: 'x' }],
+    archDiagrams: [{ key: 'd', title: 'arch', mermaid: 'graph LR;A-->B' }],
+    testScenarios: [{ key: 't', name: 's', expect: 'e' }],
+  });
+  assert.equal(blocks.find((b) => b.id.startsWith('b-prd-')).section, '需求');
+  assert.equal(blocks.find((b) => b.id.startsWith('b-arch-')).section, '架构');
+  assert.equal(blocks.find((b) => b.id.startsWith('b-test-')).section, '测试');
+});
+
+test('designReview: 默认 section=UI 设计，screen.section 可覆盖，checklist→测试', () => {
+  const blocks = designReview({
+    screens: [
+      { key: 's1', mode: 'image', imageUrl: '/a.png' },
+      { key: 's2', mode: 'image', imageUrl: '/b.png', section: '交互设计', verdict: { key: 'v', title: 'ok' } },
+    ],
+    checklist: { key: 'c', title: 'chk', items: [{ id: 'i', label: 'L' }], verdictLabels: ['ok'] },
+  });
+  assert.equal(blocks.find((b) => b.id === 'b-proto-s1').section, 'UI 设计');
+  assert.equal(blocks.find((b) => b.id === 'b-proto-s2').section, '交互设计');
+  assert.equal(blocks.find((b) => b.id === 'b-proto-vrd-v').section, '交互设计');
+  assert.equal(blocks.find((b) => b.id.startsWith('b-chk-')).section, '测试');
+});

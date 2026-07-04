@@ -58,6 +58,7 @@ vibecoding 工作台/
 {
   "id": "b-decision-trigger",    // 跨轮稳定 id（diff 依赖；同一议题保持同 id）
   "type": "markdown",            // 见 2.3
+  "section": "架构",             // 可选：tab 分面类目（§15）；任一块带 section 即启用 tab 导航
   "title": "可选标题",
   "body": "...",                 // markdown / mermaid 源 / 提示文案（按 type 释义）
 
@@ -336,3 +337,18 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 - **布局**：embed 区左右两栏——左=内容（iframe），右=固定宽度评论栏。
 - **数据/反馈**：草稿 `comments:[{id,quote,text,done}]`；**创建不落草稿、保存空内容即丢弃**（不产生空评论）；提交为 `{blockId, type:'pin', value:{quote}, comment}`（quote=引用原文，整体意见为 null）。
 - **局限**：文字锚定按 quote 文本 best-effort 定位/高亮（重复文本可能不精确）；目标页若强依赖自身同源后端，代理下动态请求可能失效（静态展示页无碍）。
+
+---
+
+## 15. tab 分面导航（批次 7，2026-07-04）
+
+restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全局提交确认消除隐藏式 tab 的盲签风险**。
+
+- **协议**：块可选 `section: string`（需求/架构/UI 设计/交互设计/测试/风险…）；content 可选 `sections: string[]` 覆盖类目顺序。无需改 schema（validateBlock 宽容额外字段）；`section` 不进 blockFingerprint（换面不触发 diff）。
+- **启用**：存在 `section` 或 `content.sections` → tab 模式；否则纯注意力分区（向后兼容，老 session 渲染不变）。
+- **canonical 类目**（`constants.DEFAULT_SECTIONS`）：需求 / 架构 / UI 设计 / 交互设计 / 测试 / 风险。全部常显，空面渲染为**灰 tab**（disabled）；无 section 块归「其他」（仅非空时出现）；自定义面追加在 canonical 之后。
+- **tab 角标（防漏看）**：每面 = 未确认决策数；红=含必须确认(`needsDecision && !hasRecommendation`)、橙=只剩可接受(有推荐)、绿=已清零。用户每确认一个即递减（`app.mjs updateFacetBadges`）。
+- **面内顺序**：设计方案(zoneContext) → 必须确认(zoneA) → 可接受(zoneB) → 已设默认(zoneC) → 沉降(zoneSettled)，复用 `renderZoneBody`（各面 zone id 加 `-f<i>` 后缀避免重复）。
+- **默认激活面**：第一个"含未确认必须决策"的非空面；否则第一个非空面。
+- **防盲签四重网**：① 角标常显未确认数（切走也知哪面欠）；② 全局进度「已填 m/X」跨所有面；③ 提交确认弹层列跨所有面未表态项，点击**自动切到所在 tab** 再高亮（jumpToBlock 跨面激活）；④ 提交时"必须决策"未确定 >0 → 弹层顶部红字「⚠️ 还有 X 个必须决策的点没确定」，主按钮变「仍要提交」。
+- **模板产出 section**：`dev-review`（需求/架构/测试）、`design-review`（`screen.section`，默认「UI 设计」，可覆盖「交互设计」；checklist→测试）。

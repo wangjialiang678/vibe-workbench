@@ -50,3 +50,22 @@
 测试：新增 `tests/unit/attention-confirm.test.mjs`(5) + `attention-progress.test.mjs`(5) + 扩 `render.test.mjs`(徽章类/进度文字/无重复前缀 4 条)。
 结果：`npm test` 234 pass / 0 fail（较批次前 +14），三个改动文件 `node --check` 通过。
 未做（属其它批次）：新 block 类型、embed/proxy 安全加固、真实浏览器 E2E、暗色对比度全面复核。
+
+## 批次 7：tab 分面导航（2026-07-04，DESIGN §15）
+
+用户要求 restore prd-studio 六面 tab 体验（真·切换），并加防漏看角标；本批次落地。
+
+| 能力 | 实现 | 文件 |
+|------|------|------|
+| 块 `section` 字段 + `content.sections` | 无需改 schema（validateBlock 宽容）；不进 fingerprint | constants(DEFAULT_SECTIONS/MISC) |
+| 分组/统计/拆分 | groupBySection / sectionPendingStats / hasSections；confirmModel 拆 unansweredMust/Optional | src/protocol/attention.mjs |
+| tab 渲染 | 抽 renderZoneBody(blocks,sfx)；faceted 时 tabBar + 每面 facet(zone id 加 -f<i>)；空面灰 tab；无 section 向后兼容 | src/render/attention-view.mjs |
+| tab 交互 | activateFacet / activateDefaultFacet(第一个含必须决策的面) / updateFacetBadges(红橙绿) / 委托点击；jumpToBlock 跨面激活 | src/render/app.mjs |
+| 提交必须决策警示 | 弹层顶部红字「⚠️ 还有 X 个必须决策的点没确定」+ 主按钮「仍要提交」；fallback confirm 同步 | src/render/app.mjs |
+| 样式 | .tab-nav(sticky) / .tab(active/empty) / .tab-badge(must红/optional橙/done绿) / .confirm-must-warn | src/render/app.css |
+| 模板 section | dev-review(需求/架构/测试)、design-review(screen.section 默认 UI 设计, checklist→测试) | templates/ |
+
+- **面内顺序**：设计方案(zoneContext)→必须(zoneA)→可接受(zoneB)→默认(zoneC)→沉降，复用 renderZoneBody。
+- **防盲签**：角标常显未确认 + 全局进度跨面 + 提交弹层跨面列出并自动切 tab 跳转 + 必须决策红字警示。
+- 测试：新增 `tests/unit/facet-nav.test.mjs`(8) + render(4) + templates(2)；`npm test` 248 pass / 0 fail。
+- **真实浏览器 dogfood**（Playwright 无头截图 facet-demo）：tab 栏/红角标/空面变灰/默认激活/面内顺序 全部符合规格 ✓——首次真机验证前端交互（补上此前评审指出的 E2E 缺口）。

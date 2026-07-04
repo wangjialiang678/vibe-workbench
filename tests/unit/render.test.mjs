@@ -697,3 +697,43 @@ test('renderZones: zoneCFyi 折叠标题无重复前缀', () => {
   assert.ok(out.includes('已为你设好默认（1 项）· fyiX: yes'), `expected single-prefixed summary in: ${out}`);
   assert.ok(!out.includes('默认已设好'), `should not contain the old inner prefix 默认已设好 in: ${out}`);
 });
+
+// ---------- tab 分面导航（DESIGN §15）----------
+
+test('renderZones: 有 section → 渲染 tab-nav + facet + 空面灰 tab', () => {
+  const blocks = [
+    { id: 'need1', section: '需求', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+    { id: 'arch1', section: '架构', type: 'markdown', needsDecision: false, _change: 'new', body: '架构说明' },
+  ];
+  const out = renderZones(blocks, { round: 1 });
+  assert.ok(out.includes('tab-nav'), `expected tab-nav in: ${out.slice(0, 400)}`);
+  assert.ok(out.includes('class="facet"'), 'expected facet panels');
+  assert.ok(out.includes('需求') && out.includes('架构'), 'expected tab labels');
+  assert.ok(out.includes('UI 设计'), 'empty canonical tab still shown');
+  assert.ok(out.includes('tab-empty'), 'empty tab grayed');
+  assert.ok(out.includes('tab-badge'), '需求 面含决策 → 角标');
+});
+
+test('renderZones: 无 section → 不渲染 tab-nav（向后兼容）', () => {
+  const blocks = [{ id: 'p1', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' }];
+  const out = renderZones(blocks, { round: 1 });
+  assert.ok(!out.includes('tab-nav'), 'no section → no tab nav');
+  assert.ok(!out.includes('class="facet"'), 'no facet panels');
+});
+
+test('renderZones: tab 面内 设计方案(叙述) 在 决策 之前', () => {
+  const blocks = [
+    { id: 'ctxb', section: '架构', type: 'markdown', needsDecision: false, _change: 'new', body: '设计方案说明' },
+    { id: 'decb', section: '架构', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+  ];
+  const out = renderZones(blocks, { round: 1 });
+  assert.ok(out.indexOf('ctxb') < out.indexOf('decb'), '面内 zone-context 应在 zone-a 之前');
+});
+
+test('renderZones: tab 角标颜色反映 必须(must)', () => {
+  const blocks = [
+    { id: 'nb', section: '需求', type: 'verdict', needsDecision: true, hasRecommendation: false, _change: 'new' },
+  ];
+  const out = renderZones(blocks, { round: 1 });
+  assert.ok(out.includes('tab-badge-must'), '含必须确认 → 红角标类');
+});
