@@ -6,7 +6,8 @@ export const DEFAULT_SECTIONS = ['需求', '架构', 'UI 设计', '交互设计'
 export const MISC_SECTION = '其他'; // 无 section 归类块的落点（仅非空时出现）
 export const IMPORTANCE_RANK = { high: 0, normal: 1, low: 2 };
 // 'confirm' = 看了但不改（editable「保持原样即确认」）——与"没看"(unanswered) 语义区分（P2 · 病例 5）
-export const FEEDBACK_TYPES = ['select', 'verdict', 'comment', 'edit', 'text', 'pin', 'confirm'];
+// 'move' = 原型编辑模式里拖动/缩放了控件（value: {widgetId, x, y, w, h}，坐标归一化 0-1）
+export const FEEDBACK_TYPES = ['select', 'verdict', 'comment', 'edit', 'text', 'pin', 'confirm', 'move'];
 // 受众分层（iteration-brief P2）：tech 块默认折叠，不占决策者注意力
 export const AUDIENCE = ['decider', 'tech'];
 export const STATES = ['rendered', 'submitted', 'claimed', 'responded', 'error'];

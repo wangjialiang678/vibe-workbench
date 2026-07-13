@@ -795,3 +795,39 @@ test('renderEditable: 提供「保持原样即确认」一键（病例5：editab
   assert.ok(out.includes('保持原样即确认'));
   assert.ok(out.includes('data-editable-confirmed="b-draft"'), '应有确认读态');
 });
+
+// ---------- 线框原型：手机壳 + 编辑模式（复刻 prd-studio 的 protoModes）----------
+
+test('renderPrototype(wireframe): frame:phone → 手机壳 + 刘海', () => {
+  const block = {
+    id: 'b-proto-home', type: 'prototype', mode: 'wireframe', frame: 'phone', _change: 'new',
+    screen: { id: 'home', name: '主界面', widgets: [{ id: 'title', cls: 'label', x: 0.05, y: 0.04, w: 0.6, h: 0.04, text: '会议录音' }] },
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('proto-phone'), '应套手机壳');
+  assert.ok(out.includes('proto-notch'), '应有刘海（更像真机）');
+});
+
+test('renderPrototype(wireframe): 模式工具条（批注/编辑）+ 控件可拖拽钩子', () => {
+  const block = {
+    id: 'b-proto-home', type: 'prototype', mode: 'wireframe', frame: 'phone', _change: 'new',
+    screen: { id: 'home', name: '主界面', widgets: [{ id: 'title', cls: 'label', x: 0.05, y: 0.04, w: 0.6, h: 0.04, text: '会议录音' }] },
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('data-proto-mode="annotate"') && out.includes('data-proto-mode="edit"'), '应有 批注/编辑 两模式');
+  assert.ok(out.includes('data-proto-reset="b-proto-home"'), '应有复位按钮');
+  assert.ok(out.includes('data-mode="annotate"'), '默认批注模式');
+  // 控件带 id + 缩放柄 → 编辑模式可拖动/缩放
+  assert.ok(out.includes('data-proto-widget="b-proto-home"'), '控件应带 blockId 钩子');
+  assert.ok(out.includes('data-widget-id="title"'), '控件应带 widgetId（move 反馈按此定位）');
+  assert.ok(out.includes('data-proto-resize'), '应有缩放柄');
+});
+
+test('renderPrototype(wireframe): 无 frame 时保持原朴素画布（向后兼容）', () => {
+  const out = blockHtml({
+    id: 'b-p', type: 'prototype', mode: 'wireframe', _change: 'new',
+    screen: { id: 's', name: 'x', widgets: [] },
+  });
+  assert.ok(!out.includes('proto-phone'), '无 frame:phone → 不套壳');
+  assert.ok(out.includes('proto-wireframe-canvas'));
+});

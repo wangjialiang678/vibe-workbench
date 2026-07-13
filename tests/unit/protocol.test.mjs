@@ -379,3 +379,12 @@ test('validateFeedback: confirm 是合法的 feedback type（看了不改）', a
   const fb = { session: 's', round: 1, items: [{ blockId: 'e1', type: 'confirm', value: '保持原样' }] };
   assert.equal(validateFeedback(fb).ok, true, JSON.stringify(validateFeedback(fb).errors));
 });
+
+test('validateFeedback: move 是合法 feedback type（原型编辑模式拖动控件）', async () => {
+  const { validateFeedback } = await import('../../src/protocol/schema.mjs');
+  const fb = {
+    session: 's', round: 1,
+    items: [{ blockId: 'b-proto-home', type: 'move', value: { widgetId: 'title', x: 0.14, y: 0.2, w: 0.59, h: 0.04 } }],
+  };
+  assert.equal(validateFeedback(fb).ok, true, JSON.stringify(validateFeedback(fb).errors));
+});

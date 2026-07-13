@@ -198,7 +198,17 @@ export function renderChecklist(block) {
   return `<div class="checklist-group" data-checklist="${bId}">${itemsHtml}</div>`;
 }
 
-// ---------- prototype block（自研零依赖 SVG pin 定位批注）----------
+// ---------- prototype block（自研零依赖 SVG pin 定位批注 + 线框编辑模式）----------
+
+// 模式工具条（仅 wireframe）：批注 / 编辑（移动控件）——复刻 prd-studio 的 protoModes
+function protoModesBar(bId) {
+  return `<div class="proto-modes" data-proto-modes="${bId}">
+  <button type="button" class="proto-mode-btn active" data-proto-mode="annotate">🖊 批注</button>
+  <button type="button" class="proto-mode-btn" data-proto-mode="edit">✥ 编辑（移动控件）</button>
+  <button type="button" class="proto-reset" data-proto-reset="${bId}" hidden>↺ 复位</button>
+  <span class="proto-mode-hint" data-proto-hint="${bId}">点图上任意处落 pin 批注</span>
+</div>`;
+}
 
 export function renderPrototype(block) {
   const bId = escHtml(block.id ?? '');
@@ -216,22 +226,35 @@ export function renderPrototype(block) {
     const screen = block.screen ?? { id: 'screen', name: '原型', widgets: [] };
     const screenName = escHtml(screen.name ?? '');
     const widgets = screen.widgets ?? [];
-    const widgetsHtml = widgets.map((w) => {
+    const widgetsHtml = widgets.map((w, i) => {
+      const wid = escHtml(w.id ?? `w${i}`);
       const x = (w.x ?? 0) * 100;
       const y = (w.y ?? 0) * 100;
       const ww = (w.w ?? 0.1) * 100;
       const wh = (w.h ?? 0.05) * 100;
       const cls = escHtml(w.cls ?? 'rect');
       const text = escHtml(w.text ?? '');
-      return `<div class="proto-widget proto-widget-${cls}"
-  style="position:absolute;left:${x}%;top:${y}%;width:${ww}%;height:${wh}%"
-  title="${text}">${text}</div>`;
+      // data-widget-id + 右下角缩放柄 → 支撑「编辑」模式（拖动/缩放控件，复刻 prd-studio）
+      return `<div class="proto-widget proto-widget-${cls}" data-proto-widget="${bId}" data-widget-id="${wid}"
+  style="left:${x}%;top:${y}%;width:${ww}%;height:${wh}%" title="${text}"><span class="pw-text">${text}</span><span class="pw-resize" data-proto-resize aria-hidden="true"></span></div>`;
     }).join('');
-    innerHtml = `<div class="proto-wireframe-canvas" data-proto-canvas="${bId}" style="position:relative;width:100%;padding-bottom:75%;background:#fff;border:1px solid var(--color-border);overflow:hidden">
-  <div style="position:absolute;inset:0">${widgetsHtml}</div>
-  <div class="proto-screen-label" style="position:absolute;bottom:4px;right:8px;font-size:11px;color:var(--color-text-muted)">${screenName}</div>
-  ${svgOverlay}
+
+    const isPhone = block.frame === 'phone';
+    const body = `<div class="proto-widgets">${widgetsHtml}</div>
+  ${svgOverlay}`;
+
+    const canvas = isPhone
+      ? `<div class="proto-wireframe-canvas proto-phone" data-proto-canvas="${bId}" data-mode="annotate">
+  <div class="proto-notch" aria-hidden="true"></div>
+  ${body}
+</div>`
+      : `<div class="proto-wireframe-canvas" data-proto-canvas="${bId}" data-mode="annotate"
+  style="position:relative;width:100%;padding-bottom:75%;background:#fff;border:1px solid var(--color-border);overflow:hidden">
+  ${body}
+  <div class="proto-screen-label">${screenName}</div>
 </div>`;
+
+    innerHtml = `${protoModesBar(bId)}\n${canvas}`;
   } else if (mode === 'iframe') {
     const src = escHtml(block.src ?? '');
     const encodedSrc = encodeURIComponent(block.src ?? '');

@@ -403,3 +403,15 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 - `prototype` 新增可选 `frame: 'phone'` → 360×740 手机壳呈现（`box-sizing: content-box`，内宽正好 360）。
 - import 自动打 `section` → 六面 tab（需求/架构/UI 设计/交互设计/测试/风险）。
 - 渲染页支持 `?facet=<面名|序号>` 深链，可分享某一面。
+
+### 16.9 线框原型：手机壳 + 「编辑」模式（复刻 prd-studio）
+
+融合时曾把 prd-studio 的 wireframe 拖拽编辑判为"可弃用"，实测用户需要它。本次补回：
+
+- **手机壳**：`prototype` 的 `frame: 'phone'` 现在 **wireframe 与 iframe 都支持** → 360×740 + 10px 黑边 + **刘海 `.proto-notch`**（对齐 prd-studio 的 `.phone`/`.notch`）。import 的 `convertProto` 自动打 `frame:'phone'`。
+- **模式工具条**（仅 wireframe）：`🖊 批注` / `✥ 编辑（移动控件）` / `↺ 复位`。
+  - 批注模式：SVG overlay 捕获点击落 pin（原行为）。
+  - 编辑模式：overlay 让位（`pointer-events:none`），控件显示虚线轮廓 + 右下角缩放柄，可**拖动移位 / 拖角缩放**。
+- **零依赖实现**：不引 interact.js，用原生 pointer events（`pointerdown/move/up` + `setPointerCapture`，带 try/catch 防无效 pointerId）；`touch-action:none` 保证移动端可拖。
+- **反馈协议**：`FEEDBACK_TYPES` 新增 `move` → `{blockId, type:'move', value:{widgetId, x, y, w, h}}`，坐标**归一化 0-1**（与 block 的 widget 坐标同制）。草稿存 `draft[blockId].moves`，跨刷新可还原，可一键复位。
+- 真机 dogfood（chrome-devtools）：点编辑 → 画布 `data-mode=edit`；拖动 title 控件 → `top 4.44% → 20.23%`、草稿写入 `moves:{title:{x,y,w,h}}`；复位还原。

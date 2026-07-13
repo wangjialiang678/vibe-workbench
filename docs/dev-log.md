@@ -89,3 +89,13 @@
 - 测试：`lint.test.mjs`(8) + render(5) + protocol(3) + attention(1) + server P0 回归(4)；`npm test` **268 pass / 0 fail**。
 - **实证**：把 prd-studio 的 recorder-app 真实数据导进 Vibe → 65 块 / 六面全满（需求22·架构11·**UI设计10**·交互设计4·测试14·风险4）；浏览器 dogfood 确认 **10 个高保真手机屏在手机壳里正常渲染 + 可落 pin 批注**。
 - **lint 实战命中**：该份 recorder-app 的决策块**全部缺 background/why** —— 正是创始人抱怨的"没背景"病根，lint 一次全抓出来。
+
+## 批次 8b：线框原型手机壳 + 编辑模式（2026-07-13，DESIGN §16.9）
+
+用户反馈：「UI 设计里原先 PRD 工作台有编辑模式，可以移动 UI 上的按钮位置」「当时的界面更像手机界面」。
+核准：prd-studio 的**编辑模式挂在「交互原型」面**（`protoModes` 预览/编辑/批注，interact.js 拖拽），UI 面只有预览/批注；`.phone` 手机壳 + `.notch` 刘海 proto 与 ui 都套。融合时拖拽编辑被判"可弃用"——现补回。
+
+- `prototype` 的 `frame:'phone'` 扩展到 **wireframe**（此前只有 iframe）；新增 `.proto-notch` 刘海。
+- 模式工具条：批注 / **编辑（移动控件）** / 复位；编辑态控件虚线轮廓 + 缩放柄。
+- **零依赖**原生 pointer events 实现拖动/缩放（不引 interact.js）；`FEEDBACK_TYPES` 新增 `move`，归一化 0-1 坐标随反馈回传。
+- 测试 +4（`npm test` **272 pass / 0 fail**）；chrome-devtools 真机验证拖拽、草稿落盘、复位全通。

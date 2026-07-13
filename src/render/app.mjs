@@ -41,6 +41,112 @@ if ($sessionComment) {
   });
 }
 
+// ── 原型「编辑」模式：拖动 / 缩放控件（零依赖原生 pointer events，复刻 prd-studio 的 interact.js 拖拽）──
+function bindPrototypeEdit() {
+  // 模式切换（批注 / 编辑）
+  $zones.querySelectorAll('[data-proto-modes]').forEach((bar) => {
+    const bid = bar.dataset.protoModes;
+    const canvas = $zones.querySelector(`[data-proto-canvas="${cssEsc(bid)}"]`);
+    if (!canvas) return;
+    bar.querySelectorAll('[data-proto-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const m = btn.dataset.protoMode;
+        canvas.dataset.mode = m;
+        bar.querySelectorAll('[data-proto-mode]').forEach((b) => b.classList.toggle('active', b === btn));
+        const hint = bar.querySelector('[data-proto-hint]');
+        if (hint) {
+          hint.textContent = m === 'edit'
+            ? '拖动控件移位；拖右下角缩放。改动随反馈一起提交给 AI'
+            : '点图上任意处落 pin 批注';
+        }
+      });
+    });
+    bar.querySelector('[data-proto-reset]')?.addEventListener('click', () => resetMoves(bid));
+    updateResetBtn(bid);
+  });
+
+  // 每个控件绑拖拽/缩放
+  $zones.querySelectorAll('[data-proto-widget]').forEach(bindWidgetDrag);
+}
+
+function bindWidgetDrag(w) {
+  const bid = w.dataset.protoWidget;
+  const wid = w.dataset.widgetId;
+  const canvas = $zones.querySelector(`[data-proto-canvas="${cssEsc(bid)}"]`);
+  if (!canvas) return;
+
+  w.addEventListener('pointerdown', (e) => {
+    if (canvas.dataset.mode !== 'edit') return;          // 仅编辑模式响应
+    const resizing = !!e.target.closest('[data-proto-resize]');
+    e.preventDefault();
+    e.stopPropagation();
+    try { w.setPointerCapture(e.pointerId); } catch { /* 无效 pointerId（如合成事件）→ 不影响拖拽 */ }
+
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX, sy = e.clientY;
+    const x0 = parseFloat(w.style.left) || 0;
+    const y0 = parseFloat(w.style.top) || 0;
+    const w0 = parseFloat(w.style.width) || 10;
+    const h0 = parseFloat(w.style.height) || 5;
+
+    const onMove = (ev) => {
+      const dx = ((ev.clientX - sx) / rect.width) * 100;
+      const dy = ((ev.clientY - sy) / rect.height) * 100;
+      if (resizing) {
+        w.style.width = `${Math.max(3, Math.min(100 - x0, w0 + dx))}%`;
+        w.style.height = `${Math.max(1.5, Math.min(100 - y0, h0 + dy))}%`;
+      } else {
+        w.style.left = `${Math.max(0, Math.min(100 - w0, x0 + dx))}%`;
+        w.style.top = `${Math.max(0, Math.min(100 - h0, y0 + dy))}%`;
+      }
+    };
+    const onUp = () => {
+      w.removeEventListener('pointermove', onMove);
+      w.removeEventListener('pointerup', onUp);
+      saveMove(bid, wid, {
+        x: (parseFloat(w.style.left) || 0) / 100,
+        y: (parseFloat(w.style.top) || 0) / 100,
+        w: (parseFloat(w.style.width) || 0) / 100,
+        h: (parseFloat(w.style.height) || 0) / 100,
+      });
+      w.classList.add('pw-moved');
+      updateResetBtn(bid);
+    };
+    w.addEventListener('pointermove', onMove);
+    w.addEventListener('pointerup', onUp);
+  });
+}
+
+function saveMove(bid, wid, geo) {
+  const cur = loadDraft()[bid] ?? {};
+  saveDraft({ [bid]: { ...cur, moves: { ...(cur.moves ?? {}), [wid]: geo } } });
+}
+
+function resetMoves(bid) {
+  const cur = { ...(loadDraft()[bid] ?? {}) };
+  delete cur.moves;
+  saveDraft({ [bid]: cur });
+  loadAndRender();                                        // 重渲染回原位
+}
+
+function updateResetBtn(bid) {
+  const btn = $zones.querySelector(`[data-proto-reset="${cssEsc(bid)}"]`);
+  if (btn) btn.hidden = Object.keys(loadDraft()[bid]?.moves ?? {}).length === 0;
+}
+
+function restoreMoves(blockId, moves) {
+  Object.entries(moves ?? {}).forEach(([wid, g]) => {
+    const w = $zones.querySelector(`[data-proto-widget="${cssEsc(blockId)}"][data-widget-id="${cssEsc(wid)}"]`);
+    if (!w) return;
+    w.style.left = `${(g.x ?? 0) * 100}%`;
+    w.style.top = `${(g.y ?? 0) * 100}%`;
+    w.style.width = `${(g.w ?? 0) * 100}%`;
+    w.style.height = `${(g.h ?? 0) * 100}%`;
+    w.classList.add('pw-moved');
+  });
+  updateResetBtn(blockId);
+}
+
 // editable「保持原样即确认」的读态切换（P2 · 病例 5）
 function markEditableConfirmed(bid) {
   const btn = $zones.querySelector(`[data-editable-confirm="${cssEsc(bid)}"]`);
@@ -147,6 +253,10 @@ function restoreDraftUI(draft) {
     // editable「保持原样即确认」：还原确认态（P2）
     if (item.confirmed === true) {
       markEditableConfirmed(blockId);
+    }
+    // 原型控件移动：还原到用户拖过的位置
+    if (item.moves && typeof item.moves === 'object') {
+      restoreMoves(blockId, item.moves);
     }
     // 内联批注（普通 block）：还原为读态
     if (item.comment != null && item.comment !== '') {
@@ -788,6 +898,9 @@ function bindInteractions() {
     });
   });
 
+  // 原型编辑模式：拖动/缩放控件（复刻 prd-studio 的「编辑」模式）
+  bindPrototypeEdit();
+
   // editable「保持原样即确认」（P2 · 病例 5：确认场景用 editable 是高摩擦）
   $zones.querySelectorAll('[data-editable-confirm]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1004,6 +1117,12 @@ async function doSubmit(draft, answeredIds, unanswered) {
         if (label) {
           entries.push({ blockId, type: 'select', value: `${itemId}:${label}` });
         }
+      });
+    }
+    // 原型控件移动（编辑模式）→ 每个被拖过的控件产生一条 move feedback（含归一化几何）
+    if (item.moves && typeof item.moves === 'object') {
+      Object.entries(item.moves).forEach(([widgetId, g]) => {
+        entries.push({ blockId, type: 'move', value: { widgetId, ...g } });
       });
     }
     // prototype pin 批注 → 每条有文本的 pin 产生一条 pin feedback

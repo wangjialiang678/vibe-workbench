@@ -1296,3 +1296,80 @@ svg.proto-overlay {
 @media (max-width: 420px) {
   .proto-phone { height: 78vh; border-width: 8px; border-radius: 30px; }
 }
+
+/* ===== 手机壳刘海（更像真机，对齐 prd-studio 的 .notch）===== */
+.proto-notch {
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 130px; height: 24px;
+  background: #11161e;
+  border-radius: 0 0 16px 16px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* ===== 线框原型：手机壳内画布 + 控件 ===== */
+.proto-wireframe-canvas.proto-phone { background: var(--color-surface); }
+.proto-widgets { position: absolute; inset: 0; }
+.proto-widget {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 4px;
+  border-radius: 10px;
+  font-size: 13px;
+  user-select: none;
+  overflow: hidden;
+}
+.pw-text { pointer-events: none; }
+.proto-screen-label {
+  position: absolute; bottom: 4px; right: 8px;
+  font-size: 11px; color: var(--color-text-muted);
+}
+
+/* ===== 原型模式工具条（批注 / 编辑）===== */
+.proto-modes {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; flex-wrap: wrap;
+}
+.proto-mode-btn, .proto-reset {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.proto-mode-btn.active {
+  background: var(--color-focus);
+  color: #fff;
+  border-color: var(--color-focus);
+  font-weight: 600;
+}
+.proto-reset { color: var(--color-zone-b); border-color: var(--color-zone-b); }
+.proto-mode-hint { font-size: 12px; color: var(--color-text-muted); }
+
+/* 编辑模式：pin 浮层让位，控件可拖拽/缩放 */
+.proto-wireframe-canvas[data-mode="edit"] .proto-overlay { pointer-events: none !important; }
+.proto-wireframe-canvas[data-mode="edit"] .proto-widget {
+  cursor: move;
+  outline: 1px dashed var(--color-focus);
+  touch-action: none;               /* 让 pointer 事件接管手势，移动端可拖 */
+}
+.pw-resize { display: none; }
+.proto-wireframe-canvas[data-mode="edit"] .pw-resize {
+  display: block;
+  position: absolute;
+  right: -4px; bottom: -4px;
+  width: 12px; height: 12px;
+  border-radius: 3px;
+  background: var(--color-focus);
+  border: 2px solid #fff;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.proto-widget.pw-moved { outline: 2px solid var(--color-zone-b); }

@@ -302,6 +302,7 @@ function convertProto(proto, blocks) {
       type: 'prototype',
       title: screen.name ?? null,
       mode: 'wireframe',
+      frame: 'phone',            // 线框也套手机壳（对齐 prd-studio 观感）
       screen: {
         id: screen.id ?? id,
         name: screen.name ?? null,
