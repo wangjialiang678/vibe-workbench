@@ -25,6 +25,29 @@ const $statusMount  = document.getElementById('status-badge-mount');
 const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
 const $sessionLabel = document.getElementById('session-label');
+const $sessionComment = document.getElementById('session-comment-input');   // 会话级留言（P1）
+
+// CSS 选择器防守（id 含特殊字符时不失效）
+function cssEsc(v) {
+  return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(String(v)) : String(v);
+}
+
+// 会话级留言草稿键（与块草稿分开存，避免污染 answeredIds）
+function scKey() { return `wb:${SESSION}:${currentRound}:sc`; }
+
+if ($sessionComment) {
+  $sessionComment.addEventListener('input', () => {
+    try { localStorage.setItem(scKey(), $sessionComment.value); } catch { /* 忽略 */ }
+  });
+}
+
+// editable「保持原样即确认」的读态切换（P2 · 病例 5）
+function markEditableConfirmed(bid) {
+  const btn = $zones.querySelector(`[data-editable-confirm="${cssEsc(bid)}"]`);
+  const tag = $zones.querySelector(`[data-editable-confirmed="${cssEsc(bid)}"]`);
+  if (btn) btn.hidden = true;
+  if (tag) tag.hidden = false;
+}
 const $confirmDialog = document.getElementById('confirm-dialog');
 
 function updateSessionLabel() {
@@ -78,6 +101,11 @@ async function loadAndRender() {
   // 恢复草稿 UI（简单：遍历 textarea/input）
   restoreDraftUI(loadDraft());
 
+  // 恢复会话级留言草稿（P1）
+  if ($sessionComment) {
+    try { $sessionComment.value = localStorage.getItem(scKey()) ?? ''; } catch { /* 忽略 */ }
+  }
+
   // 决策进度：按已恢复草稿初始化「已填 m/X」（DESIGN §13 P2）+ tab 角标
   updateDecisionProgress();
 
@@ -115,6 +143,10 @@ function restoreDraftUI(draft) {
     if (item.select != null) {
       const inp = $zones.querySelector(`input[name="choice-${blockId}"][value="${item.select}"]`);
       if (inp) inp.checked = true;
+    }
+    // editable「保持原样即确认」：还原确认态（P2）
+    if (item.confirmed === true) {
+      markEditableConfirmed(blockId);
     }
     // 内联批注（普通 block）：还原为读态
     if (item.comment != null && item.comment !== '') {
@@ -756,6 +788,17 @@ function bindInteractions() {
     });
   });
 
+  // editable「保持原样即确认」（P2 · 病例 5：确认场景用 editable 是高摩擦）
+  $zones.querySelectorAll('[data-editable-confirm]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const bid = btn.dataset.editableConfirm;
+      const cur = loadDraft()[bid] ?? {};
+      saveDraft({ [bid]: { ...cur, confirmed: true } });
+      markEditableConfirmed(bid);
+      updateDecisionProgress();
+    });
+  });
+
   // 只看变更开关
   const toggle = $diffMount.querySelector('#diff-only-changed');
   if (toggle) {
@@ -899,10 +942,20 @@ function activateFacet(idx) {
   });
 }
 
-// 按当前草稿选默认激活面：第一个"含未确认必须决策"的非空面；否则第一个非空面
+// 按当前草稿选默认激活面：URL ?facet=<面名|序号> 优先；否则第一个"含未确认必须决策"的非空面；再否则第一个非空面
 function activateDefaultFacet() {
   if (!$zones.querySelector('.tab-nav')) return;   // 非 tab 模式
   const groups = groupBySection(_blocks, _sectionData);
+
+  // 深链：?facet=UI 设计 / ?facet=2（可分享某一面）
+  const want = params.get('facet');
+  if (want) {
+    const byName = groups.findIndex((g) => g.section === want);
+    const byIdx = Number.isInteger(Number(want)) ? Number(want) : -1;
+    const hit = byName !== -1 ? byName : (groups[byIdx] ? byIdx : -1);
+    if (hit !== -1) { activateFacet(hit); return; }
+  }
+
   const draft = loadDraft();
   let idx = groups.findIndex((g) => g.blocks.length && sectionPendingStats(g.blocks, draft).must > 0);
   if (idx === -1) idx = groups.findIndex((g) => g.blocks.length);
@@ -932,7 +985,9 @@ async function doSubmit(draft, answeredIds, unanswered) {
     if (item.verdict) entries.push({ blockId, type: 'verdict', value: item.verdict, comment: item.comment });
     else if (item.select) entries.push({ blockId, type: 'select', value: item.select, comment: item.comment });
     else if (item.text) entries.push({ blockId, type: 'text', value: item.text, comment: item.comment });
-    if (item.comment && !item.verdict && !item.select && !item.text) {
+    // 看了但不改（P2 · 病例 5）：与"没看"(unanswered) 语义区分
+    else if (item.confirmed === true) entries.push({ blockId, type: 'confirm', value: '保持原样', comment: item.comment });
+    if (item.comment && !item.verdict && !item.select && !item.text && item.confirmed !== true) {
       entries.push({ blockId, type: 'comment', value: null, comment: item.comment });
     }
     // embed 飞书式评论 → 每条有文本的评论产生一条 feedback item
@@ -972,7 +1027,8 @@ async function doSubmit(draft, answeredIds, unanswered) {
     round: Number(currentRound),
     submittedAt: new Date().toISOString(),
     items,
-    unanswered,
+    unanswered,                                                    // = 需决策但"没看/未操作"（不含"看了不改"）
+    sessionComment: ($sessionComment?.value ?? '').trim() || null,  // 会话级留言（P1 · 病例 6）
   };
 
   let resp;

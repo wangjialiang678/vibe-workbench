@@ -352,3 +352,54 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 - **默认激活面**：第一个"含未确认必须决策"的非空面；否则第一个非空面。
 - **防盲签四重网**：① 角标常显未确认数（切走也知哪面欠）；② 全局进度「已填 m/X」跨所有面；③ 提交确认弹层列跨所有面未表态项，点击**自动切到所在 tab** 再高亮（jumpToBlock 跨面激活）；④ 提交时"必须决策"未确定 >0 → 弹层顶部红字「⚠️ 还有 X 个必须决策的点没确定」，主按钮变「仍要提交」。
 - **模板产出 section**：`dev-review`（需求/架构/测试）、`design-review`（`screen.section`，默认「UI 设计」，可覆盖「交互设计」；checklist→测试）。
+
+---
+
+## 16. 内容可理解性协议（批次 8，2026-07-13 实战反馈落地）
+
+来源：`docs/iteration-brief-2026-07-13.md` + `docs/feedback-examples-2026-07-13.md`（Michael 实战 4 轮）。
+根因：**没有背景的决策块不是"没人答"，而是产出零质量的伪决策**——用户照样点推荐项，作者不敢采信，白费一轮。
+
+### 16.1 决策块结构化（创始人加权·最高 UX 优先级）
+块新增**可选**字段，渲染器按固定次序呈现，缺失字段不渲染（向后兼容）：
+
+| 字段 | 含义 |
+|---|---|
+| `background` | 背景：这东西是谁做的、现在什么状态、为什么突然要处置它（一句话本质类比优先） |
+| `why` | 为什么需要你定、为什么是现在（含四维自评：有无标准答案 / 置信度 / 重要性 / **可回退性**） |
+| `options[].pros` / `.cons` | 选项**利弊**：讲后果，不讲机制（替代把一切塞进 `desc`） |
+| `recommendReason` | 推荐理由 |
+
+渲染次序：**背景 → 为什么需要你定 → 选项（各带利弊）→ 推荐及理由**。
+四字段均进 `blockFingerprint` → AI 补了背景，该轮标 CHANGED。
+
+### 16.2 作者侧 lint（`src/protocol/lint.mjs`）
+`present`/`render` 时跑，**warn 不阻断**，打 stderr。7 条规则全部对应真实病例：
+`missing-background` · `missing-why` · `missing-proscons` · `missing-recommend-reason` · `editable-for-confirm` · `multi-question` · `unexplained-jargon`。
+规范见 `docs/authoring-guide.md`。
+
+### 16.3 受众分层
+块可选 `audience: "decider" | "tech"`。`tech` → 整块折叠进「🔧 技术细节（决策者可跳过）」。
+依据：`needsDecision:false` **不等于"不占注意力"**（病例 2）。
+
+### 16.4 live 实时系统标识
+`embed` / `prototype(iframe)` 可选 `live: true` → 红框 + 「⚡ 实时系统 · 就地操作会真实生效」角标。
+依据：**文案救不了 affordance**——标题写了"真实产物"用户仍当样例（病例 7）。实时性感知必须靠视觉层。
+
+### 16.5 会话级留言
+渲染页常驻「💬 给 AI 留言」输入区 → `feedback.sessionComment`（string，可空）。
+依据：用户被迫把给工作台的全局反馈挂在不相干块的批注里（病例 6）。
+
+### 16.6 确认场景低摩擦
+`editable` 提供「✓ 保持原样即确认」一键 → feedback `type: 'confirm'`（**看了不改**），与 `unanswered`（**没看**）语义区分。
+依据：行为数据——预填 editable 连续两轮无人应答，改 verdict 后当轮通过（病例 5）。
+
+### 16.7 embed 代理支持非 GET（P0 bug 修复）
+`/api/proxy` 支持 GET/POST/PUT/DELETE：透传 method / body / Content-Type，回传真实状态码与 content-type；
+`rewriteEmbedHtml` 把**表单 action 与 fetch/XHR 改写回代理通道**（此前 `<base href>` 让它们直接打回原站 → 字段/凭证丢失，实证 bug）。
+
+### 16.8 富渲染最后一公里
+- `scripts/import-prd-project.mjs` 补 `convertUI`：prd-studio 的 `ui.screens[]` → `prototype(mode:'iframe', src, frame:'phone')`（此前整个 convertUI 缺失，10 个高保真屏进不来）。
+- `prototype` 新增可选 `frame: 'phone'` → 360×740 手机壳呈现（`box-sizing: content-box`，内宽正好 360）。
+- import 自动打 `section` → 六面 tab（需求/架构/UI 设计/交互设计/测试/风险）。
+- 渲染页支持 `?facet=<面名|序号>` 深链，可分享某一面。

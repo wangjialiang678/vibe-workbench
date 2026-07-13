@@ -1170,3 +1170,129 @@ svg.proto-overlay {
   padding: 0 6px;
 }
 .confirm-ok-warn { background: var(--color-zone-a); }
+
+/* ===== 决策块结构化（iteration-brief P1 · 创始人加权最高优先级）===== */
+/* 固定四段：背景 → 为什么需要你定 → 选项(含利弊) → 推荐及理由 */
+.decision-context { margin: 10px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.decision-seg {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--color-surface-2, var(--color-surface));
+  border-left: 3px solid var(--color-border);
+}
+.decision-bg  { border-left-color: var(--color-focus); }
+.decision-why { border-left-color: var(--color-zone-b); }
+.decision-rec { border-left-color: var(--color-zone-cr); margin-top: 10px; }
+.decision-h {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--color-text-muted);
+}
+.decision-text { font-size: 14px; line-height: 1.65; }
+.decision-text > *:first-child { margin-top: 0; }
+.decision-text > *:last-child { margin-bottom: 0; }
+
+/* 选项利弊：讲后果，不讲机制 */
+.choice-item { margin-bottom: 8px; }
+.opt-proscons {
+  margin: 4px 0 2px 26px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 13px;
+}
+.opt-pros, .opt-cons { margin: 0; padding-left: 16px; list-style: none; }
+.opt-pros li, .opt-cons li { position: relative; line-height: 1.55; }
+.opt-pros li::before { content: "＋"; position: absolute; left: -16px; color: var(--color-status-ok); font-weight: 700; }
+.opt-cons li::before { content: "−"; position: absolute; left: -16px; color: var(--color-zone-a); font-weight: 700; }
+
+/* ===== live embed：⚡实时系统（P1 · 病例 7：文案救不了 affordance，必须靠视觉）===== */
+.block[data-live="true"] {
+  border: 2px solid var(--color-zone-a);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-zone-a) 10%, transparent);
+}
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--color-zone-a);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ===== 受众分层：技术块默认折叠（P2 · 病例 2「感觉看不太懂这些信息」）===== */
+.block-tech { padding: 0; border-style: dashed; }
+.tech-fold > .tech-summary {
+  cursor: pointer;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  list-style: none;
+}
+.tech-fold > .tech-summary::-webkit-details-marker { display: none; }
+.tech-fold[open] > .tech-summary { border-bottom: 1px solid var(--color-border); }
+.tech-fold > *:not(.tech-summary) { padding: 0 16px; }
+.tech-fold > *:last-child { padding-bottom: 12px; }
+
+/* ===== 会话级常驻留言（P1 · 病例 6）===== */
+.session-comment {
+  margin: 28px 0 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.session-comment-h { margin: 0 0 2px; font-size: 14px; }
+.session-comment-hint { margin: 0 0 8px; font-size: 12px; color: var(--color-text-muted); }
+.session-comment-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+/* ===== editable 一键确认（P2 · 病例 5）===== */
+.editable-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.editable-confirm {
+  padding: 5px 12px;
+  border: 1px solid var(--color-status-ok);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--color-status-ok);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.editable-confirm:hover { background: color-mix(in srgb, var(--color-status-ok) 12%, transparent); }
+.editable-confirmed { color: var(--color-status-ok); font-size: 13px; font-weight: 600; }
+
+/* ===== 高保真原型：手机壳（frame:'phone'，对齐 prd-studio 观感）===== */
+.proto-phone {
+  position: relative;
+  /* content-box：内宽正好 360px（高保真稿按 360 视口设计），边框不占内容宽度 */
+  box-sizing: content-box;
+  width: 360px;
+  max-width: 94vw;
+  height: 740px;
+  margin: 0 auto;
+  border: 10px solid #11161e;
+  border-radius: 38px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 8px 28px rgba(0,0,0,.18);
+}
+.proto-phone .proto-iframe { border-radius: 28px; }
+@media (max-width: 420px) {
+  .proto-phone { height: 78vh; border-width: 8px; border-radius: 30px; }
+}

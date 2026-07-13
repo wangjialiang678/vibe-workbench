@@ -737,3 +737,61 @@ test('renderZones: tab 角标颜色反映 必须(must)', () => {
   const out = renderZones(blocks, { round: 1 });
   assert.ok(out.includes('tab-badge-must'), '含必须确认 → 红角标类');
 });
+
+// ---------- 决策块结构化 / live / 受众分层 / editable 确认（iteration-brief 2026-07-13）----------
+
+test('blockHtml: 决策块四段式——背景 → 为什么需要你定 → 选项(含利弊) → 推荐及理由', () => {
+  const block = {
+    id: 'b-afx', type: 'choice', _change: 'new',
+    title: 'AFX 处置', needsDecision: true, hasRecommendation: true, recommendation: 'disable',
+    background: '仓库里已经住着一个老版的自动修理工。',
+    why: '一个仓库不能住两个自动修理工。',
+    recommendReason: '不删代码，完全可回退。',
+    options: [
+      { id: 'disable', label: '停用', pros: ['不再抢着改同一份代码'], cons: ['本地通道暂时用不了'] },
+      { id: 'coexist', label: '共存', cons: ['会互相制造合并冲突'] },
+    ],
+  };
+  const out = blockHtml(block);
+  assert.ok(out.includes('背景'), '应有背景段');
+  assert.ok(out.includes('为什么需要你定'), '应有 why 段');
+  assert.ok(out.includes('推荐及理由'), '应有推荐理由段');
+  assert.ok(out.includes('opt-pros') && out.includes('opt-cons'), '应渲染利弊');
+  assert.ok(out.includes('不再抢着改同一份代码') && out.includes('会互相制造合并冲突'));
+  // 次序：背景 → why → 选项 → 推荐理由
+  assert.ok(out.indexOf('背景') < out.indexOf('为什么需要你定'), '背景应在 why 之前');
+  assert.ok(out.indexOf('为什么需要你定') < out.indexOf('choice-group'), 'why 应在选项之前');
+  assert.ok(out.indexOf('choice-group') < out.indexOf('推荐及理由'), '推荐理由应在选项之后');
+});
+
+test('blockHtml: 无新字段的老块渲染不变（向后兼容）', () => {
+  const out = blockHtml({ id: 'b-old', type: 'choice', _change: 'new', options: [{ id: 'a', label: 'A' }] });
+  assert.ok(!out.includes('decision-context'), '无 background/why → 不渲染决策上下文');
+  assert.ok(!out.includes('opt-proscons'), '无利弊 → 不渲染利弊区');
+  assert.ok(!out.includes('推荐及理由'));
+  assert.ok(out.includes('choice-group'), '选项仍正常渲染');
+});
+
+test('blockHtml: live:true → ⚡实时系统角标 + data-live（病例7：视觉层，不靠文案）', () => {
+  const out = blockHtml({ id: 'b-live', type: 'embed', url: 'http://x/y', live: true, _change: 'new' });
+  assert.ok(out.includes('data-live="true"'), '应有 data-live 属性');
+  assert.ok(out.includes('live-badge') && out.includes('⚡ 实时系统'), '应有实时系统角标');
+  const plain = blockHtml({ id: 'b-demo', type: 'embed', url: 'http://x/y', _change: 'new' });
+  assert.ok(!plain.includes('data-live'), '无 live 字段 → 行为不变');
+});
+
+test('blockHtml: audience:"tech" → 折叠进「技术细节」（病例2：不占决策者注意力）', () => {
+  const out = blockHtml({ id: 'b-yaml', type: 'code', lang: 'yaml', body: 'verify:', audience: 'tech', title: 'verify 草案', _change: 'new' });
+  assert.ok(out.includes('data-audience="tech"'));
+  assert.ok(out.includes('<details class="tech-fold">'), '应折叠');
+  assert.ok(out.includes('技术细节'), '折叠标题应说明可跳过');
+  const normal = blockHtml({ id: 'b-n', type: 'code', body: 'x', _change: 'new' });
+  assert.ok(!normal.includes('tech-fold'), '默认不折叠');
+});
+
+test('renderEditable: 提供「保持原样即确认」一键（病例5：editable 是高摩擦）', () => {
+  const out = blockHtml({ id: 'b-draft', type: 'editable', value: '草稿正文', needsDecision: true, _change: 'new' });
+  assert.ok(out.includes('data-editable-confirm="b-draft"'), '应有一键确认按钮');
+  assert.ok(out.includes('保持原样即确认'));
+  assert.ok(out.includes('data-editable-confirmed="b-draft"'), '应有确认读态');
+});

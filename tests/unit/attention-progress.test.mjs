@@ -42,3 +42,15 @@ test('countAnsweredDecisions: 空草稿 = 0，不抛错', () => {
   assert.equal(countAnsweredDecisions(blocks, undefined), 0);
   assert.equal(countAnsweredDecisions([], {}), 0);
 });
+
+// P2 · 病例5：editable「保持原样即确认」算已答（与"没看"区分）
+test('countAnsweredDecisions: confirmed=true（看了不改）计入已答', async () => {
+  const { countAnsweredDecisions, unansweredDecisions } = await import('../../src/protocol/attention.mjs');
+  const blocks = [
+    { id: 'e1', type: 'editable', needsDecision: true, _change: 'new' },
+    { id: 'e2', type: 'editable', needsDecision: true, _change: 'new' },
+  ];
+  assert.equal(countAnsweredDecisions(blocks, { e1: { confirmed: true } }), 1);
+  // 未确认的才算 unanswered（"没看"）；"看了不改"不再算未表态
+  assert.deepEqual(unansweredDecisions(blocks, ['e1']), ['e2']);
+});

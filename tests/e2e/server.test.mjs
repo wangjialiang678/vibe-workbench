@@ -485,3 +485,83 @@ test('GET /api/content — 上轮无反馈的 unchanged 块不得 _decidedInPrev
   assert.equal(blkA._decidedInPrev, true, 'blk-a 上轮有反馈 + unchanged → _decidedInPrev=true');
   assert.ok(!blkB._decidedInPrev, 'blk-b 上轮无反馈 → 不得 _decidedInPrev（即使 unchanged）');
 });
+
+// ---- P0：embed 代理转发 POST（iteration-brief 2026-07-13，实证 bug 回归）----
+
+async function startEcho() {
+  const { createServer } = await import('node:http');
+  const srv = createServer((req, res) => {
+    if (req.url.startsWith('/deny')) {
+      res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: '口令无效' }));
+      return;
+    }
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        method: req.method,
+        contentType: req.headers['content-type'] ?? null,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+  });
+  srv.listen(0);
+  await new Promise((r) => srv.once('listening', r));
+  return { srv, port: srv.address().port };
+}
+
+test('POST /api/proxy: 表单字段经代理无损到达目标（口令不再丢失）', async () => {
+  const { srv, port: ep } = await startEcho();
+  try {
+    const target = `http://127.0.0.1:${ep}/decide`;
+    const form = 'token=secret123&choice=approve&note=%E5%90%8C%E6%84%8F';
+    const res = await fetch(url(`/api/proxy?url=${encodeURIComponent(target)}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form,
+    });
+    assert.equal(res.status, 200);
+    const echoed = await res.json();
+    assert.equal(echoed.method, 'POST', 'method 应透传');
+    assert.match(echoed.contentType, /x-www-form-urlencoded/);
+    assert.equal(echoed.body, form, '表单字段必须无损到达（口令字段不得丢失）');
+  } finally { srv.close(); }
+});
+
+test('POST /api/proxy: JSON body 与 Content-Type 透传', async () => {
+  const { srv, port: ep } = await startEcho();
+  try {
+    const target = `http://127.0.0.1:${ep}/api/x`;
+    const payload = JSON.stringify({ token: 'k', ok: true });
+    const res = await fetch(url(`/api/proxy?url=${encodeURIComponent(target)}`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    const echoed = await res.json();
+    assert.equal(echoed.method, 'POST');
+    assert.match(echoed.contentType, /application\/json/);
+    assert.equal(echoed.body, payload);
+  } finally { srv.close(); }
+});
+
+test('/api/proxy: 非 HTML 响应原样回传，目标状态码保真（403 不被吞成 200）', async () => {
+  const { srv, port: ep } = await startEcho();
+  try {
+    const target = `http://127.0.0.1:${ep}/deny`;
+    const res = await fetch(url(`/api/proxy?url=${encodeURIComponent(target)}`));
+    assert.equal(res.status, 403, '目标真实状态码应透传');
+    const body = await res.json();
+    assert.equal(body.error, '口令无效');
+  } finally { srv.close(); }
+});
+
+test('rewriteEmbedHtml: 表单 action 改写回代理通道 + 注入 fetch/XHR 补丁', () => {
+  const html = '<html><head></head><body><form method="post" action="/decide"><input name="token"></form></body></html>';
+  const out = rewriteEmbedHtml(html, 'http://127.0.0.1:8123/decisions', 'http://127.0.0.1:8099');
+  assert.ok(out.includes('action="http://127.0.0.1:8099/api/proxy?url='), `form action 应指向代理: ${out}`);
+  assert.ok(out.includes(encodeURIComponent('http://127.0.0.1:8123/decide')), '应保留解析后的绝对目标');
+  assert.ok(out.includes('XMLHttpRequest.prototype.open'), '应注入 fetch/XHR 补丁');
+});

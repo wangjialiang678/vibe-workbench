@@ -348,3 +348,34 @@ test('errorRetryable + badgeFor', () => {
   assert.equal(badgeFor('processing').retry, 'force');
   assert.match(badgeFor('processing', { elapsedSec: 23 }).text, /23s/);
 });
+
+// iteration-brief 2026-07-13：新增可选字段（全部向后兼容）
+test('validateBlock: 决策块结构化字段合法通过 / 类型错报错', async () => {
+  const { validateBlock } = await import('../../src/protocol/schema.mjs');
+  const good = {
+    id: 'b1', type: 'choice', needsDecision: true,
+    background: '背景', why: '为什么', recommendReason: '理由',
+    audience: 'decider', live: false,
+    options: [{ id: 'a', label: 'A', pros: ['好'], cons: ['坏'] }],
+  };
+  assert.equal(validateBlock(good).ok, true, JSON.stringify(validateBlock(good).errors));
+  assert.equal(validateBlock({ ...good, audience: 'nobody' }).ok, false, 'audience 非法应报错');
+  assert.equal(validateBlock({ ...good, background: 123 }).ok, false, 'background 必须字符串');
+  assert.equal(validateBlock({ ...good, options: [{ id: 'a', label: 'A', pros: '好' }] }).ok, false, 'pros 必须数组');
+  // 老块（无任何新字段）仍合法
+  assert.equal(validateBlock({ id: 'b2', type: 'markdown' }).ok, true);
+});
+
+test('validateFeedback: sessionComment 可空可为字符串，非字符串报错', async () => {
+  const { validateFeedback } = await import('../../src/protocol/schema.mjs');
+  const base = { session: 's', round: 1, items: [] };
+  assert.equal(validateFeedback(base).ok, true, '无 sessionComment 仍合法（向后兼容）');
+  assert.equal(validateFeedback({ ...base, sessionComment: '给工作台的话' }).ok, true);
+  assert.equal(validateFeedback({ ...base, sessionComment: 42 }).ok, false);
+});
+
+test('validateFeedback: confirm 是合法的 feedback type（看了不改）', async () => {
+  const { validateFeedback } = await import('../../src/protocol/schema.mjs');
+  const fb = { session: 's', round: 1, items: [{ blockId: 'e1', type: 'confirm', value: '保持原样' }] };
+  assert.equal(validateFeedback(fb).ok, true, JSON.stringify(validateFeedback(fb).errors));
+});

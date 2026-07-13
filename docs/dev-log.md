@@ -69,3 +69,23 @@
 - **防盲签**：角标常显未确认 + 全局进度跨面 + 提交弹层跨面列出并自动切 tab 跳转 + 必须决策红字警示。
 - 测试：新增 `tests/unit/facet-nav.test.mjs`(8) + render(4) + templates(2)；`npm test` 248 pass / 0 fail。
 - **真实浏览器 dogfood**（Playwright 无头截图 facet-demo）：tab 栏/红角标/空面变灰/默认激活/面内顺序 全部符合规格 ✓——首次真机验证前端交互（补上此前评审指出的 E2E 缺口）。
+
+## 批次 8：user-vibeloop 实战反馈全量落地（2026-07-13，DESIGN §16）
+
+`docs/iteration-brief-2026-07-13.md` 7 项全做 + 富渲染最后一公里。病例集当 fixture。
+
+| 项 | 实现 | 文件 |
+|---|---|---|
+| **P0** embed 代理不转发 POST（实证 bug） | 代理支持 GET/POST/PUT/DELETE，透传 method/body/CT，回传真实状态码；form action + fetch/XHR 改写回代理通道 | `server/server.mjs` |
+| **P1** 决策块结构化（创始人加权最高） | `background`/`why`/`options[].pros`/`.cons`/`recommendReason` + 四段固定次序渲染 + 进 fingerprint | `blocks.mjs` `schema.mjs` |
+| **P1** 作者侧 lint（warn 不阻断） | 7 规则全部对应真实病例；`present` 时打 stderr | `protocol/lint.mjs` `bin/workbench.mjs` |
+| **P1** 会话级留言 | 常驻输入区 → `feedback.sessionComment`；feedbackToMd 置顶 | `index.html` `app.mjs` `schema.mjs` `server.mjs` |
+| **P1** live 实时系统标识 | `live:true` → 红框 + ⚡角标（视觉层，不靠文案） | `blocks.mjs` `app.css` |
+| **P2** 受众分层 | `audience:'tech'` → 折叠进「🔧 技术细节」 | `blocks.mjs` `app.css` |
+| **P2** 确认低摩擦 | editable「✓ 保持原样即确认」→ `type:'confirm'`（看了不改）≠ `unanswered`（没看） | `blocks.mjs` `app.mjs` `attention.mjs` |
+| **P3** 术语一致性 | `docs/authoring-guide.md`（大白话原则 + 术语表 + 内容基准 + lint 速查） | docs |
+| 富渲染最后一公里 | import 补 `convertUI`(ui→prototype iframe) + `frame:'phone'` 手机壳 + 自动打 section + `?facet=` 深链 | `scripts/import-prd-project.mjs` `blocks.mjs` `app.css` `app.mjs` |
+
+- 测试：`lint.test.mjs`(8) + render(5) + protocol(3) + attention(1) + server P0 回归(4)；`npm test` **268 pass / 0 fail**。
+- **实证**：把 prd-studio 的 recorder-app 真实数据导进 Vibe → 65 块 / 六面全满（需求22·架构11·**UI设计10**·交互设计4·测试14·风险4）；浏览器 dogfood 确认 **10 个高保真手机屏在手机壳里正常渲染 + 可落 pin 批注**。
+- **lint 实战命中**：该份 recorder-app 的决策块**全部缺 background/why** —— 正是创始人抱怨的"没背景"病根，lint 一次全抓出来。

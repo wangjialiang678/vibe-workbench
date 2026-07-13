@@ -52,3 +52,8 @@
 
 "vibe coding 工作台整体上现在存在几个问题：技术术语太多，而且描述方面不够详细，也没有任何背景，特别是需要让我了解做这个决策的上下文、原因，以及不同决策的利弊。"
 → 已转化：docs/iteration-brief-2026-07-13.md 的 P1「决策块结构化：上下文/原因/选项利弊」（background/why/pros/cons/recommendReason 一等公民 + 作者侧 lint + 大白话原则）。
+
+## → 已转化（批次 8，2026-07-13）
+
+`docs/iteration-brief-2026-07-13.md` 的 **全部 7 项**（P0 embed POST / P1 决策块结构化 / P1 会话留言 / P1 live 标识 / P2 受众分层 / P2 确认低摩擦 / P3 术语）已实现并配测试，见 `docs/dev-log.md` 批次 8 与 `DESIGN.md §16`。
+作者侧规范落到 `docs/authoring-guide.md`；`present` 时自动 lint（warn 不阻断）。

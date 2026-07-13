@@ -20,6 +20,15 @@
 
   <main id="main-content" class="main-content">
     <div id="zones-mount"></div>
+
+    <!-- 会话级常驻留言（iteration-brief P1）：不针对任何块的自由发言通道。
+         病例 6：用户被迫把给工作台的产品反馈挂在不相干块的批注里。 -->
+    <section id="session-comment" class="session-comment">
+      <h3 class="session-comment-h">💬 给 AI 留言（不针对任何具体块）</h3>
+      <p class="session-comment-hint">对整体的看法、对工作台本身的意见、或任何没地方说的话，写这里——会随本轮反馈一起回传。</p>
+      <textarea id="session-comment-input" class="session-comment-input" rows="3"
+        placeholder="例如：背景讲清楚了，但第 3 个决策我还是不懂 X 是什么；另外工作台能不能……"></textarea>
+    </section>
   </main>
 
   <!-- 提交前确认模态（§13 P0-1）：内容由 app.mjs 注入 -->

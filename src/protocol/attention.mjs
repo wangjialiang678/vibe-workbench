@@ -91,9 +91,12 @@ export function pendingDecisionBlocks(blocks = []) {
 }
 
 // 单块是否已做出"决策"（非仅评论）——用于进度计数
+// 「已答」判定。注意：纯评论不算已答（评论 ≠ 决策）。
+// confirmed = editable「保持原样即确认」——看了但不改，算已答（P2 · 病例 5：与"没看"区分）
 function isDecisionFilled(item) {
   if (!item || typeof item !== 'object') return false;
   if (item.verdict) return true;
+  if (item.confirmed === true) return true;
   if (item.select != null && item.select !== '') return true;
   if (typeof item.text === 'string' && item.text.trim() !== '') return true;
   if (item.checklistItems && typeof item.checklistItems === 'object'

@@ -39,8 +39,18 @@ const MIME = {
 // ---- helpers ----
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+
+// 原始 body（Buffer）——代理透传用，不解析
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
 }
 
 function json(res, status, obj) {
@@ -74,6 +84,11 @@ function feedbackToMd(fb) {
     '',
   ];
   if (fb.summary) lines.push(`**Summary:** ${fb.summary}`, '');
+  // 会话级留言（P1）：不针对任何块的自由发言，置顶（AI 续跑时最该先看）
+  if (fb.sessionComment) lines.push('## 💬 会话级留言（不针对具体块）', '', fb.sessionComment, '');
+  if (Array.isArray(fb.unanswered) && fb.unanswered.length) {
+    lines.push(`**未表态（没看/未操作）:** ${fb.unanswered.join(', ')}`, '');
+  }
   for (const it of fb.items || []) {
     lines.push(`## Block: ${it.blockId}`);
     if (it.type) lines.push(`- type: ${it.type}`);
@@ -92,20 +107,49 @@ function feedbackToMd(fb) {
  * 2. Remove any <meta http-equiv="X-Frame-Options" ...> tags.
  * Pure function, exported for unit testing.
  */
-export function rewriteEmbedHtml(html, targetUrl) {
-  // Remove existing X-Frame-Options meta tags (case-insensitive)
-  let result = html.replace(/<meta[^>]+http-equiv\s*=\s*["']?X-Frame-Options["']?[^>]*\/?>/gi, '');
+export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '') {
+  // 1. 去掉阻止嵌入的 meta（X-Frame-Options / CSP）
+  let result = html
+    .replace(/<meta[^>]+http-equiv\s*=\s*["']?X-Frame-Options["']?[^>]*\/?>/gi, '')
+    .replace(/<meta[^>]+http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*\/?>/gi, '');
 
-  const baseTag = `<base href="${targetUrl}">`;
+  const proxyBase = `${selfOrigin}/api/proxy?url=`;
+  const toProxy = (u) => {
+    try { return proxyBase + encodeURIComponent(new URL(u, targetUrl).href); }
+    catch { return u; }
+  };
 
-  // Try to inject after opening <head> tag
+  // 2. 表单 action 落回代理通道。
+  //    关键：<base href> 会让相对 action 解析到原站 → 表单直接 POST 原站（跨源、丢 cookie/凭证字段）。
+  //    改写成经 /api/proxy 转发，请求体与 Content-Type 才能完整到达目标。
+  result = result.replace(/<form\b([^>]*)>/gi, (_tag, attrs) => {
+    const m = attrs.match(/\saction\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const action = m ? (m[1] ?? m[2] ?? m[3] ?? '') : '';
+    const cleaned = m ? attrs.replace(m[0], '') : attrs;
+    return `<form${cleaned} action="${toProxy(action || targetUrl)}">`;
+  });
+
+  // 3. base（静态资源仍直连原站）+ fetch/XHR 补丁（指向原站的请求改走代理）
+  const patch = `<base href="${targetUrl}">
+<script>(function(){
+  var T=${JSON.stringify(targetUrl)}, P=${JSON.stringify(proxyBase)}, O;
+  try{ O=new URL(T).origin; }catch(e){ return; }
+  function px(u){ try{ var a=new URL(u,T); if(a.origin===O) return P+encodeURIComponent(a.href); }catch(e){} return u; }
+  var f=window.fetch;
+  if(f) window.fetch=function(i,init){
+    try{ if(typeof i==='string') i=px(i); else if(i&&i.url) i=new Request(px(i.url),i); }catch(e){}
+    return f.call(window,i,init);
+  };
+  var xo=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(m,u){ try{ arguments[1]=px(u); }catch(e){} return xo.apply(this,arguments); };
+})();</script>`;
+
   const headMatch = result.match(/<head(?:\s[^>]*)?>/i);
   if (headMatch) {
     const headEnd = result.indexOf(headMatch[0]) + headMatch[0].length;
-    result = result.slice(0, headEnd) + baseTag + result.slice(headEnd);
+    result = result.slice(0, headEnd) + patch + result.slice(headEnd);
   } else {
-    // No <head>: prepend to document
-    result = baseTag + result;
+    result = patch + result;
   }
 
   return result;
@@ -216,7 +260,9 @@ function handleRequest(req, res) {
     return;
   }
 
-  if (urlPath === '/api/proxy' && method === 'GET') {
+  // embed 代理：支持 GET/POST/PUT/DELETE（P0 · iteration-brief 2026-07-13）
+  // 此前只认 GET → 被嵌页面内的表单 POST 无转发通道，字段丢失（实证 bug）。
+  if (urlPath === '/api/proxy') {
     const { url: targetUrl } = parseQuery(rawUrl);
     if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
       cors(res);
@@ -224,21 +270,35 @@ function handleRequest(req, res) {
       res.end('<p>无效的代理目标 URL</p>');
       return;
     }
+    const selfOrigin = req.headers.host ? `http://${req.headers.host}` : '';
     (async () => {
-      let html;
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 10000);
-        const fetchRes = await fetch(targetUrl, { signal: controller.signal });
+        const timer = setTimeout(() => controller.abort(), 15000);
+        const init = { method, signal: controller.signal, redirect: 'follow', headers: {} };
+        if (method !== 'GET' && method !== 'HEAD') {
+          init.body = await readRawBody(req);                       // 完整透传请求体
+          const ct = req.headers['content-type'];
+          if (ct) init.headers['content-type'] = ct;                // form-urlencoded / json 均可
+        }
+        const fr = await fetch(targetUrl, init);
         clearTimeout(timer);
-        html = await fetchRes.text();
-        html = rewriteEmbedHtml(html, targetUrl);
+        const ct = fr.headers.get('content-type') || 'text/html; charset=utf-8';
+        cors(res);
+        if (/text\/html/i.test(ct)) {
+          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin);
+          res.writeHead(fr.status, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(html);
+        } else {
+          // 非 HTML（JSON/CSS/图片…）原样回传，状态码与 content-type 保真
+          res.writeHead(fr.status, { 'Content-Type': ct });
+          res.end(Buffer.from(await fr.arrayBuffer()));
+        }
       } catch (err) {
-        html = `<p>无法加载该页面：${String(err.message ?? err)}</p>`;
+        cors(res);
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<p>无法加载该页面：${String(err.message ?? err)}</p>`);
       }
-      cors(res);
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(html);
     })();
     return;
   }

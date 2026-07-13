@@ -1,8 +1,8 @@
 // 内容协议 schema 与校验（DESIGN §2）。服务端用（含 node:crypto）。
 import { createHash } from 'node:crypto';
-import { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES } from './constants.mjs';
+import { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES, AUDIENCE } from './constants.mjs';
 
-export { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES };
+export { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES, AUDIENCE };
 
 // 填充默认值（不修改入参）
 export function normalizeBlock(b) {
@@ -29,10 +29,14 @@ export function blockFingerprint(block) {
     type: block.type,
     title: block.title ?? null,
     body: block.body ?? null,
-    options: block.options ?? null,
+    options: block.options ?? null,          // 含 pros/cons：利弊变了即算 changed
     recommendation: block.recommendation ?? null,
     default: block.default ?? null,
     value: block.value ?? null,
+    // 决策块结构化字段（iteration-brief P1）：AI 补了背景/理由 → 该轮应标 CHANGED
+    background: block.background ?? null,
+    why: block.why ?? null,
+    recommendReason: block.recommendReason ?? null,
   };
   // §1.4 C：新 block 类型的核心字段加入指纹，否则 diff 对新类型失效
   if (block.type === 'prototype') {
@@ -60,9 +64,20 @@ export function validateBlock(block) {
   if (block.importance != null && !IMPORTANCE.includes(block.importance)) errors.push(`importance invalid: ${block.importance}`);
   if (block.needsDecision != null && typeof block.needsDecision !== 'boolean') errors.push('needsDecision must be boolean');
   if (block.hasRecommendation != null && typeof block.hasRecommendation !== 'boolean') errors.push('hasRecommendation must be boolean');
+  // 决策块结构化 + 受众分层 + live（iteration-brief 2026-07-13）：全部可选，旧内容不受影响
+  if (block.background != null && typeof block.background !== 'string') errors.push('background must be string');
+  if (block.why != null && typeof block.why !== 'string') errors.push('why must be string');
+  if (block.recommendReason != null && typeof block.recommendReason !== 'string') errors.push('recommendReason must be string');
+  if (block.audience != null && !AUDIENCE.includes(block.audience)) errors.push(`audience invalid: ${block.audience}`);
+  if (block.live != null && typeof block.live !== 'boolean') errors.push('live must be boolean');
+
   if (block.type === 'choice') {
     if (!Array.isArray(block.options) || block.options.length === 0) errors.push('choice requires non-empty options[]');
-    else block.options.forEach((o, i) => { if (!o || !o.id) errors.push(`choice option[${i}] requires id`); });
+    else block.options.forEach((o, i) => {
+      if (!o || !o.id) errors.push(`choice option[${i}] requires id`);
+      if (o && o.pros != null && !Array.isArray(o.pros)) errors.push(`choice option[${i}].pros must be array`);
+      if (o && o.cons != null && !Array.isArray(o.cons)) errors.push(`choice option[${i}].cons must be array`);
+    });
     if (block.hasRecommendation && block.recommendation != null) {
       const ids = (block.options || []).map((o) => o && o.id);
       if (!ids.includes(block.recommendation)) errors.push('choice.recommendation must match an option id');
@@ -126,6 +141,8 @@ export function validateFeedback(fb) {
   if (!fb || typeof fb !== 'object') return { ok: false, errors: ['feedback must be object'] };
   if (!fb.session) errors.push('session required');
   if (!Number.isInteger(fb.round)) errors.push('round required integer');
+  // 会话级留言（iteration-brief P1）：不针对任何块的自由发言。可空；老消费者忽略即可
+  if (fb.sessionComment != null && typeof fb.sessionComment !== 'string') errors.push('sessionComment must be string');
   if (!Array.isArray(fb.items)) errors.push('items must be array');
   else fb.items.forEach((it, i) => {
     if (!it || !it.blockId) errors.push(`items[${i}].blockId required`);

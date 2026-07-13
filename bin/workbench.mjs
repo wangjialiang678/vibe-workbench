@@ -21,6 +21,7 @@ const {
 } = await import(`${ROOT}/src/workspace.mjs`);
 
 const { validateContent } = await import(`${ROOT}/src/protocol/schema.mjs`);
+const { lintContent, formatLint } = await import(`${ROOT}/src/protocol/lint.mjs`);
 
 // ─── blocks → markdown 线性序列化 ────────────────────────────────────────────
 function blocksToMarkdown(content) {
@@ -99,6 +100,10 @@ export async function cmdRender(session, contentObj) {
     err.errors = result.errors;
     throw err;
   }
+
+  // 作者侧 lint（iteration-brief P1）：warn 不阻断，打 stderr（保持 stdout 的 JSON 干净）
+  const warnings = lintContent(toValidate);
+  if (warnings.length) console.error(formatLint(warnings));
 
   // 写 content.json
   writeJSON(paths.content(session, round), toValidate);

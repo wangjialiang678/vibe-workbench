@@ -327,33 +327,100 @@ function convertProto(proto, blocks) {
 
 // ── 主逻辑 ────────────────────────────────────────────────────────────────
 
-function convert(projectData) {
+// ── UI 面 → prototype(iframe) 高保真屏（此前整个 convertUI 缺失，导致 10 个高保真屏进不来）──
+// prd-studio 的 ui.screens[].src 是相对路径（'ui/b-home.html'）→ 转成绝对 URL，Vibe 经 /api/proxy 嵌入。
+function convertUI(ui, blocks, uiBase) {
+  if (!ui || !Array.isArray(ui.screens)) return;
+  for (const sc of ui.screens) {
+    const raw = sc.src ?? '';
+    const src = /^https?:\/\//i.test(raw) ? raw : new URL(raw, uiBase).href;
+    blocks.push({
+      id: 'b-ui-' + slug(sc.id ?? sc.name ?? 'screen'),
+      type: 'prototype',
+      mode: 'iframe',
+      title: sc.name ?? null,
+      src,
+      frame: 'phone',            // 手机壳呈现（对齐 prd-studio 观感）
+      height: 740,
+      needsDecision: false,
+      hasRecommendation: false,
+      recommendation: null,
+      importance: 'normal',
+    });
+  }
+}
+
+// ── 块 → tab 分面类目（DESIGN §15）──
+const SECTION_BY_PREFIX = [
+  ['b-prd-',    '需求'],
+  ['b-arch-',   '架构'],
+  ['b-assert-', '架构'],
+  ['b-alt-',    '架构'],
+  ['b-ui-',     'UI 设计'],
+  ['b-proto-',  '交互设计'],
+  ['b-test-',   '测试'],
+  ['b-case-',   '测试'],
+  ['b-chk-',    '风险'],
+];
+
+function sectionFor(id) {
+  const hit = SECTION_BY_PREFIX.find(([p]) => String(id).startsWith(p));
+  return hit ? hit[1] : undefined;
+}
+
+function convert(projectData, opts = {}) {
   const blocks = [];
+  const uiBase = opts.uiBase ?? 'http://127.0.0.1:8088/';
 
   convertPrd(projectData.prd, blocks);
   convertArchDiagrams(projectData.arch ?? {}, blocks);
   convertArchAssertions(projectData.arch ?? {}, blocks);
   convertArchAlternatives(projectData.arch ?? {}, blocks);
+  convertUI(projectData.ui, blocks, uiBase);          // ← 新增：高保真 UI 面
+  convertProto(projectData.proto, blocks);
   convertTestScenarios(projectData.test ?? {}, blocks);
   convertCompleteness(projectData.completeness, blocks);
-  convertProto(projectData.proto, blocks);
+
+  // 打 section → 页面出 tab 分面导航（需求/架构/UI 设计/交互设计/测试/风险）
+  for (const b of blocks) {
+    const s = sectionFor(b.id);
+    if (s) b.section = s;
+  }
 
   return {
-    session: SESSION,
+    session: opts.session ?? SESSION,
     round: ROUND,
     title: projectData.title ?? 'Imported PRD',
+    sections: ['需求', '架构', 'UI 设计', '交互设计', '测试', '风险'],
     blocks,
   };
 }
 
 // ── 执行 ──────────────────────────────────────────────────────────────────
 
+// CLI: import-prd-project.mjs <project.js> [--session <name>] [--ui-base <url>]
+function argOf(flag, fallback) {
+  const i = process.argv.indexOf(flag);
+  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
 const projectData = extractProjectData(DEMO_JS_PATH);
-const content = convert(projectData);
+const session = argOf('--session', projectData.id ? `prd-${projectData.id}` : SESSION);
+const uiBase = argOf('--ui-base', 'http://127.0.0.1:8088/');
 
-mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(OUT_FILE, JSON.stringify(content, null, 2), 'utf8');
+const content = convert(projectData, { session, uiBase });
 
-console.log(`[import-prd-project] 生成完成：${OUT_FILE}`);
-console.log(`  blocks: ${content.blocks.length} 个`);
-console.log(`  types : ${[...new Set(content.blocks.map((b) => b.type))].join(', ')}`);
+const outDir = resolve(ROOT, 'workspace', session, `round-${ROUND}`);
+const outFile = resolve(outDir, 'content.json');
+mkdirSync(outDir, { recursive: true });
+writeFileSync(outFile, JSON.stringify(content, null, 2), 'utf8');
+
+const bySection = {};
+for (const b of content.blocks) { const s = b.section ?? '其他'; bySection[s] = (bySection[s] ?? 0) + 1; }
+
+console.log(`[import-prd-project] 生成完成：${outFile}`);
+console.log(`  session: ${session}`);
+console.log(`  blocks : ${content.blocks.length} 个`);
+console.log(`  types  : ${[...new Set(content.blocks.map((b) => b.type))].join(', ')}`);
+console.log(`  分面   : ${Object.entries(bySection).map(([k, v]) => `${k}=${v}`).join(' · ')}`);
+console.log(`  UI 稿  : 经 ${uiBase} 取（需 prd-studio 的静态服务在跑）`);

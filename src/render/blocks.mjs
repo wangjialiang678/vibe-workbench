@@ -56,6 +56,18 @@ function renderDiagram(block) {
   return `<pre class="mermaid">${escaped}</pre>${rationalePart}`;
 }
 
+// 选项利弊（决策块结构化 · iteration-brief P1）：把"后果"讲清，替代把一切塞进 desc
+function prosConsHtml(opt) {
+  const pros = Array.isArray(opt.pros) ? opt.pros : [];
+  const cons = Array.isArray(opt.cons) ? opt.cons : [];
+  if (pros.length === 0 && cons.length === 0) return '';
+  const items = (arr, cls) => arr.map((t) => `<li class="${cls}">${escHtml(t)}</li>`).join('');
+  return `<div class="opt-proscons">
+${pros.length ? `<ul class="opt-pros" aria-label="好处">${items(pros, 'pro')}</ul>` : ''}
+${cons.length ? `<ul class="opt-cons" aria-label="代价 / 风险">${items(cons, 'con')}</ul>` : ''}
+</div>`;
+}
+
 function renderChoice(block) {
   const options = block.options ?? [];
   const rec = block.recommendation;
@@ -68,10 +80,14 @@ function renderChoice(block) {
     const recAttr = isRec ? ' data-recommended="true"' : '';
     const recLabel = isRec ? ' <span class="rec-label">推荐</span>' : '';
     const desc = opt.desc ? `<span class="opt-desc">${escHtml(opt.desc)}</span>` : '';
-    return `<label class="choice-option${isRec ? ' choice-recommended' : ''}"${recAttr}>
+    // 利弊放在 label 之外：避免点击利弊条目误触发选中
+    return `<div class="choice-item">
+<label class="choice-option${isRec ? ' choice-recommended' : ''}"${recAttr}>
   <input type="${inputType}" name="${name}" value="${escHtml(opt.id)}"${isRec ? ' data-default-check' : ''}>
   <span class="opt-label">${escHtml(opt.label)}${recLabel}</span>${desc}
-</label>`;
+</label>
+${prosConsHtml(opt)}
+</div>`;
   }).join('\n');
 
   return `<div class="choice-group" role="group">${optionsHtml}</div>`;
@@ -97,8 +113,14 @@ function renderFreetext(block) {
 function renderEditable(block) {
   const val = escHtml(block.value ?? block.body ?? '');
   const bId = escHtml(block.id);
+  // 「保持原样即确认」一键（iteration-brief P2 · 病例 5）：
+  // editable 的默认动作语义是"改写"，对只想说"行"的用户是高成本操作 → 给一条零摩擦通路。
   return `<textarea class="editable-input" data-editable data-block-id="${bId}" rows="6">${val}</textarea>
-<span class="edit-status" hidden>已编辑·未提交</span>`;
+<div class="editable-actions">
+  <button class="editable-confirm" data-editable-confirm="${bId}" type="button">✓ 保持原样即确认</button>
+  <span class="edit-status" hidden>已编辑·未提交</span>
+  <span class="editable-confirmed" data-editable-confirmed="${bId}" hidden>✓ 已确认保持原样</span>
+</div>`;
 }
 
 function renderTable(block) {
@@ -214,7 +236,11 @@ export function renderPrototype(block) {
     const src = escHtml(block.src ?? '');
     const encodedSrc = encodeURIComponent(block.src ?? '');
     const height = block.height || 620;
-    innerHtml = `<div class="proto-iframe-wrap" style="position:relative;height:${height}px">
+    // frame:'phone' → 360×740 手机壳呈现（对齐 prd-studio 的高保真观感）
+    const isPhone = block.frame === 'phone';
+    const wrapCls = isPhone ? 'proto-iframe-wrap proto-phone' : 'proto-iframe-wrap';
+    const wrapStyle = isPhone ? '' : ` style="position:relative;height:${height}px"`;
+    innerHtml = `<div class="${wrapCls}"${wrapStyle}>
   <iframe class="proto-iframe" src="/api/proxy?url=${encodedSrc}"
     style="width:100%;height:100%;border:0" title="${src}"></iframe>
   ${svgOverlay}
@@ -261,6 +287,34 @@ function bodyHtml(block) {
   return `<div class="block-body">${mdToHtml(block.body)}</div>`;
 }
 
+// 决策块结构化（iteration-brief P1 · 创始人加权最高优先级）
+// 固定次序：背景 → 为什么需要你定 → 选项(含利弊) → 推荐及理由。缺失字段不渲染（向后兼容）。
+// 病例依据：用户在零背景的决策块上"盲选"，产出伪决策（feedback-examples 案例 1/3）。
+function decisionContextHtml(block) {
+  const parts = [];
+  if (block.background) {
+    parts.push(`<section class="decision-seg decision-bg">
+  <h4 class="decision-h">背景</h4>
+  <div class="decision-text">${mdToHtml(block.background)}</div>
+</section>`);
+  }
+  if (block.why) {
+    parts.push(`<section class="decision-seg decision-why">
+  <h4 class="decision-h">为什么需要你定</h4>
+  <div class="decision-text">${mdToHtml(block.why)}</div>
+</section>`);
+  }
+  return parts.length ? `<div class="decision-context">${parts.join('\n')}</div>` : '';
+}
+
+function recommendReasonHtml(block) {
+  if (!block.recommendReason) return '';
+  return `<section class="decision-seg decision-rec">
+  <h4 class="decision-h">推荐及理由</h4>
+  <div class="decision-text">${mdToHtml(block.recommendReason)}</div>
+</section>`;
+}
+
 // 主导出：block → HTML 字符串
 export function blockHtml(block) {
   const id = escHtml(block.id ?? '');
@@ -268,12 +322,32 @@ export function blockHtml(block) {
   const change = escHtml(block._change ?? 'unchanged');
   const badge = changeBadge(block);
   const content = renderContent(block);
+  // 受众分层（P2）：audience:'tech' → 整块折叠进「技术细节」，不占决策者注意力（病例 2）
+  const isTech = block.audience === 'tech';
+  const liveAttr = block.live ? ' data-live="true"' : '';
+  const liveBadge = block.live
+    ? '<div class="live-badge" title="这是真实运行中的系统，你在里面的操作会真实生效">⚡ 实时系统 · 就地操作会真实生效</div>'
+    : '';
 
-  return `<section data-block-id="${id}" data-type="${type}" data-change="${change}" class="block block-${type}">
-${badge ? `<div class="change-badge">${badge}</div>` : ''}
+  const inner = `${badge ? `<div class="change-badge">${badge}</div>` : ''}
 ${titleHtml(block)}
+${liveBadge}
 ${bodyHtml(block)}
+${decisionContextHtml(block)}
 <div class="block-content">${content}</div>
-${commentEntry(block.id ?? '')}
+${recommendReasonHtml(block)}
+${commentEntry(block.id ?? '')}`;
+
+  if (isTech) {
+    return `<section data-block-id="${id}" data-type="${type}" data-change="${change}" data-audience="tech"${liveAttr} class="block block-${type} block-tech">
+<details class="tech-fold">
+  <summary class="tech-summary">🔧 技术细节${block.title ? `：${escHtml(block.title)}` : ''}（决策者可跳过·点开查看）</summary>
+  ${inner}
+</details>
+</section>`;
+  }
+
+  return `<section data-block-id="${id}" data-type="${type}" data-change="${change}"${liveAttr} class="block block-${type}">
+${inner}
 </section>`;
 }
