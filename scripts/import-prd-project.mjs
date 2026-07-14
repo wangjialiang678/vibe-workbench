@@ -20,7 +20,7 @@
  * （ui 面在 demo.js 中无独立数据，略过）
  */
 
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -329,12 +329,36 @@ function convertProto(proto, blocks) {
 // ── 主逻辑 ────────────────────────────────────────────────────────────────
 
 // ── UI 面 → prototype(iframe) 高保真屏（此前整个 convertUI 缺失，导致 10 个高保真屏进不来）──
-// prd-studio 的 ui.screens[].src 是相对路径（'ui/b-home.html'）→ 转成绝对 URL，Vibe 经 /api/proxy 嵌入。
-function convertUI(ui, blocks, uiBase) {
+// 默认把高保真稿**拷进 session 的 assets**，由工作台自托管（src=/assets/<session>/ui/x.html），
+// 不再依赖 prd-studio 的服务开着。传 --ui-base http://... 可改为引用外部 URL（走 /api/proxy）。
+function convertUI(ui, blocks, opts) {
   if (!ui || !Array.isArray(ui.screens)) return;
+  const { session, uiBase, srcRoot } = opts;
+  const selfHost = !uiBase;                       // 无 --ui-base → 自托管
+  const assetsDir = resolve(ROOT, 'workspace', session, 'assets', 'ui');
+  if (selfHost) mkdirSync(assetsDir, { recursive: true });
+
   for (const sc of ui.screens) {
-    const raw = sc.src ?? '';
-    const src = /^https?:\/\//i.test(raw) ? raw : new URL(raw, uiBase).href;
+    const raw = String(sc.src ?? '');
+    const file = raw.split('/').pop();
+    let src;
+
+    if (/^https?:\/\//i.test(raw)) {
+      src = raw;                                   // 本来就是绝对 URL
+    } else if (selfHost) {
+      // 从 prd-studio 的 public/ 拷贝过来，工作台自托管
+      const from = resolve(srcRoot, raw);
+      try {
+        copyFileSync(from, resolve(assetsDir, file));
+        copied.push(file);
+      } catch (e) {
+        console.warn(`  ⚠ 拷贝失败（跳过）：${from} — ${e.message}`);
+      }
+      src = `/assets/${session}/ui/${file}`;
+    } else {
+      src = new URL(raw, uiBase).href;             // 引用外部服务
+    }
+
     blocks.push({
       id: 'b-ui-' + slug(sc.id ?? sc.name ?? 'screen'),
       type: 'prototype',
@@ -350,6 +374,8 @@ function convertUI(ui, blocks, uiBase) {
     });
   }
 }
+
+const copied = [];
 
 // ── 块 → tab 分面类目（DESIGN §15）──
 const SECTION_BY_PREFIX = [
@@ -371,13 +397,12 @@ function sectionFor(id) {
 
 function convert(projectData, opts = {}) {
   const blocks = [];
-  const uiBase = opts.uiBase ?? 'http://127.0.0.1:8088/';
 
   convertPrd(projectData.prd, blocks);
   convertArchDiagrams(projectData.arch ?? {}, blocks);
   convertArchAssertions(projectData.arch ?? {}, blocks);
   convertArchAlternatives(projectData.arch ?? {}, blocks);
-  convertUI(projectData.ui, blocks, uiBase);          // ← 新增：高保真 UI 面
+  convertUI(projectData.ui, blocks, opts);            // ← 高保真 UI 面（默认拷进 session assets 自托管）
   convertProto(projectData.proto, blocks);
   convertTestScenarios(projectData.test ?? {}, blocks);
   convertCompleteness(projectData.completeness, blocks);
@@ -407,9 +432,10 @@ function argOf(flag, fallback) {
 
 const projectData = extractProjectData(DEMO_JS_PATH);
 const session = argOf('--session', projectData.id ? `prd-${projectData.id}` : SESSION);
-const uiBase = argOf('--ui-base', 'http://127.0.0.1:8088/');
+const uiBase = argOf('--ui-base', null);                       // 不传 = 自托管（拷贝到 session assets）
+const srcRoot = resolve(dirname(DEMO_JS_PATH), '..');          // prd-studio 的 public/（ui/*.html 相对于它）
 
-const content = convert(projectData, { session, uiBase });
+const content = convert(projectData, { session, uiBase, srcRoot });
 
 const outDir = resolve(ROOT, 'workspace', session, `round-${ROUND}`);
 const outFile = resolve(outDir, 'content.json');
@@ -424,4 +450,6 @@ console.log(`  session: ${session}`);
 console.log(`  blocks : ${content.blocks.length} 个`);
 console.log(`  types  : ${[...new Set(content.blocks.map((b) => b.type))].join(', ')}`);
 console.log(`  分面   : ${Object.entries(bySection).map(([k, v]) => `${k}=${v}`).join(' · ')}`);
-console.log(`  UI 稿  : 经 ${uiBase} 取（需 prd-studio 的静态服务在跑）`);
+console.log(uiBase
+  ? `  UI 稿  : 引用外部 ${uiBase}（需该服务在跑）`
+  : `  UI 稿  : 已拷入 workspace/${session}/assets/ui/（${copied.length} 个，工作台自托管，无外部依赖）`);

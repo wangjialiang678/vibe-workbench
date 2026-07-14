@@ -565,3 +565,27 @@ test('rewriteEmbedHtml: 表单 action 改写回代理通道 + 注入 fetch/XHR �
   assert.ok(out.includes(encodeURIComponent('http://127.0.0.1:8123/decide')), '应保留解析后的绝对目标');
   assert.ok(out.includes('XMLHttpRequest.prototype.open'), '应注入 fetch/XHR 补丁');
 });
+
+// ---- 会话资产自托管 /assets/<session>/... （去掉对外部服务的依赖）----
+
+test('GET /assets/<session>/<file>：供 session 自带的静态资产（如高保真 UI 稿）', async () => {
+  const dir = path.join(tmpDir, session, 'assets', 'ui');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'b-home.html'), '<html><head><title>主界面</title></head><body>hi</body></html>');
+
+  const res = await fetch(url(`/assets/${session}/ui/b-home.html`));
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') || '', /text\/html/);
+  assert.match(await res.text(), /主界面/);
+});
+
+test('GET /assets：路径穿越与非法 session 名被挡', async () => {
+  const trav = await fetch(url(`/assets/${session}/ui/../../../../../etc/passwd`));
+  assert.ok(trav.status === 403 || trav.status === 404, `穿越应被拒，实得 ${trav.status}`);
+
+  const bad = await fetch(url('/assets/..%2F..%2Fetc/passwd'));
+  assert.ok(bad.status === 403 || bad.status === 404, `非法 session 名应被拒，实得 ${bad.status}`);
+
+  const missing = await fetch(url(`/assets/${session}/ui/nope.html`));
+  assert.equal(missing.status, 404);
+});

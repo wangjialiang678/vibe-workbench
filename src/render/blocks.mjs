@@ -256,15 +256,19 @@ export function renderPrototype(block) {
 
     innerHtml = `${protoModesBar(bId)}\n${canvas}`;
   } else if (mode === 'iframe') {
-    const src = escHtml(block.src ?? '');
-    const encodedSrc = encodeURIComponent(block.src ?? '');
+    const raw = block.src ?? '';
+    const src = escHtml(raw);
     const height = block.height || 620;
+    // 同源相对路径（如工作台自托管的 /assets/<session>/ui/x.html）直接用，无需绕代理；
+    // 外站绝对 URL 仍走 /api/proxy（绕过 X-Frame-Options）。
+    const isAbsolute = /^https?:\/\//i.test(raw);
+    const iframeSrc = isAbsolute ? `/api/proxy?url=${encodeURIComponent(raw)}` : src;
     // frame:'phone' → 360×740 手机壳呈现（对齐 prd-studio 的高保真观感）
     const isPhone = block.frame === 'phone';
     const wrapCls = isPhone ? 'proto-iframe-wrap proto-phone' : 'proto-iframe-wrap';
     const wrapStyle = isPhone ? '' : ` style="position:relative;height:${height}px"`;
     innerHtml = `<div class="${wrapCls}"${wrapStyle}>
-  <iframe class="proto-iframe" src="/api/proxy?url=${encodedSrc}"
+  <iframe class="proto-iframe" src="${iframeSrc}"
     style="width:100%;height:100%;border:0" title="${src}"></iframe>
   ${svgOverlay}
 </div>`;

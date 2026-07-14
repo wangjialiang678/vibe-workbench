@@ -831,3 +831,12 @@ test('renderPrototype(wireframe): 无 frame 时保持原朴素画布（向后兼
   assert.ok(!out.includes('proto-phone'), '无 frame:phone → 不套壳');
   assert.ok(out.includes('proto-wireframe-canvas'));
 });
+
+test('renderPrototype(iframe): 同源相对 src 直连（不绕代理）；外站绝对 URL 才走代理', () => {
+  const local = blockHtml({ id: 'b-ui-home', type: 'prototype', mode: 'iframe', frame: 'phone', src: '/assets/s/ui/b-home.html', _change: 'new' });
+  assert.ok(local.includes('src="/assets/s/ui/b-home.html"'), '同源相对路径应直接用');
+  assert.ok(!local.includes('/api/proxy'), '同源不该绕代理');
+
+  const remote = blockHtml({ id: 'b-ui-x', type: 'prototype', mode: 'iframe', src: 'http://example.com/a.html', _change: 'new' });
+  assert.ok(remote.includes('/api/proxy?url='), '外站绝对 URL 仍走代理（绕过 X-Frame-Options）');
+});

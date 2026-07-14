@@ -415,3 +415,14 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 - **零依赖实现**：不引 interact.js，用原生 pointer events（`pointerdown/move/up` + `setPointerCapture`，带 try/catch 防无效 pointerId）；`touch-action:none` 保证移动端可拖。
 - **反馈协议**：`FEEDBACK_TYPES` 新增 `move` → `{blockId, type:'move', value:{widgetId, x, y, w, h}}`，坐标**归一化 0-1**（与 block 的 widget 坐标同制）。草稿存 `draft[blockId].moves`，跨刷新可还原，可一键复位。
 - 真机 dogfood（chrome-devtools）：点编辑 → 画布 `data-mode=edit`；拖动 title 控件 → `top 4.44% → 20.23%`、草稿写入 `moves:{title:{x,y,w,h}}`；复位还原。
+
+### 16.10 会话资产自托管（去掉外部服务依赖）
+
+问题：高保真 UI 稿原住在 prd-studio 仓库，Vibe 通过 `http://127.0.0.1:8088` 代理去取 —— **prd-studio 的服务不开，UI 面就空了**。
+
+- **新路由** `GET /assets/<session>/<path>` → `workspace/<session>/assets/<path>`。
+  - session 名白名单 `^[A-Za-z0-9._-]+$`；子路径 `path.resolve` 后必须仍在 `assets/` 内（防穿越）；`Cache-Control: no-store`。
+  - 语义：**资产属于 session 内容**（runtime 数据，gitignore），不污染工具仓库。
+- **import 默认自托管**：`convertUI` 把 `public/ui/*.html` **拷进** `workspace/<session>/assets/ui/`，块的 `src` 写成 `/assets/<session>/ui/<file>`。传 `--ui-base http://…` 才改为引用外部 URL。
+- **renderPrototype(iframe)**：`src` 为**同源相对路径 → 直连**（不绕 `/api/proxy`，更快，且 iframe 同源便于后续文字锚定批注）；外站**绝对 URL 仍走代理**（绕过 X-Frame-Options）。
+- 实证：关闭 prd-studio（:8088 → 000）后，UI 面 10 个高保真屏仍正常渲染（iframe src = `/assets/prd-recorder/ui/b-home.html`，200）。

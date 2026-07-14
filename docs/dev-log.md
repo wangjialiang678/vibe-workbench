@@ -99,3 +99,12 @@
 - 模式工具条：批注 / **编辑（移动控件）** / 复位；编辑态控件虚线轮廓 + 缩放柄。
 - **零依赖**原生 pointer events 实现拖动/缩放（不引 interact.js）；`FEEDBACK_TYPES` 新增 `move`，归一化 0-1 坐标随反馈回传。
 - 测试 +4（`npm test` **272 pass / 0 fail**）；chrome-devtools 真机验证拖拽、草稿落盘、复位全通。
+
+## 批次 8c：会话资产自托管（2026-07-14，DESIGN §16.10）
+
+高保真 UI 稿不再依赖 prd-studio 的 :8088 服务。
+
+- 新增 `GET /assets/<session>/<path>` → `workspace/<session>/assets/`（session 名白名单 + 路径穿越防护 + no-store）。
+- `import-prd-project.mjs` 默认把 `ui/*.html` 拷进 session assets 并把 `src` 指向工作台自身；`--ui-base` 可回退到引用外部 URL。
+- `renderPrototype(iframe)`：同源相对 src 直连（不绕代理），外站绝对 URL 仍走代理。
+- 实证：**关掉 prd-studio 后 UI 面仍正常**（10 个屏全在，iframe 同源直连）。测试 +3 → `npm test` **275 pass / 0 fail**。

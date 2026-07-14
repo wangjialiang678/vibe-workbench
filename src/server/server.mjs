@@ -10,6 +10,7 @@ import { displayState } from '../protocol/status.mjs';
 import { HEARTBEAT_STALE_MS } from '../protocol/constants.mjs';
 import {
   paths,
+  workspaceDir,
   readJSON,
   writeJSON,
   writeText,
@@ -314,6 +315,40 @@ function handleRequest(req, res) {
     removeFile(paths.error(session, r));
     writeStatus(session, { state: 'submitted', error: null, round: r });
     json(res, 200, { ok: true });
+    return;
+  }
+
+  // --- 会话资产：/assets/<session>/<path> → workspace/<session>/assets/<path> ---
+  // 用途：session 自带的静态资源（如高保真 UI 设计稿 HTML），让工作台自托管，
+  // 不再依赖外部服务（此前 prd-studio 的 :8088 必须开着才能看 UI 面）。
+  if (method === 'GET' && urlPath.startsWith('/assets/')) {
+    const rel = decodeURIComponent(urlPath.slice('/assets/'.length));
+    const slash = rel.indexOf('/');
+    const session = slash === -1 ? rel : rel.slice(0, slash);
+    const sub = slash === -1 ? '' : rel.slice(slash + 1);
+    // session 名白名单 + 子路径穿越防护
+    if (!session || !sub || !/^[A-Za-z0-9._-]+$/.test(session)) {
+      json(res, 404, { ok: false, error: 'not found' });
+      return;
+    }
+    const root = path.resolve(workspaceDir(), session, 'assets');
+    const abs = path.resolve(root, sub);
+    if (!abs.startsWith(root + path.sep)) {
+      json(res, 403, { ok: false, error: 'forbidden' });
+      return;
+    }
+    try {
+      const buf = fs.readFileSync(abs);
+      const ext = path.extname(abs).toLowerCase();
+      cors(res);
+      res.writeHead(200, {
+        'Content-Type': MIME[ext] || 'application/octet-stream',
+        'Cache-Control': 'no-store',
+      });
+      res.end(buf);
+    } catch {
+      json(res, 404, { ok: false, error: 'asset not found' });
+    }
     return;
   }
 
