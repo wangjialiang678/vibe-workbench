@@ -3,6 +3,8 @@
 // 按 errorRetryable/badge.retry 决定是否渲染「重试」「强制重试」按钮（§13）。
 import { displayState, badgeFor, errorRetryable } from '../protocol/status.mjs';
 
+const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
+
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -11,17 +13,27 @@ function escHtml(str) {
 // now: 当前时间戳（毫秒），注入便于测试
 export function statusBadgeHtml(statusResp, now) {
   const nowMs = now ?? Date.now();
-  const displ = displayState(statusResp, nowMs);
+  // /api/status 的真实结构是 { status: {...} }；同时保留对旧的裸 status 入参兼容。
+  const hasNestedStatus = statusResp !== null
+    && typeof statusResp === 'object'
+    && Object.hasOwn(statusResp, 'status');
+  const status = hasNestedStatus ? statusResp.status : statusResp;
+  const error = status?.error ?? statusResp?.error;
+  const displ = displayState(status, nowMs);
   const badge = badgeFor(displ, {
-    elapsedSec: statusResp?.claimedAt
-      ? Math.floor((nowMs - Date.parse(statusResp.claimedAt)) / 1000)
+    elapsedSec: status?.claimedAt
+      ? Math.floor((nowMs - Date.parse(status.claimedAt)) / 1000)
       : undefined,
   });
 
+  const driverSourceNote = status?.driverSource === 'sdk-fallback'
+    ? `<span class="driver-source-note">${escHtml(SDK_FALLBACK_NOTICE)}</span>`
+    : '';
+
   // 错误人话提示（P1：按 error.kind 显示 userMessage/suggestedAction）
   let errorDetail = '';
-  if (displ === 'error' && statusResp?.error) {
-    const err = statusResp.error;
+  if (displ === 'error' && error) {
+    const err = error;
     const userMsg = escHtml(err.userMessage ?? err.message ?? '未知错误');
     const action = err.suggestedAction ? `<p class="error-action">${escHtml(err.suggestedAction)}</p>` : '';
     const rawDetail = err.message && err.userMessage
@@ -38,12 +50,12 @@ export function statusBadgeHtml(statusResp, now) {
       onclick="if(confirm('强制重试可能导致重复处理，确认？'))this.closest('[data-session]')?.dispatchEvent(new CustomEvent('retry',{detail:{force:true},bubbles:true}))">强制重试</button>`;
   } else if (badge.retry === true) {
     // 离线 / 可重试错误
-    const canRetry = displ !== 'error' || errorRetryable(statusResp?.error?.kind);
+    const canRetry = displ !== 'error' || errorRetryable(error?.kind);
     if (canRetry) {
       retryBtn = `<button class="retry-btn" data-action="retry">重试</button>`;
     }
   } else if (badge.retry === 'maybe' && displ === 'error') {
-    const canRetry = errorRetryable(statusResp?.error?.kind);
+    const canRetry = errorRetryable(error?.kind);
     retryBtn = canRetry
       ? `<button class="retry-btn" data-action="retry">重试</button>`
       : '';
@@ -52,6 +64,7 @@ export function statusBadgeHtml(statusResp, now) {
   return `<div class="status-badge status-${escHtml(displ)}" data-state="${escHtml(displ)}">
   <span class="status-icon" aria-hidden="true">${badge.icon}</span>
   <span class="status-text">${escHtml(badge.text)}</span>
+  ${driverSourceNote}
   ${retryBtn}
   ${errorDetail}
 </div>`;

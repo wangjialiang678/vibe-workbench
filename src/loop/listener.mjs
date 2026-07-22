@@ -9,6 +9,8 @@ import {
 import { getSession, setSessionId, getCwd } from './session-store.mjs';
 import { runClaude } from './claude-exec.mjs';
 
+const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
+
 // ────────────────────────────────────────────────────────────────────────────
 // 内部工具
 
@@ -41,7 +43,7 @@ function buildPrompt(session, round) {
  * @param {string} session
  * @param {number} round
  * @param {{ driver?: Function }} opts
- * @returns {Promise<{ status: 'skipped'|'responded'|'error' }>}
+ * @returns {Promise<{ status: 'skipped'|'responded'|'error', driverSource?: 'subscription'|'sdk-fallback' }>}
  */
 export async function processRound(session, round, { driver = (a) => runClaude(a) } = {}) {
   const ackPath = paths.ack(session, round);
@@ -57,7 +59,7 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
   writeJSON(ackPath, { claimedAt, pid: process.pid });
 
   // 更新状态 → claimed
-  writeStatus(session, { state: 'claimed', claimedAt, round });
+  writeStatus(session, { state: 'claimed', claimedAt, round, driverSource: null });
 
   // 组装 prompt
   const prompt = buildPrompt(session, round);
@@ -69,9 +71,16 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
 
   try {
     const result = await driver({ prompt, sessionId: claudeSessionId, cwd });
+    // 测试/自定义 driver 未声明来源时，按产品路径命名视为 subscription。
+    const driverSource = result.driverSource === 'sdk-fallback'
+      ? 'sdk-fallback'
+      : 'subscription';
 
     // 写 response.md
-    writeText(paths.response(session, round), result.text || '');
+    const responseText = driverSource === 'sdk-fallback'
+      ? `${SDK_FALLBACK_NOTICE}\n\n${result.text || ''}`
+      : (result.text || '');
+    writeText(paths.response(session, round), responseText);
 
     // 更新 session（续接 id）
     if (result.sessionId) {
@@ -79,13 +88,16 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
     }
 
     // 更新状态 → responded
-    writeStatus(session, { state: 'responded' });
+    writeStatus(session, { state: 'responded', driverSource });
 
-    return { status: 'responded' };
+    return { status: 'responded', driverSource };
   } catch (err) {
     // err 是 { kind, message } 或普通 Error
     const kind = err.kind || 'unknown';
     const message = err.message || String(err);
+    const driverSource = err.driverSource === 'sdk-fallback'
+      ? 'sdk-fallback'
+      : 'subscription';
 
     // 按 DESIGN §13 P1：按 kind 写 userMessage/suggestedAction
     const { userMessage, suggestedAction } = kindToUserFacing(kind);
@@ -95,13 +107,14 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
       message,
       userMessage,
       suggestedAction,
+      driverSource,
       at: new Date().toISOString(),
     });
 
-    writeStatus(session, { state: 'error' });
+    writeStatus(session, { state: 'error', driverSource });
 
     // 不再抛出（单轮异常不拖垮进程）
-    return { status: 'error' };
+    return { status: 'error', driverSource };
   }
 }
 

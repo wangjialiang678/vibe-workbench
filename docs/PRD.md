@@ -104,6 +104,8 @@ editable(就地编辑) · comment(评论层)
 | D7 | 触发 = 异步唤醒（非同回合阻塞 poll）|
 | D8 | 容错恢复 = 让网页成为控制面 + AI 侧自愈不丢状态（web-only 硬需求）|
 
+**D3 解耦阶段②补充决策（2026-07）**：驱动改为 hybrid。默认仍走 `claude -p --resume` 的机器默认凭据；首跑非零退出或超时、且存在 `ANTHROPIC_API_KEY` 时，显式传 key 重试一次，并用 `driverSource: "sdk-fallback"` 与固定中文文案明示。该字段描述的是工作台可观察的凭据尝试路径，不冒充 Claude CLI 的最终认证或计费审计结果。公网部署同时增加 `--host` 与 `WORKBENCH_TOKEN` 共享口令门；非 localhost 裸启动直接拒绝。
+
 **功能需求**
 | ID | 需求 |
 |---|---|
@@ -129,8 +131,8 @@ editable(就地编辑) · comment(评论层)
 
 | 驱动法 | 特点 | 选用 |
 |---|---|---|
-| CLI `claude -p --resume` | 吃订阅、灵活、主流；~12s 冷启动 | ✅ MVP |
-| Agent SDK `query()` | 零冷启动、控制力强 | phase 2 可换 |
+| Hybrid CLI：默认凭据 + 显式 API key 单次托底 | 保留 `--resume`；失败时可恢复；每次托底明示 | ✅ D3 阶段② |
+| Agent SDK `query()` | 零冷启动、控制力强 | 尚未引入；当前托底仍由 CLI 执行 |
 | tmux + node-pty | 常驻交互会话；读输出靠 idle 计时、较脆 | 否 |
 | OpenClaw 插件 | 功能全但 3.8 万行框架过重 | 否 |
 
@@ -143,7 +145,7 @@ editable(就地编辑) · comment(评论层)
 - 基础容错：持久队列 + 状态徽章 + 网页重试
 - 双轨落盘
 
-**暂不做（YAGNI）**：dev-review 模板重建（prd-studio 已覆盖该用例）、飞书载体统一、editable 块、daemon 化、多人协作/鉴权/公网。
+**暂不做（YAGNI）**：dev-review 模板重建（prd-studio 已覆盖该用例）、飞书载体统一、editable 块、daemon 化、账号级多人权限。公网阶段仅提供共享口令，不把它表述为完整账号系统。
 
 **里程碑**：M1 协议+渲染器 → M2 异步唤醒回路 → M3 基础容错 → M4 dogfood 本类对话。
 

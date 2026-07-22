@@ -2,6 +2,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { computeDiff, removedBlocks, diffSanity } from '../protocol/diff.mjs';
@@ -37,11 +38,37 @@ const MIME = {
   '.png': 'image/png',
 };
 
+const PUBLIC_STATIC_EXTENSIONS = new Set([
+  '.mjs', '.js', '.css', '.svg', '.ico', '.png',
+  '.jpg', '.jpeg', '.gif', '.webp', '.woff', '.woff2', '.ttf',
+]);
+
+// /render 下目录、无扩展路由和 HTML 都是页面入口；只豁免明确的静态资源。
+export function requiresPageToken(urlPath) {
+  if (urlPath === '/' || urlPath === '/render') return true;
+  if (!urlPath.startsWith('/render/')) return false;
+  const ext = path.posix.extname(urlPath).toLowerCase();
+  return !PUBLIC_STATIC_EXTENSIONS.has(ext);
+}
+
 // ---- helpers ----
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Workbench-Token');
+}
+
+function noReferrer(res) {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
+// token 先归一成固定长度摘要，再做恒定时序比较，避免长度与前缀泄漏。
+export function safeTokenEqual(actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string' || !actual || !expected) return false;
+  const digest = (value) => createHash('sha256')
+    .update(value)
+    .digest();
+  return timingSafeEqual(digest(actual), digest(expected));
 }
 
 // 原始 body（Buffer）——代理透传用，不解析
@@ -108,13 +135,14 @@ function feedbackToMd(fb) {
  * 2. Remove any <meta http-equiv="X-Frame-Options" ...> tags.
  * Pure function, exported for unit testing.
  */
-export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '') {
+export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
   // 1. 去掉阻止嵌入的 meta（X-Frame-Options / CSP）
   let result = html
     .replace(/<meta[^>]+http-equiv\s*=\s*["']?X-Frame-Options["']?[^>]*\/?>/gi, '')
     .replace(/<meta[^>]+http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*\/?>/gi, '');
 
-  const proxyBase = `${selfOrigin}/api/proxy?url=`;
+  const tokenPart = token ? `token=${encodeURIComponent(token)}&` : '';
+  const proxyBase = `${selfOrigin}/api/proxy?${tokenPart}url=`;
   const toProxy = (u) => {
     try { return proxyBase + encodeURIComponent(new URL(u, targetUrl).href); }
     catch { return u; }
@@ -157,10 +185,11 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '') {
 }
 
 // ---- request handler ----
-function handleRequest(req, res) {
+function handleRequest(req, res, expectedToken = '') {
   const method = req.method.toUpperCase();
   const rawUrl = req.url || '/';
-  const urlPath = new URL(rawUrl, 'http://localhost').pathname;
+  const requestUrl = new URL(rawUrl, 'http://localhost');
+  const urlPath = requestUrl.pathname;
 
   // OPTIONS preflight
   if (method === 'OPTIONS') {
@@ -168,6 +197,31 @@ function handleRequest(req, res) {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // 页面入口即使最终 302/403/404，也不应把携 token 的来源 URL 发送给下一跳。
+  if (requiresPageToken(urlPath)) noReferrer(res);
+
+  // 开启 token 后，API 可用 header/query；页面入口只接受 query，便于浏览器继续透传。
+  if (expectedToken) {
+    const isApi = urlPath.startsWith('/api/');
+    const isPageEntry = requiresPageToken(urlPath);
+    const isSessionAsset = urlPath.startsWith('/assets/');
+    if (isApi || isPageEntry || isSessionAsset) {
+      const queryToken = requestUrl.searchParams.get('token');
+      const headerToken = req.headers['x-workbench-token'];
+      const candidates = isApi ? [headerToken, queryToken] : [queryToken];
+      const allowed = candidates.some((candidate) => safeTokenEqual(candidate, expectedToken));
+      if (!allowed) {
+        if (isApi) json(res, 403, { ok: false, error: '访问被拒绝：令牌缺失或无效' });
+        else {
+          cors(res);
+          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('访问被拒绝：请在页面 URL 中提供有效令牌');
+        }
+        return;
+      }
+    }
   }
 
   // --- API routes ---
@@ -188,11 +242,16 @@ function handleRequest(req, res) {
       json(res, 200, { ok: true, status: null, display: 'unknown' });
       return;
     }
+    const roundError = status.state === 'error' && Number.isInteger(status.round)
+      ? readJSON(paths.error(session, status.round), null)
+      : null;
+    // 只合并到 API 响应副本，兼容旧 status.json 且不改变落盘结构。
+    const responseStatus = roundError ? { ...status, error: roundError } : status;
     const now = Date.now();
-    const display = displayState(status, now);
-    const hb = status.heartbeatAt ? Date.parse(status.heartbeatAt) : NaN;
+    const display = displayState(responseStatus, now);
+    const hb = responseStatus.heartbeatAt ? Date.parse(responseStatus.heartbeatAt) : NaN;
     const stale = !Number.isFinite(hb) || (now - hb) > HEARTBEAT_STALE_MS;
-    json(res, 200, { ok: true, status, display, stale });
+    json(res, 200, { ok: true, status: responseStatus, display, stale });
     return;
   }
 
@@ -267,6 +326,7 @@ function handleRequest(req, res) {
     const { url: targetUrl } = parseQuery(rawUrl);
     if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
       cors(res);
+      noReferrer(res);
       res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end('<p>无效的代理目标 URL</p>');
       return;
@@ -287,7 +347,8 @@ function handleRequest(req, res) {
         const ct = fr.headers.get('content-type') || 'text/html; charset=utf-8';
         cors(res);
         if (/text\/html/i.test(ct)) {
-          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin);
+          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin, expectedToken);
+          noReferrer(res);
           res.writeHead(fr.status, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(html);
         } else {
@@ -297,6 +358,7 @@ function handleRequest(req, res) {
         }
       } catch (err) {
         cors(res);
+        noReferrer(res);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(`<p>无法加载该页面：${String(err.message ?? err)}</p>`);
       }
@@ -341,6 +403,7 @@ function handleRequest(req, res) {
       const buf = fs.readFileSync(abs);
       const ext = path.extname(abs).toLowerCase();
       cors(res);
+      if (ext === '.html') noReferrer(res);
       res.writeHead(200, {
         'Content-Type': MIME[ext] || 'application/octet-stream',
         'Cache-Control': 'no-store',
@@ -357,7 +420,8 @@ function handleRequest(req, res) {
     // Redirect / → /render/index.html
     if (urlPath === '/') {
       cors(res);
-      res.writeHead(302, { Location: '/render/index.html' });
+      const tokenQuery = expectedToken ? `?token=${encodeURIComponent(expectedToken)}` : '';
+      res.writeHead(302, { Location: `/render/index.html${tokenQuery}` });
       res.end();
       return;
     }
@@ -392,6 +456,7 @@ function handleRequest(req, res) {
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] || 'application/octet-stream';
     cors(res);
+    if (ext === '.html') noReferrer(res);
     // 本地开发工具：静态资源不缓存，避免改了代码浏览器仍用旧的（普通刷新即拿最新）
     res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store, must-revalidate' });
     fs.createReadStream(filePath).pipe(res);
@@ -402,10 +467,15 @@ function handleRequest(req, res) {
   json(res, 404, { ok: false, error: 'not found' });
 }
 
-export function startServer(port) {
-  const server = http.createServer(handleRequest);
+export function startServer(port, host = '127.0.0.1') {
+  const listenHost = host || '127.0.0.1';
+  const token = process.env.WORKBENCH_TOKEN || '';
+  if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
+    throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
+  }
+  const server = http.createServer((req, res) => handleRequest(req, res, token));
   const listenPort = port != null ? port : (parseInt(process.env.PORT, 10) || 8099);
-  server.listen(listenPort);
+  server.listen(listenPort, listenHost);
   return server;
 }
 
@@ -414,9 +484,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const argPort = process.argv.includes('--port')
     ? parseInt(process.argv[process.argv.indexOf('--port') + 1], 10)
     : null;
+  const host = process.argv.includes('--host')
+    ? process.argv[process.argv.indexOf('--host') + 1]
+    : '127.0.0.1';
   const port = argPort || parseInt(process.env.PORT, 10) || 8099;
-  const server = startServer(port);
+  const server = startServer(port, host);
   server.once('listening', () => {
-    console.log(`vibecoding workbench server listening on http://localhost:${server.address().port}`);
+    console.log(`vibecoding workbench server listening on http://${host}:${server.address().port}`);
   });
 }

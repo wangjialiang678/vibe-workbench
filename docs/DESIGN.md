@@ -220,6 +220,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 - **IDE 内**：listener 由 `bin/workbench.mjs` 拉起；它检测到 responded 也可（可选）通过控制台输出提醒主 Claude。MVP 内核心 = 文件契约，driver 可换。
 - **接入**：`claude-exec.mjs` 封装 `claude -p <prompt> --output-format stream-json [--resume <sid>]`，cwd=会话工作目录；首轮无 sid，从输出捕获 session_id 存 `session.json`，后续 --resume。
 - **超时兜底**：listener 对单轮处理设软超时，超时写 error，前端可重试。
+- **D3 阶段② hybrid 托底**：默认尝试从子进程环境移除 `ANTHROPIC_API_KEY`，使用 Claude CLI 的机器默认凭据；仅当该尝试非零退出或超时且环境存在 key 时，显式传 key 重试一次。状态落 `driverSource: "subscription" | "sdk-fallback"`；托底回复与状态区写固定中文标注。字段只证明工作台采用了哪条凭据尝试路径，不能从 CLI 外部证明最终认证来源或账单归属；当前没有直接接入 Anthropic SDK。子进程 stderr 进入错误状态前脱敏 `ANTHROPIC_API_KEY=...` 与 `sk-ant-...` 密钥串。
 
 ---
 
@@ -236,6 +237,8 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET `/api/health` | `{ok,ts}` |
 
 服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
+
+公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。启用后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；比较前先拒绝非字符串/空值，再做固定长度摘要与 `crypto.timingSafeEqual`。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
 
 ---
 

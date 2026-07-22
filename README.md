@@ -8,10 +8,10 @@
 
 ```bash
 # 1. 跑测试（零依赖，Node ≥20）
-npm test                         # 234 单元/集成测试
+npm test                         # 307 项单元/集成测试
 
 # 2. 起服务（HTTP + 异步唤醒 listener）
-node bin/workbench.mjs up --port 8099     # serve + watch（监管自愈）
+node bin/workbench.mjs up --port 8099     # 默认只监听 127.0.0.1，serve + watch
 #   或仅起 server：node bin/workbench.mjs serve --port 8099
 
 # 3. 渲染一轮内容（AI 侧；content.json 见 docs/DESIGN.md §2）
@@ -23,6 +23,33 @@ open "http://127.0.0.1:8099/render/?session=<session>&round=1"
 ```
 
 提交反馈后，`watch` 的 listener 会自动认领并用 `claude -p --resume` 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。
+
+## 公网部署与共享口令
+
+本机行为不变：不设置 `WORKBENCH_TOKEN` 时只能监听 `127.0.0.1` 或 `localhost`。绑定其他地址必须设置共享口令，否则服务会拒绝启动：
+
+```bash
+# 云服务器上由 nginx 反代到这个端口；对外入口应使用 HTTPS
+WORKBENCH_TOKEN='请换成足够长的随机值' \
+  node bin/workbench.mjs up --host 0.0.0.0 --port 8099
+```
+
+- 页面通过 `?token=...` 进入；页面会把 token 自动透传给后续同源 API 请求。
+- 脚本或 API 客户端优先使用请求头 `x-workbench-token`，也兼容 query 参数 `?token=...`。
+- 渲染器自身的静态 JS/CSS/字体/图片可免口令加载；HTML、静态 `.json`/`.map`、所有 `/api/*` 及会话 `/assets/*` 均受保护。前端会给直接渲染的 `/assets/` iframe、图片和链接自动附加 query token。
+- `present` 等需要访问本机 server 的 CLI 命令会自动读取 `WORKBENCH_TOKEN`；它返回的页面 URL 也会带 token。`wait` 只读本地文件，不发 HTTP 请求。
+- HTML 与代理页面统一返回 `Referrer-Policy: no-referrer`，避免 token 随 Referer 发往下一跳；但 token 仍可能进入浏览器历史和反向代理访问日志。公网部署必须使用 HTTPS，并按实际安全要求处理日志和定期轮换口令。
+
+## Hybrid 驱动与 SDK 托底标注
+
+异步回路仍通过 `claude -p --resume` 驱动，但每轮采用两段式尝试：
+
+1. 首跑不向子进程传 `ANTHROPIC_API_KEY`，让 Claude CLI 使用机器上的默认凭据。
+2. 只有首跑非零退出或超时、且当前环境存在 `ANTHROPIC_API_KEY` 时，才显式传入该 key 重试一次。
+
+首跑成功时 `status.json` 记录 `driverSource: "subscription"`；第二次尝试被使用时记录 `driverSource: "sdk-fallback"`，成功回复和网页状态区会明示“（本次由 SDK 托底执行，走 API 计费）”。这里的 “subscription” 与 “SDK 托底” 是工作台对两次**凭据尝试路径**的命名：工作台能保证首跑移除环境 key、回退时显式注入 key，但不能从 Claude CLI 进程外审计账号最终采用的认证来源或账单归属；本项目也没有新增 Anthropic SDK 依赖。
+
+Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和 `sk-ant-...` 形式的密钥，同时保留其余诊断上下文。
 
 ## 架构（三段式「桥」）
 
@@ -50,7 +77,7 @@ open "http://127.0.0.1:8099/render/?session=<session>&round=1"
 - [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-**281 自动化测试全绿**。已落地：§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
+**307 项自动化测试全绿**。已落地：公网绑定防呆 + 共享口令门、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
 决策块结构化（背景/为什么/选项利弊/推荐理由 + 作者 lint）、会话级留言、live 实时系统标识、受众分层折叠、editable 一键确认、embed 代理支持 POST（实证 bug 修复）、prd-studio 高保真 UI 一键导入（手机壳呈现）。
 
 **作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会硬校验决策块四段完整性；仅在明确使用 `--allow-incomplete-decisions` 时临时退回 lint 警告。

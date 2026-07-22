@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 let tmp, ws, bin, server, port;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/workbench.mjs');
+const APP = path.resolve(__dirname, '../../src/render/app.mjs');
 
 function completeChoice(id) {
   return {
@@ -79,6 +80,48 @@ test('cmdPresent: 自动递增 round', async () => {
   await bin.cmdPresent('p1b', { session: 'p1b', round: 1, blocks: [{ id: 'b1', type: 'markdown', body: 'r1' }] }, { port });
   const r2 = await bin.cmdPresent('p1b', { session: 'p1b', blocks: [{ id: 'b1', type: 'markdown', body: 'r2' }] }, { port });
   assert.equal(r2.round, 2);
+});
+
+test('cmdPresent: WORKBENCH_TOKEN 自动用于健康检查并附加到页面 URL', async () => {
+  const previous = process.env.WORKBENCH_TOKEN;
+  const token = 'present /? & 中文令牌';
+  process.env.WORKBENCH_TOKEN = token;
+  const srv = await import('../../src/server/server.mjs');
+  const authServer = srv.startServer(0);
+  await new Promise((resolve) => authServer.once('listening', resolve));
+  const authPort = authServer.address().port;
+  try {
+    const result = await bin.cmdPresent(
+      'p-token',
+      { session: 'p-token', round: 1, blocks: [{ id: 'b1', type: 'markdown', body: 'token' }] },
+      { port: authPort },
+    );
+    assert.equal(result.server, 'already', '带 token 的健康检查应识别已运行 server');
+    assert.equal(new URL(result.url).searchParams.get('token'), token);
+    assert.equal(new URL(result.urlPinned).searchParams.get('token'), token);
+  } finally {
+    await new Promise((resolve) => authServer.close(resolve));
+    if (previous == null) delete process.env.WORKBENCH_TOKEN;
+    else process.env.WORKBENCH_TOKEN = previous;
+  }
+});
+
+test('浏览器端从 location.search 读取 token，所有同源 API fetch 均经 token URL helper', () => {
+  const source = fs.readFileSync(APP, 'utf8');
+  assert.match(source, /params\.get\(['"]token['"]\)/);
+  assert.match(source, /searchParams\.set\(['"]token['"]/);
+  const rawApiFetches = [...source.matchAll(/fetch\(\s*([`'"])\/api\//g)];
+  assert.equal(rawApiFetches.length, 0, '不得直接 fetch 裸 /api/* URL');
+  assert.match(
+    source,
+    /querySelectorAll\([^\n]*iframe\[src\^=[^\n]*\/api\//,
+    'renderZones 生成的 embed/prototype iframe 也必须补 token',
+  );
+  assert.match(
+    source,
+    /querySelectorAll\([^\n]*\[src\^=[^\n]*\/assets\//,
+    '渲染结果中的 iframe/img 等 /assets/ 资源也必须补 token',
+  );
 });
 
 test('present: needsDecision choice 缺 background 时拒绝渲染并列出块 id', async () => {

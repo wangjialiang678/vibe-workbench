@@ -123,6 +123,12 @@ describe('CLI --help', () => {
     assert.ok(out.includes('watch'), '--help should mention watch');
     assert.ok(out.includes('up'), '--help should mention up');
   });
+
+  it('serve/up 帮助展示 --host 与默认监听地址', async () => {
+    const { stdout } = await execFileAsync('node', [BIN, '--help']);
+    assert.match(stdout, /--host/);
+    assert.match(stdout, /127\.0\.0\.1/);
+  });
 });
 
 describe('CLI render subcommand', () => {

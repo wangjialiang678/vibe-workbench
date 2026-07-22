@@ -133,13 +133,17 @@ async function readSource(src) {
 
 // 确保 server 在运行（不在则 detached 拉起，保活于本命令退出后）
 async function ensureServer(port) {
-  try { const r = await fetch(`http://127.0.0.1:${port}/api/health`); if (r.ok) return 'already'; } catch {}
+  const token = process.env.WORKBENCH_TOKEN || '';
+  // header 受 ByteString 限制，中文 token 无法发送；query 由 URL 自动百分号编码。
+  const healthUrl = new URL(`http://127.0.0.1:${port}/api/health`);
+  if (token) healthUrl.searchParams.set('token', token);
+  try { const r = await fetch(healthUrl); if (r.ok) return 'already'; } catch {}
   const { spawn } = await import('node:child_process');
   const self = fileURLToPath(import.meta.url);
   const child = spawn(process.execPath, [self, 'serve', '--port', String(port)], { detached: true, stdio: 'ignore' });
   child.unref();
   for (let i = 0; i < 40; i++) {
-    try { const r = await fetch(`http://127.0.0.1:${port}/api/health`); if (r.ok) return 'started'; } catch {}
+    try { const r = await fetch(healthUrl); if (r.ok) return 'started'; } catch {}
     await sleep(100);
   }
   return 'starting';
@@ -159,11 +163,15 @@ export async function cmdPresent(session, contentObj, { port = 8099, allowIncomp
 
   const server = await ensureServer(port);
   const { round } = await cmdRender(session, contentObj);
-  const base = `http://127.0.0.1:${port}/render/?session=${encodeURIComponent(session)}`;
+  const pageUrl = new URL(`http://127.0.0.1:${port}/render/`);
+  pageUrl.searchParams.set('session', session);
+  const token = process.env.WORKBENCH_TOKEN || '';
+  if (token) pageUrl.searchParams.set('token', token);
   // 默认给"不带 round"的链接 → 跟随最新轮（AI 出新一轮时页面自动推进，用户无需换链接）
-  const url = base;
+  const url = pageUrl.href;
   // 需要固定看这一轮（回顾旧版）时才用带 round 的
-  const urlPinned = `${base}&round=${round}`;
+  pageUrl.searchParams.set('round', String(round));
+  const urlPinned = pageUrl.href;
   const result = { ok: true, session, round, url, urlPinned, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
   if (allowIncompleteDecisions) result.lintBypassed = true;
   return result;
@@ -189,6 +197,12 @@ function parsePort(args, defaultPort = 8099) {
   return defaultPort;
 }
 
+function parseHost(args, defaultHost = '127.0.0.1') {
+  const idx = args.indexOf('--host');
+  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
+  return defaultHost;
+}
+
 // ─── 用法 ─────────────────────────────────────────────────────────────────────
 function printHelp() {
   console.log(`
@@ -198,19 +212,20 @@ vibecoding workbench — CLI 编排
   workbench present <session> [content.json|-] [--allow-incomplete-decisions]  校验并渲染一轮（推荐给 skill 用）
   workbench wait <session> <round> [--timeout 秒]  监听该轮提交，出现反馈即返回其内容（后台运行）
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
-  workbench serve [--port N]                    启动 HTTP server（默认 8099）
+  workbench serve [--port N] [--host HOST]      启动 HTTP server（默认 127.0.0.1:8099）
   workbench watch                               启动 listener，监管自愈（最多重启 5 次）
-  workbench up [--port N]                       同时启动 serve + watch
+  workbench up [--port N] [--host HOST]         同时启动 serve + watch
   workbench --help                              显示此帮助
 
 选项：
   --port N                         指定端口号
+  --host HOST                      指定监听地址（默认 127.0.0.1；非本机地址须设置 WORKBENCH_TOKEN）
   --allow-incomplete-decisions     present 临时跳过决策完整性硬校验（仍输出 lint）
 
 示例：
   workbench render ses_001 content.json
   workbench render ses_001 -              # 从 stdin 读取 JSON
-  workbench serve --port 8080
+  workbench serve --port 8080 --host 127.0.0.1
   workbench watch
   workbench up --port 8080
 `.trim());
@@ -346,9 +361,10 @@ async function main() {
 
     case 'serve': {
       const port = parsePort(rest);
+      const host = parseHost(rest);
       const { startServer } = await import(`${ROOT}/src/server/server.mjs`);
-      startServer(port); // startServer(portNumber) -> server（同步返回，server 保活进程）
-      console.log(`workbench serve → http://127.0.0.1:${port}/render/  (Ctrl+C 退出)`);
+      startServer(port, host); // 同步校验 host/token 后监听，server 保活进程
+      console.log(`workbench serve → http://${host}:${port}/render/  (Ctrl+C 退出)`);
       break;
     }
 
@@ -359,14 +375,15 @@ async function main() {
 
     case 'up': {
       const port = parsePort(rest);
+      const host = parseHost(rest);
       // 并行启动 server + listener（watch 模式）
       const [{ startServer }, { startListener }] = await Promise.all([
         import(`${ROOT}/src/server/server.mjs`),
         import(`${ROOT}/src/loop/listener.mjs`),
       ]);
       // server 在同进程启动（同步返回，非阻塞），listener 监管自愈
-      startServer(port);
-      console.log(`workbench up → http://127.0.0.1:${port}/render/  (serve + watch)`);
+      startServer(port, host);
+      console.log(`workbench up → http://${host}:${port}/render/  (serve + watch)`);
       await cmdWatch();
       break;
     }

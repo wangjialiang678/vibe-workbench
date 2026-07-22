@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 // ── 临时 workspace ──────────────────────────────────────────────────────────
 let tmpDir;
@@ -21,13 +23,13 @@ after(() => {
 // 导入必须在 before 里设好 WB_WORKSPACE 之后动态 import，但 node:test 的 before 在
 // 顶层 describe 内先于 it 执行，而静态 import 在模块顶层就运行。
 // 解法：用动态 import 延迟到测试体内（首次 it 内 import 即可；node:test 保证 before 先于 it）。
-let buildArgv, parseStreamJson, runClaude;
+let buildArgv, parseStreamJson, redactSecrets, runClaude;
 let getSession, setSessionId, getCwd;
 let processRound, reconcile, markDead;
 let paths, readJSON, exists, writeJSON, writeText, readStatus;
 
 before(async () => {
-  ({ buildArgv, parseStreamJson, runClaude } =
+  ({ buildArgv, parseStreamJson, redactSecrets, runClaude } =
     await import('../../src/loop/claude-exec.mjs'));
   ({ getSession, setSessionId, getCwd } =
     await import('../../src/loop/session-store.mjs'));
@@ -58,6 +60,57 @@ function mkRound(session, round, { feedback = true, content = true } = {}) {
       path.join(dir, 'content.json'),
       JSON.stringify({ session, round, blocks: [] }),
     );
+  }
+}
+
+function streamResult(sessionId, text) {
+  return `${JSON.stringify({ type: 'result', session_id: sessionId, result: text })}\n`;
+}
+
+// 用可控子进程脚本验证每次 spawn 的环境与终态，不依赖本机 claude CLI。
+function scriptedSpawn(steps) {
+  const calls = [];
+
+  const spawnImpl = (command, argv, options) => {
+    const step = steps[calls.length];
+    if (!step) throw new Error('不应该出现额外的 spawn 调用');
+
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = (signal) => {
+      if (step.closeOnKill) child.emit('close', null, signal);
+      return true;
+    };
+    calls.push({ command, argv, options: { ...options, env: { ...options.env } } });
+
+    queueMicrotask(() => {
+      if (step.error) {
+        child.emit('error', step.error);
+        return;
+      }
+      if (step.stdout) child.stdout.write(step.stdout);
+      if (step.stderr) child.stderr.write(step.stderr);
+      if (Object.hasOwn(step, 'code')) child.emit('close', step.code);
+    });
+
+    return child;
+  };
+
+  return { spawnImpl, calls };
+}
+
+async function withApiKey(value, fn) {
+  const hadKey = Object.hasOwn(process.env, 'ANTHROPIC_API_KEY');
+  const previous = process.env.ANTHROPIC_API_KEY;
+  if (value === undefined) delete process.env.ANTHROPIC_API_KEY;
+  else process.env.ANTHROPIC_API_KEY = value;
+
+  try {
+    return await fn();
+  } finally {
+    if (hadKey) process.env.ANTHROPIC_API_KEY = previous;
+    else delete process.env.ANTHROPIC_API_KEY;
   }
 }
 
@@ -131,6 +184,143 @@ describe('parseStreamJson', () => {
     const { sessionId, text } = parseStreamJson(lines.join('\n'));
     assert.equal(sessionId, 'ses_R1');
     assert.equal(text, 'Final answer');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('redactSecrets', () => {
+  it('脱敏 API key 赋值（含引号）与独立 sk-ant token，保留其余上下文', () => {
+    const input = [
+      'auth failed',
+      'ANTHROPIC_API_KEY=plain-secret',
+      'quoted ANTHROPIC_API_KEY="quoted secret"',
+      'token sk-ant-api03-AbC_123 trace=42',
+    ].join('\n');
+
+    assert.equal(redactSecrets(input), [
+      'auth failed',
+      'ANTHROPIC_API_KEY=***',
+      'quoted ANTHROPIC_API_KEY=***',
+      'token *** trace=42',
+    ].join('\n'));
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+describe('runClaude — 订阅优先与 SDK 单次托底', () => {
+  it('首跑移除 API key，成功时标记 subscription 且不重试', async () => {
+    await withApiKey('sk-test-subscription', async () => {
+      const { spawnImpl, calls } = scriptedSpawn([
+        { code: 0, stdout: streamResult('ses_SUB', '订阅成功') },
+      ]);
+
+      const result = await runClaude({ prompt: 'hello', spawnImpl });
+
+      assert.equal(calls.length, 1);
+      assert.equal(Object.hasOwn(calls[0].options.env, 'ANTHROPIC_API_KEY'), false);
+      assert.equal(calls[0].options.env.PATH, process.env.PATH);
+      assert.equal(result.driverSource, 'subscription');
+      assert.equal(result.text, '订阅成功');
+    });
+  });
+
+  it('首跑非 0 退出时用 API key 恰好重跑一次，并标记 sdk-fallback', async () => {
+    await withApiKey('sk-test-fallback', async () => {
+      const { spawnImpl, calls } = scriptedSpawn([
+        { code: 1, stderr: '订阅凭据不可用' },
+        { code: 0, stdout: streamResult('ses_SDK', 'SDK 成功') },
+      ]);
+
+      const result = await runClaude({ prompt: 'hello', spawnImpl });
+
+      assert.equal(calls.length, 2);
+      assert.equal(Object.hasOwn(calls[0].options.env, 'ANTHROPIC_API_KEY'), false);
+      assert.equal(calls[1].options.env.ANTHROPIC_API_KEY, 'sk-test-fallback');
+      assert.equal(result.driverSource, 'sdk-fallback');
+      assert.equal(result.sessionId, 'ses_SDK');
+    });
+  });
+
+  it('SDK 托底也失败时仅 spawn 两次，错误携带 sdk-fallback', async () => {
+    await withApiKey('sk-test-fallback-fail', async () => {
+      const { spawnImpl, calls } = scriptedSpawn([
+        { code: 1, stderr: '首跑失败' },
+        { code: 2, stderr: '托底失败' },
+      ]);
+
+      await assert.rejects(
+        runClaude({ prompt: 'hello', spawnImpl }),
+        (err) => err.kind === 'driver' && err.driverSource === 'sdk-fallback',
+      );
+      assert.equal(calls.length, 2);
+    });
+  });
+
+  it('没有非空 API key 时，首跑非 0 退出也不重试', async () => {
+    await withApiKey(undefined, async () => {
+      const { spawnImpl, calls } = scriptedSpawn([
+        { code: 1, stderr: '订阅失败' },
+      ]);
+
+      await assert.rejects(
+        runClaude({ prompt: 'hello', spawnImpl }),
+        (err) => err.kind === 'driver' && err.driverSource === 'subscription',
+      );
+      assert.equal(calls.length, 1);
+    });
+  });
+
+  it('非 0 退出的 stderr 进入错误对象前脱敏，且保留诊断上下文', async () => {
+    await withApiKey(undefined, async () => {
+      const { spawnImpl, calls } = scriptedSpawn([{
+        code: 1,
+        stderr: 'auth failed ANTHROPIC_API_KEY=env-secret trace=abc; leaked sk-ant-api03-token_456 request-id=req-1',
+      }]);
+
+      await assert.rejects(
+        runClaude({ prompt: 'hello', spawnImpl }),
+        (err) => {
+          assert.equal(err.kind, 'driver');
+          assert.equal(err.driverSource, 'subscription');
+          assert.match(err.message, /auth failed/);
+          assert.match(err.message, /trace=abc/);
+          assert.match(err.message, /request-id=req-1/);
+          assert.match(err.message, /ANTHROPIC_API_KEY=\*\*\*/);
+          assert.doesNotMatch(err.message, /env-secret/);
+          assert.doesNotMatch(err.message, /sk-ant-api03-token_456/);
+          return true;
+        },
+      );
+      assert.equal(calls.length, 1);
+    });
+  });
+
+  it('spawn ENOENT 属于启动错误，即使有 API key 也不重试', async () => {
+    await withApiKey('sk-test-no-spawn-retry', async () => {
+      const enoent = Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+      const { spawnImpl, calls } = scriptedSpawn([{ error: enoent }]);
+
+      await assert.rejects(
+        runClaude({ prompt: 'hello', spawnImpl }),
+        (err) => err.kind === 'driver' && err.driverSource === 'subscription',
+      );
+      assert.equal(calls.length, 1);
+    });
+  });
+
+  it('首跑超时后可 SDK 托底，kill 同步触发 close 也不会重复 settle', async () => {
+    await withApiKey('sk-test-timeout', async () => {
+      const { spawnImpl, calls } = scriptedSpawn([
+        { closeOnKill: true },
+        { code: 0, stdout: streamResult('ses_TIMEOUT_SDK', '超时托底成功') },
+      ]);
+
+      const result = await runClaude({ prompt: 'hello', timeoutMs: 10, spawnImpl });
+
+      assert.equal(calls.length, 2);
+      assert.equal(calls[1].options.env.ANTHROPIC_API_KEY, 'sk-test-timeout');
+      assert.equal(result.driverSource, 'sdk-fallback');
+    });
   });
 });
 
@@ -308,6 +498,43 @@ describe('processRound', () => {
     assert.ok(exists(paths.ack(s, 1)));
     assert.ok(exists(paths.response(s, 1)));
     assert.equal(readStatus(s).state, 'responded');
+    assert.equal(readStatus(s).driverSource, 'subscription');
+    assert.equal(result.driverSource, 'subscription');
+  });
+
+  it('SDK 托底成功时响应前置计费标注，并把来源写入 status', async () => {
+    const s = mkSession('pr-sdk-fallback');
+    mkRound(s, 1);
+    const sdkDriver = () => Promise.resolve({
+      sessionId: 'ses_SDK_PR',
+      text: 'SDK 回复',
+      driverSource: 'sdk-fallback',
+    });
+
+    const result = await processRound(s, 1, { driver: sdkDriver });
+
+    assert.equal(result.driverSource, 'sdk-fallback');
+    assert.equal(readStatus(s).driverSource, 'sdk-fallback');
+    assert.equal(
+      fs.readFileSync(paths.response(s, 1), 'utf8'),
+      '（本次由 SDK 托底执行，走 API 计费）\n\nSDK 回复',
+    );
+  });
+
+  it('SDK 托底失败时保留 driverSource 供状态展示', async () => {
+    const s = mkSession('pr-sdk-fallback-error');
+    mkRound(s, 1);
+    const sdkFailure = () => Promise.reject({
+      kind: 'driver',
+      message: 'SDK 托底失败',
+      driverSource: 'sdk-fallback',
+    });
+
+    const result = await processRound(s, 1, { driver: sdkFailure });
+
+    assert.equal(result.driverSource, 'sdk-fallback');
+    assert.equal(readStatus(s).driverSource, 'sdk-fallback');
+    assert.equal(readJSON(paths.error(s, 1)).driverSource, 'sdk-fallback');
   });
 
   it('写 ack 中含 pid', async () => {

@@ -10,6 +10,14 @@ import { unansweredDecisions, confirmModel, countAnsweredDecisions, groupBySecti
 const params = new URLSearchParams(location.search);
 const SESSION = params.get('session') ?? '';
 const URL_ROUND = params.get('round') ?? '';   // 可空：留空 = 自动跟随最新一轮（固定 URL）
+const TOKEN = params.get('token') ?? '';
+
+// 所有同源 API URL 统一透传页面 token。
+function apiUrl(input) {
+  const url = new URL(input, location.origin);
+  if (TOKEN) url.searchParams.set('token', TOKEN);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
 
 // 当前展示的轮次；为 null 时在 bootstrap 里解析为服务端最新一轮，并可随新轮自动推进
 let currentRound = URL_ROUND !== '' ? Number(URL_ROUND) : null;
@@ -182,7 +190,7 @@ let _sectionData = null; // content.sections（tab 分面类目顺序，可空�
 async function loadAndRender() {
   let data;
   try {
-    const resp = await fetch(`/api/content?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}`);
+    const resp = await fetch(apiUrl(`/api/content?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}`));
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     data = await resp.json();
   } catch (err) {
@@ -192,7 +200,14 @@ async function loadAndRender() {
 
   _blocks = data.blocks ?? [];
   _sectionData = data.sections ?? null;
-  $zones.innerHTML = renderZones(_blocks, { round: currentRound, sections: _sectionData });
+  // template 中先给受保护资源补 token，再挂进 DOM，避免首次加载就被门禁拒绝。
+  const rendered = document.createElement('template');
+  rendered.innerHTML = renderZones(_blocks, { round: currentRound, sections: _sectionData });
+  rendered.content.querySelectorAll('iframe[src^="/api/"], [src^="/assets/"], [href^="/assets/"]').forEach((element) => {
+    const attribute = element.hasAttribute('src') ? 'src' : 'href';
+    element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
+  });
+  $zones.replaceChildren(rendered.content);
 
   // 议题重组提示（DESIGN §5 + §13 P1）：服务端注入 sanity.suspect 时顶部横幅（前端消费）
   if (data.sanity && data.sanity.suspect) {
@@ -1152,7 +1167,7 @@ async function doSubmit(draft, answeredIds, unanswered) {
 
   let resp;
   try {
-    resp = await fetch('/api/feedback', {
+    resp = await fetch(apiUrl('/api/feedback'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -1211,7 +1226,7 @@ function showToast(msg) {
 // 向服务端查最新一轮（用于固定 URL：不带 round 时跟随最新一轮）。
 async function resolveLatestRound() {
   try {
-    const resp = await fetch(`/api/status?session=${encodeURIComponent(SESSION)}`);
+    const resp = await fetch(apiUrl(`/api/status?session=${encodeURIComponent(SESSION)}`));
     if (!resp.ok) return null;
     const data = await resp.json();
     const r = data?.status?.round;
@@ -1251,7 +1266,7 @@ else if (Notification?.permission !== 'denied') {
 async function pollStatus() {
   if (!SESSION) return;
   try {
-    const resp = await fetch(`/api/status?session=${encodeURIComponent(SESSION)}`);
+    const resp = await fetch(apiUrl(`/api/status?session=${encodeURIComponent(SESSION)}`));
     if (!resp.ok) return;
     const status = await resp.json();
 
@@ -1287,7 +1302,7 @@ async function pollStatus() {
 async function handleRetry(force = false) {
   if (force && !confirm('强制重试会忽略当前处理状态，可能导致重复处理，确认？')) return;
   try {
-    await fetch(`/api/retry?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}&force=${force}`, { method: 'POST' });
+    await fetch(apiUrl(`/api/retry?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}&force=${force}`), { method: 'POST' });
   } catch { /* 静默 */ }
   await pollStatus();
 }

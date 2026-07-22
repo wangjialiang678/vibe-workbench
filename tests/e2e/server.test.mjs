@@ -11,6 +11,8 @@ import os from 'node:os';
 let writeJSON, writeStatus, paths, writeText, removeFile, exists;
 let startServer;
 let rewriteEmbedHtml;
+let safeTokenEqual;
+let requiresPageToken;
 let server;
 let port;
 let tmpDir;
@@ -34,6 +36,8 @@ before(async () => {
   const srv = await import('../../src/server/server.mjs');
   startServer = srv.startServer;
   rewriteEmbedHtml = srv.rewriteEmbedHtml;
+  safeTokenEqual = srv.safeTokenEqual;
+  requiresPageToken = srv.requiresPageToken;
 
   server = startServer(0);
   await new Promise((resolve) => server.once('listening', resolve));
@@ -226,6 +230,30 @@ test('GET /api/status with unknown session → status:null, display:unknown', as
   assert.equal(body.display, 'unknown');
 });
 
+test('GET /api/status error 态合并该轮 error.json 到嵌套 status.error', async () => {
+  const s = 'ses_status_error01';
+  const r = 2;
+  writeStatus(s, { state: 'error', round: r, error: null });
+  writeJSON(paths.error(s, r), {
+    kind: 'api',
+    message: 'upstream failed',
+    userMessage: 'AI 服务暂时不可用，请稍后重试。',
+    suggestedAction: '稍后点击重试',
+    retryable: true,
+  });
+
+  const res = await fetch(url(`/api/status?session=${s}`));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.display, 'error');
+  assert.equal(body.status.error.kind, 'api');
+  assert.equal(body.status.error.userMessage, 'AI 服务暂时不可用，请稍后重试。');
+  assert.equal(body.status.error.retryable, true);
+
+  const stored = JSON.parse(fs.readFileSync(paths.status(s), 'utf8'));
+  assert.equal(stored.error, null, 'API 合并不得改写落盘 status.json');
+});
+
 // ---- POST /api/retry: clears ack, clears error, sets state=submitted ----
 test('POST /api/retry removes ack and error files and sets state=submitted', async () => {
   const s = 'ses_retry01';
@@ -256,6 +284,7 @@ test('GET / redirects to /render/index.html', async () => {
   assert.ok(res.status === 302 || res.status === 301);
   const loc = res.headers.get('location');
   assert.ok(loc && loc.includes('/render/index.html'), `unexpected location: ${loc}`);
+  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
 });
 
 // ---- CORS headers present ----
@@ -491,6 +520,11 @@ test('GET /api/content — 上轮无反馈的 unchanged 块不得 _decidedInPrev
 async function startEcho() {
   const { createServer } = await import('node:http');
   const srv = createServer((req, res) => {
+    if (req.url.startsWith('/page')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><head></head><body><form method="post" action="/decide"></form></body></html>');
+      return;
+    }
     if (req.url.startsWith('/deny')) {
       res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: '口令无效' }));
@@ -566,6 +600,19 @@ test('rewriteEmbedHtml: 表单 action 改写回代理通道 + 注入 fetch/XHR �
   assert.ok(out.includes('XMLHttpRequest.prototype.open'), '应注入 fetch/XHR 补丁');
 });
 
+test('rewriteEmbedHtml: 鉴权 token 进入 form/fetch/XHR 共用的代理基址', () => {
+  const token = 'embed /? 中文';
+  const out = rewriteEmbedHtml(
+    '<html><head></head><body><form action="/decide"></form></body></html>',
+    'http://127.0.0.1:8123/page',
+    'http://127.0.0.1:8099',
+    token,
+  );
+  const proxyBase = `http://127.0.0.1:8099/api/proxy?token=${encodeURIComponent(token)}&url=`;
+  assert.ok(out.includes(proxyBase), `注入页内的代理基址应携 token: ${out}`);
+  assert.ok(out.includes(`action="${proxyBase}`), 'form action 应携 token');
+});
+
 // ---- 会话资产自托管 /assets/<session>/... （去掉对外部服务的依赖）----
 
 test('GET /assets/<session>/<file>：供 session 自带的静态资产（如高保真 UI 稿）', async () => {
@@ -576,6 +623,7 @@ test('GET /assets/<session>/<file>：供 session 自带的静态资产（如高�
   const res = await fetch(url(`/assets/${session}/ui/b-home.html`));
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') || '', /text\/html/);
+  assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
   assert.match(await res.text(), /主界面/);
 });
 
@@ -588,4 +636,159 @@ test('GET /assets：路径穿越与非法 session 名被挡', async () => {
 
   const missing = await fetch(url(`/assets/${session}/ui/nope.html`));
   assert.equal(missing.status, 404);
+});
+
+// ---- HTTP 鉴权与监听地址安全边界 ----
+
+async function withTokenServer(token, fn) {
+  const previous = process.env.WORKBENCH_TOKEN;
+  process.env.WORKBENCH_TOKEN = token;
+  const authServer = startServer(0);
+  await new Promise((resolve) => authServer.once('listening', resolve));
+  try {
+    await fn(authServer.address().port);
+  } finally {
+    await new Promise((resolve) => authServer.close(resolve));
+    if (previous == null) delete process.env.WORKBENCH_TOKEN;
+    else process.env.WORKBENCH_TOKEN = previous;
+  }
+}
+
+test('safeTokenEqual：固定长度归一后比较 token', () => {
+  assert.equal(typeof safeTokenEqual, 'function', 'server 应导出纯 token 比较函数');
+  assert.equal(safeTokenEqual('alpha', 'alpha'), true);
+  assert.equal(safeTokenEqual('alpha', 'alphb'), false);
+  assert.equal(safeTokenEqual('', ''), false);
+  assert.equal(safeTokenEqual('', 'alpha'), false);
+  assert.equal(safeTokenEqual('alpha', ''), false);
+  assert.equal(safeTokenEqual(undefined, 'alpha'), false);
+  assert.equal(safeTokenEqual('alpha', null), false);
+  assert.equal(safeTokenEqual(123, '123'), false);
+  assert.equal(safeTokenEqual('alpha', { value: 'alpha' }), false);
+});
+
+test('requiresPageToken：render 下 HTML/目录/无扩展页面受保护，静态资源豁免', () => {
+  assert.equal(typeof requiresPageToken, 'function');
+  for (const pathname of ['/', '/render', '/render/', '/render/index.html', '/render/reports/detail.html', '/render/reports/', '/render/reports/detail', '/render/foo.json', '/render/foo.map']) {
+    assert.equal(requiresPageToken(pathname), true, `${pathname} 应视为页面入口`);
+  }
+  for (const pathname of ['/render/app.mjs', '/render/theme.css', '/render/logo.png', '/assets/s/ui/page.html']) {
+    assert.equal(requiresPageToken(pathname), false, `${pathname} 应视为静态/会话资产`);
+  }
+});
+
+test('startServer：非本机 host 且无 WORKBENCH_TOKEN 时同步拒绝启动', () => {
+  const previous = process.env.WORKBENCH_TOKEN;
+  delete process.env.WORKBENCH_TOKEN;
+  let unexpectedServer;
+  try {
+    assert.throws(
+      () => { unexpectedServer = startServer(0, '0.0.0.0'); },
+      /令牌|WORKBENCH_TOKEN/,
+    );
+  } finally {
+    unexpectedServer?.close();
+    if (previous != null) process.env.WORKBENCH_TOKEN = previous;
+  }
+});
+
+test('WORKBENCH_TOKEN：页面入口与 API 拒绝缺失或错误 token', async () => {
+  await withTokenServer('correct-token', async (authPort) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    for (const pathname of ['/', '/render', '/render/', '/render/index.html', '/api/health']) {
+      const res = await fetch(base + pathname, { redirect: 'manual' });
+      assert.equal(res.status, 403, `${pathname} 缺 token 应返回 403`);
+      assert.match(await res.text(), /令牌|token/i, `${pathname} 应返回中文令牌提示`);
+    }
+
+    const wrong = await fetch(`${base}/api/health?token=wrong`);
+    assert.equal(wrong.status, 403);
+  });
+});
+
+test('WORKBENCH_TOKEN：未来新增的 render HTML 子路径也先鉴权', async () => {
+  await withTokenServer('nested-page-token', async (authPort) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const denied = await fetch(`${base}/render/reports/detail.html`);
+    assert.equal(denied.status, 403);
+    const authorized = await fetch(`${base}/render/reports/detail.html?token=nested-page-token`);
+    assert.equal(authorized.status, 404, '鉴权通过后才进入静态文件查找');
+  });
+});
+
+test('WORKBENCH_TOKEN：页面 query、API query/header 放行，根路径重定向透传 token', async () => {
+  const token = 'secret /? & token';
+  await withTokenServer(token, async (authPort) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const encoded = encodeURIComponent(token);
+
+    const root = await fetch(`${base}/?token=${encoded}`, { redirect: 'manual' });
+    assert.equal(root.status, 302);
+    assert.equal(root.headers.get('location'), `/render/index.html?token=${encoded}`);
+
+    const renderDir = await fetch(`${base}/render/?token=${encoded}`);
+    assert.equal(renderDir.status, 200, '/render/ 携带 query token 应直接放行');
+    assert.equal(renderDir.headers.get('referrer-policy'), 'no-referrer');
+
+    const byQuery = await fetch(`${base}/api/health?token=${encoded}`);
+    assert.equal(byQuery.status, 200);
+
+    const byHeader = await fetch(`${base}/api/health`, {
+      headers: { 'x-workbench-token': token },
+    });
+    assert.equal(byHeader.status, 200);
+
+    const staticJs = await fetch(`${base}/render/app.mjs`);
+    assert.equal(staticJs.status, 200, '页面加载所需静态 JS 可豁免 token');
+  });
+});
+
+test('WORKBENCH_TOKEN：/assets/* 必须使用 query token，header 单独不能放行', async () => {
+  const assetSession = 'ses_auth_asset01';
+  const assetDir = path.join(tmpDir, assetSession, 'assets', 'ui');
+  fs.mkdirSync(assetDir, { recursive: true });
+  fs.writeFileSync(path.join(assetDir, 'screen.html'), '<html><body>protected asset</body></html>');
+
+  await withTokenServer('asset-token', async (authPort) => {
+    const assetUrl = `http://127.0.0.1:${authPort}/assets/${assetSession}/ui/screen.html`;
+    const missing = await fetch(assetUrl);
+    assert.equal(missing.status, 403);
+
+    const headerOnly = await fetch(assetUrl, { headers: { 'x-workbench-token': 'asset-token' } });
+    assert.equal(headerOnly.status, 403);
+
+    const allowed = await fetch(`${assetUrl}?token=asset-token`);
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get('referrer-policy'), 'no-referrer');
+    assert.match(await allowed.text(), /protected asset/);
+  });
+});
+
+test('CORS 预检允许 x-workbench-token', async () => {
+  await withTokenServer('cors-token', async (authPort) => {
+    const res = await fetch(`http://127.0.0.1:${authPort}/api/health`, { method: 'OPTIONS' });
+    assert.equal(res.status, 204);
+    assert.match(res.headers.get('access-control-allow-headers') || '', /x-workbench-token/i);
+  });
+});
+
+test('鉴权模式下 /api/proxy 返回的 HTML 会把 token 继续透传给二次代理请求', async () => {
+  const token = 'nested&token 中文';
+  const { srv, port: echoPort } = await startEcho();
+  try {
+    await withTokenServer(token, async (authPort) => {
+      const target = `http://127.0.0.1:${echoPort}/page`;
+      const res = await fetch(
+        `http://127.0.0.1:${authPort}/api/proxy?token=${encodeURIComponent(token)}&url=${encodeURIComponent(target)}`,
+      );
+      assert.equal(res.status, 200);
+      const html = await res.text();
+      assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+      const proxyBase = `http://127.0.0.1:${authPort}/api/proxy?token=${encodeURIComponent(token)}&url=`;
+      assert.ok(html.includes(proxyBase), `代理返回页应继续携 token: ${html}`);
+      assert.ok(html.includes(`action="${proxyBase}`), '表单二次代理应携 token');
+    });
+  } finally {
+    srv.close();
+  }
 });
