@@ -21,7 +21,12 @@ const {
 } = await import(`${ROOT}/src/workspace.mjs`);
 
 const { validateContent } = await import(`${ROOT}/src/protocol/schema.mjs`);
-const { lintContent, formatLint } = await import(`${ROOT}/src/protocol/lint.mjs`);
+const {
+  lintContent,
+  formatLint,
+  findIncompleteDecisions,
+  formatIncompleteDecisions,
+} = await import(`${ROOT}/src/protocol/lint.mjs`);
 
 // ─── blocks → markdown 线性序列化 ────────────────────────────────────────────
 function blocksToMarkdown(content) {
@@ -140,8 +145,18 @@ async function ensureServer(port) {
   return 'starting';
 }
 
-/** 一键：确保 server + 渲染一轮 + 返回可打开的 URL。 */
-export async function cmdPresent(session, contentObj, { port = 8099 } = {}) {
+/** 一键：校验决策完整性 + 确保 server + 渲染一轮 + 返回可打开的 URL。 */
+export async function cmdPresent(session, contentObj, { port = 8099, allowIncompleteDecisions = false } = {}) {
+  if (!allowIncompleteDecisions) {
+    const issues = findIncompleteDecisions(contentObj);
+    if (issues.length) {
+      const err = new Error(formatIncompleteDecisions(issues));
+      err.errors = issues.map((issue) => `[${issue.blockId}] 缺少：${issue.missingFields.join('、')}`);
+      err.incompleteDecisions = issues;
+      throw err;
+    }
+  }
+
   const server = await ensureServer(port);
   const { round } = await cmdRender(session, contentObj);
   const base = `http://127.0.0.1:${port}/render/?session=${encodeURIComponent(session)}`;
@@ -149,7 +164,9 @@ export async function cmdPresent(session, contentObj, { port = 8099 } = {}) {
   const url = base;
   // 需要固定看这一轮（回顾旧版）时才用带 round 的
   const urlPinned = `${base}&round=${round}`;
-  return { ok: true, session, round, url, urlPinned, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
+  const result = { ok: true, session, round, url, urlPinned, server, next: `node bin/workbench.mjs wait ${session} ${round}` };
+  if (allowIncompleteDecisions) result.lintBypassed = true;
+  return result;
 }
 
 /** 阻塞轮询该轮 feedback，出现即返回其内容；超时返回 timeout。供 Agent 后台运行→提交即被唤醒。 */
@@ -178,7 +195,7 @@ function printHelp() {
 vibecoding workbench — CLI 编排
 
 用法：
-  workbench present <session> [content.json|-]  一键：确保 server + 渲染一轮 + 返回 URL（推荐给 skill 用）
+  workbench present <session> [content.json|-] [--allow-incomplete-decisions]  校验并渲染一轮（推荐给 skill 用）
   workbench wait <session> <round> [--timeout 秒]  监听该轮提交，出现反馈即返回其内容（后台运行）
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
   workbench serve [--port N]                    启动 HTTP server（默认 8099）
@@ -187,7 +204,8 @@ vibecoding workbench — CLI 编排
   workbench --help                              显示此帮助
 
 选项：
-  --port N    指定端口号（用于 serve / up）
+  --port N                         指定端口号
+  --allow-incomplete-decisions     present 临时跳过决策完整性硬校验（仍输出 lint）
 
 示例：
   workbench render ses_001 content.json
@@ -305,10 +323,11 @@ async function main() {
 
     case 'present': {
       const session = rest[0];
-      if (!session) { console.error('用法: workbench present <session> [content.json|-] [--port N]'); process.exit(1); }
+      if (!session) { console.error('用法: workbench present <session> [content.json|-] [--port N] [--allow-incomplete-decisions]'); process.exit(1); }
       const port = parsePort(rest);
+      const allowIncompleteDecisions = rest.includes('--allow-incomplete-decisions');
       const contentObj = JSON.parse(await readSource(rest[1]));
-      const r = await cmdPresent(session, contentObj, { port });
+      const r = await cmdPresent(session, contentObj, { port, allowIncompleteDecisions });
       console.log(JSON.stringify(r));
       break;
     }

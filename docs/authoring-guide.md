@@ -1,7 +1,8 @@
 # Authoring 指南：怎么写一轮让人看得懂的内容
 
 > 给**产出 content.json 的 AI**（也给人）。所有规则都来自真实病例，见 [feedback-examples-2026-07-13.md](feedback-examples-2026-07-13.md)。
-> `workbench present` 会跑 [作者侧 lint](../src/protocol/lint.mjs) —— **warn 不阻断**，但每条 warn 都对应一次真实的失败。
+> `workbench present` 会跑 [作者侧 lint](../src/protocol/lint.mjs)：决策块四段完整性是**硬校验**，不满足就拒绝渲染；其余规则仍只 warning。
+> 仅在确需临时放行时使用 `--allow-incomplete-decisions`。此时仍输出 warning，成功 JSON 会带 `lintBypassed:true`，便于调用方识别绕过状态。
 
 ## 0. 默认受众：不了解实现的决策者
 
@@ -19,6 +20,7 @@
 {
   "type": "choice",
   "needsDecision": true,
+  "hasRecommendation": true,
   "background": "一句话本质类比 + 现状。这东西是谁做的、现在什么状态、为什么突然要处置它。",
   "why": "为什么需要人来定、为什么是现在。预先消解「是不是出错了」的焦虑。",
   "options": [
@@ -30,6 +32,8 @@
   "recommendReason": "为什么推荐它 + 四维自评（见下）"
 }
 ```
+
+硬校验只作用于本次 `present` 的新内容，不回溯已有 workspace 轮次，也不影响 `render`/`serve` 显示历史会话。所有 `needsDecision:true` 块都必须有非空 `background` 和 `why`；choice 的**每个** option 都必须同时有非空 `pros` 与 `cons`；任意决策块只要 `hasRecommendation:true`，就必须有非空 `recommendReason`。`needsDecision:false` 不参与这组校验。
 
 **四维自评**（放 `recommendReason` 或 `why`，让用户一眼看出"这题为什么归我、错了多大事"）：
 > 有无标准答案？ / 置信度？ / 重要性？ / **可回退性**（错了能不能反悔）

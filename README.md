@@ -50,9 +50,9 @@ open "http://127.0.0.1:8099/render/?session=<session>&round=1"
 - [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-**268 自动化测试全绿**。已落地：§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
+**281 自动化测试全绿**。已落地：§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
 决策块结构化（背景/为什么/选项利弊/推荐理由 + 作者 lint）、会话级留言、live 实时系统标识、受众分层折叠、editable 一键确认、embed 代理支持 POST（实证 bug 修复）、prd-studio 高保真 UI 一键导入（手机壳呈现）。
 
-**作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会自动 lint 警告。
+**作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会硬校验决策块四段完整性；仅在明确使用 `--allow-incomplete-decisions` 时临时退回 lint 警告。
 
 诚实缺口：真实浏览器 E2E 自动化套件仍缺（现靠 Playwright 手动 dogfood）；embed/proxy 尚无 SSRF allowlist；暗色对比度未做 WCAG 全面复核。

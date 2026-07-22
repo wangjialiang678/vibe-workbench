@@ -361,7 +361,7 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 根因：**没有背景的决策块不是"没人答"，而是产出零质量的伪决策**——用户照样点推荐项，作者不敢采信，白费一轮。
 
 ### 16.1 决策块结构化（创始人加权·最高 UX 优先级）
-块新增**可选**字段，渲染器按固定次序呈现，缺失字段不渲染（向后兼容）：
+协议与渲染层仍把字段定义为**可选**，缺失字段不渲染，以保证历史 workspace 向后兼容；但新内容走 `present` 时必须满足 §16.2 的完整性硬校验：
 
 | 字段 | 含义 |
 |---|---|
@@ -374,8 +374,12 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 四字段均进 `blockFingerprint` → AI 补了背景，该轮标 CHANGED。
 
 ### 16.2 作者侧 lint（`src/protocol/lint.mjs`）
-`present`/`render` 时跑，**warn 不阻断**，打 stderr。7 条规则全部对应真实病例：
+`present`/`render` 都会把普通 lint warning 打到 stderr。7 条规则全部对应真实病例：
 `missing-background` · `missing-why` · `missing-proscons` · `missing-recommend-reason` · `editable-for-confirm` · `multi-question` · `unexplained-jargon`。
+
+`present` 对其中的决策完整性要求执行硬阻断：所有 `needsDecision:true` 块必须有非空 `background`/`why`；choice 的每个 option 必须同时有非空 `pros`/`cons`；`hasRecommendation:true` 时必须有非空 `recommendReason`。失败时按块列出 id 与缺失字段，拒绝写入新轮次并以非 0 退出。`--allow-incomplete-decisions` 可显式临时绕过，仍保留 warning，并在 stdout JSON 标记 `lintBypassed:true`。
+
+硬校验只挂在新内容的 `present` 调用链：`render` 默认仍只 warning，`serve` 与已有 workspace 轮次不回溯校验，`needsDecision:false` 完全不受影响。
 规范见 `docs/authoring-guide.md`。
 
 ### 16.3 受众分层

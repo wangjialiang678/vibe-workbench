@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lintBlock, lintContent, formatLint } from '../../src/protocol/lint.mjs';
+import * as lintModule from '../../src/protocol/lint.mjs';
 
 const rules = (block) => lintBlock(block).map((w) => w.rule);
 
@@ -81,4 +82,49 @@ test('lintContent 汇总多块；formatLint 输出可读文本', () => {
   assert.ok(txt.includes('b-ime-afx'));
   assert.ok(txt.includes('不阻断'));
   assert.equal(formatLint([]), '');
+});
+
+test('决策完整性：空白字段与 choice 单边缺失的 pros/cons 都会逐项列出', () => {
+  assert.equal(typeof lintModule.findIncompleteDecisions, 'function');
+  const issues = lintModule.findIncompleteDecisions({
+    blocks: [{
+      id: 'b-incomplete',
+      type: 'choice',
+      needsDecision: true,
+      hasRecommendation: true,
+      background: '   ',
+      why: '\n',
+      recommendReason: '',
+      options: [
+        { id: 'a', pros: [], cons: ['有代价'] },
+        { id: 'b', pros: ['有收益'], cons: [] },
+      ],
+    }],
+  });
+
+  assert.deepEqual(issues, [{
+    blockId: 'b-incomplete',
+    missingFields: [
+      'background（背景）',
+      'why（为什么需要人定）',
+      'options[0].pros（选项优点）',
+      'options[1].cons（选项缺点）',
+      'recommendReason（推荐理由）',
+    ],
+  }]);
+});
+
+test('决策完整性：needsDecision:false 不产生缺失项', () => {
+  assert.equal(typeof lintModule.findIncompleteDecisions, 'function');
+  const issues = lintModule.findIncompleteDecisions({
+    blocks: [{
+      id: 'b-note',
+      type: 'choice',
+      needsDecision: false,
+      hasRecommendation: true,
+      options: [{ id: 'a' }],
+    }],
+  });
+
+  assert.deepEqual(issues, []);
 });

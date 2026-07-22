@@ -1,4 +1,5 @@
-// 作者侧 lint（iteration-brief 2026-07-13 · P1/P2/P3）：present 时 warn，**不阻断**。
+// 作者侧 lint（iteration-brief 2026-07-13 · P1/P2/P3）：普通规则只 warn；
+// present 对决策完整性硬阻断，可用显式开关临时绕过。
 // 每条规则都对应 docs/feedback-examples-2026-07-13.md 里的真实病例——
 // 目的：把"让不了解细节的人也能判断"变成默认约束，而不是作者自觉。
 // 浏览器安全（无 node 依赖），纯函数，可单测。
@@ -18,26 +19,76 @@ function acronyms(text) {
   return [...out];
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isNonEmptyArray(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function missingDecisionFields(block) {
+  if (!block || block.needsDecision !== true) return [];
+
+  const missingFields = [];
+  if (!isNonEmptyString(block.background)) missingFields.push('background（背景）');
+  if (!isNonEmptyString(block.why)) missingFields.push('why（为什么需要人定）');
+
+  if (block.type === 'choice') {
+    const options = Array.isArray(block.options) ? block.options : [];
+    options.forEach((option, index) => {
+      if (!isNonEmptyArray(option?.pros)) missingFields.push(`options[${index}].pros（选项优点）`);
+      if (!isNonEmptyArray(option?.cons)) missingFields.push(`options[${index}].cons（选项缺点）`);
+    });
+  }
+
+  if (block.hasRecommendation === true && !isNonEmptyString(block.recommendReason)) {
+    missingFields.push('recommendReason（推荐理由）');
+  }
+
+  return missingFields;
+}
+
+// present 专用：只检查新提交内容，不读取或扫描 workspace 历史轮次。
+export function findIncompleteDecisions(content) {
+  const blocks = Array.isArray(content?.blocks) ? content.blocks : [];
+  return blocks.flatMap((block) => {
+    const missingFields = missingDecisionFields(block);
+    if (!missingFields.length) return [];
+    return [{ blockId: block?.id ?? '未提供 id', missingFields }];
+  });
+}
+
+export function formatIncompleteDecisions(issues) {
+  if (!issues.length) return '';
+  const lines = ['决策块可读性校验失败，present 已拒绝渲染：'];
+  for (const issue of issues) {
+    lines.push(`- [${issue.blockId}] 缺少：${issue.missingFields.join('、')}`);
+  }
+  lines.push('如需临时放行，请显式添加 --allow-incomplete-decisions（仍会输出 lint 警告）。');
+  return lines.join('\n');
+}
+
 export function lintBlock(block) {
   const w = [];
   const push = (rule, message) => w.push({ level: 'warn', blockId: block.id, rule, message });
   const isDecision = block.needsDecision === true;
 
   // —— P1 决策块结构化（病例 1/3/8）——
-  if (isDecision && !block.background) {
+  if (isDecision && !isNonEmptyString(block.background)) {
     push('missing-background', '决策块缺 background（背景）：用户会在不懂上下文时"盲选"，产出零质量的伪决策（病例 1）');
   }
-  if (isDecision && !block.why) {
+  if (isDecision && !isNonEmptyString(block.why)) {
     push('missing-why', '决策块缺 why（为什么需要你定）：用户不知道"这题为什么归我、错了多大事"（病例 8 四维自评）');
   }
   if (isDecision && block.type === 'choice') {
-    const opts = block.options ?? [];
-    const bare = opts.filter((o) => !(Array.isArray(o.pros) && o.pros.length) && !(Array.isArray(o.cons) && o.cons.length));
-    if (bare.length) {
-      push('missing-proscons', `${bare.length}/${opts.length} 个选项缺 pros/cons：选项只讲机制不讲后果，用户无法判断"选了会发生什么、能不能反悔"（病例 1）`);
+    const opts = Array.isArray(block.options) ? block.options : [];
+    const incomplete = opts.filter((o) => !isNonEmptyArray(o?.pros) || !isNonEmptyArray(o?.cons));
+    if (incomplete.length) {
+      push('missing-proscons', `${incomplete.length}/${opts.length} 个选项缺非空 pros/cons：选项只讲机制不讲后果，用户无法判断"选了会发生什么、能不能反悔"（病例 1）`);
     }
   }
-  if (block.hasRecommendation === true && !block.recommendReason) {
+  if (isDecision && block.hasRecommendation === true && !isNonEmptyString(block.recommendReason)) {
     push('missing-recommend-reason', '有 recommendation 却缺 recommendReason：用户不知道你为什么推荐它');
   }
 
@@ -58,7 +109,7 @@ export function lintBlock(block) {
   // —— P3 未解释的术语/缩写（病例 3：用户直接回"没听懂"）——
   const surface = [
     block.title, block.body,
-    ...(block.options ?? []).map((o) => `${o?.label ?? ''} ${o?.desc ?? ''}`),
+    ...(Array.isArray(block.options) ? block.options : []).map((o) => `${o?.label ?? ''} ${o?.desc ?? ''}`),
   ].join(' ');
   const explained = `${block.background ?? ''} ${block.why ?? ''} ${block.recommendReason ?? ''}`;
   const unexplained = acronyms(surface).filter((a) => !explained.includes(a));
