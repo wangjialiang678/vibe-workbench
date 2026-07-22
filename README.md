@@ -8,7 +8,7 @@
 
 ```bash
 # 1. 跑测试（零依赖，Node ≥20）
-npm test                         # 307 项单元/集成测试
+npm test                         # 331 项单元/集成测试
 
 # 2. 起服务（HTTP + 异步唤醒 listener）
 node bin/workbench.mjs up --port 8099     # 默认只监听 127.0.0.1，serve + watch
@@ -37,8 +37,22 @@ WORKBENCH_TOKEN='请换成足够长的随机值' \
 - 页面通过 `?token=...` 进入；页面会把 token 自动透传给后续同源 API 请求。
 - 脚本或 API 客户端优先使用请求头 `x-workbench-token`，也兼容 query 参数 `?token=...`。
 - 渲染器自身的静态 JS/CSS/字体/图片可免口令加载；HTML、静态 `.json`/`.map`、所有 `/api/*` 及会话 `/assets/*` 均受保护。前端会给直接渲染的 `/assets/` iframe、图片和链接自动附加 query token。
-- `present` 等需要访问本机 server 的 CLI 命令会自动读取 `WORKBENCH_TOKEN`；它返回的页面 URL 也会带 token。`wait` 只读本地文件，不发 HTTP 请求。
+- `present` 等需要访问 server 的 CLI 命令会自动读取 `WORKBENCH_TOKEN`；它返回的页面 URL 也会带 token。未配置远程模式时，`wait` 仍只读本地文件。
 - HTML 与代理页面统一返回 `Referrer-Policy: no-referrer`，避免 token 随 Referer 发往下一跳；但 token 仍可能进入浏览器历史和反向代理访问日志。公网部署必须使用 HTTPS，并按实际安全要求处理日志和定期轮换口令。
+
+### 让本地 CLI 使用云端 workspace
+
+设置 `WORKBENCH_REMOTE_URL` 后，只有 `present` / `wait` 切到远程传输：前者调用云端 `POST /api/rounds`，后者每 3 秒轮询 `GET /api/feedback`；`render`、`serve`、`watch`、`up` 不变。云端因此成为该会话的唯一事实源，本地不会再写一份轮次副本。
+
+```bash
+export WORKBENCH_REMOTE_URL='https://workbench.example.com'
+export WORKBENCH_TOKEN='与云端一致的共享口令'
+
+node bin/workbench.mjs present <session> content.json
+node bin/workbench.mjs wait <session> <round>
+```
+
+可选设置 `WORKBENCH_EVENT_WEBHOOK`。服务端在新轮次成功落盘、反馈成功提交后，分别异步 POST `round-presented` / `feedback-submitted` 事件；单次投递 5 秒超时，失败只记日志，不改变主请求结果。
 
 ## Hybrid 驱动与 SDK 托底标注
 
@@ -61,12 +75,12 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 | 目录 | 职责 |
 |---|---|
 | `src/protocol/` | 内容协议：constants / schema / **diff**（轮次差异）/ **attention**（注意力路由）/ **status**（状态联合判定） |
-| `src/workspace.mjs` | 文件契约（content/feedback/ack/response/error/status） |
-| `src/server/` | 零依赖 HTTP + API（content 注入 diff / feedback / status / retry） |
+| `src/workspace.mjs` | 文件契约与共享轮次写入（content/feedback/ack/response/error/status） |
+| `src/server/` | 零依赖 HTTP + API（rounds / content / feedback / status / retry / webhook） |
 | `src/loop/` | 异步唤醒 listener（对账幂等 + 独立心跳 + 容错）/ claude-exec / session-store |
 | `src/render/` | 前端：纯函数 HTML 渲染 + 四区注意力 + diff 徽章 + 状态/重试 |
 | `templates/` | think-discuss（思考共创/文档审阅）/ dev-review（PRD 审核·研发评审）/ design-review（UI·交互设计评审）—— 模板 = block 组合工厂 |
-| `bin/workbench.mjs` | CLI：render / serve / watch / up（监管自愈） |
+| `bin/workbench.mjs` | CLI：render / present / wait / serve / watch / up（含远程模式） |
 
 ## 文档
 - [docs/项目与技能说明.md](docs/项目与技能说明.md) · [网页版](docs/项目与技能说明.html) — **项目 + 技能总览（先看这个）**
@@ -77,7 +91,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 - [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-**307 项自动化测试全绿**。已落地：公网绑定防呆 + 共享口令门、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
+**331 项自动化测试全绿**。已落地：公网绑定防呆 + 共享口令门、远程会话服务与事件 webhook、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
 决策块结构化（背景/为什么/选项利弊/推荐理由 + 作者 lint）、会话级留言、live 实时系统标识、受众分层折叠、editable 一键确认、embed 代理支持 POST（实证 bug 修复）、prd-studio 高保真 UI 一键导入（手机壳呈现）。
 
 **作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会硬校验决策块四段完整性；仅在明确使用 `--allow-incomplete-decisions` 时临时退回 lint 警告。

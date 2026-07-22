@@ -229,8 +229,10 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | 方法 路径 | 作用 |
 |---|---|
 | GET `/` 及静态 | 托管 src/render/ |
+| POST `/api/rounds` | 校验并独占写入新轮次；2 MiB 上限；重复 round 返回 409 |
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
 | POST `/api/feedback` | 写 feedback.json/.md，status=submitted；断连前端降级导出 |
+| GET `/api/feedback?session=&round=` | feedback 存在则返回内容；否则 HTTP 200 + `pending:true` |
 | GET `/api/status?session=` | 返回 status.json + 心跳新鲜度 |
 | POST `/api/retry?session=&round=` | 重置该轮为 submitted（清 ack/error） |
 | GET `/api/sessions` | 列出 workspace 下会话（dev 用） |
@@ -239,6 +241,12 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
 
 公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。启用后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；比较前先拒绝非字符串/空值，再做固定长度摘要与 `crypto.timingSafeEqual`。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
+
+远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，`wait` 每 3 秒轮询云端 feedback；轮次分配和持久化只发生在云端。未设置时继续走本地 `ensureServer + workspace` 文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
+
+事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘和 feedback 成功落盘后异步 POST 最小事件 JSON。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。
+
+远程写入的 session 限 80 字符且必须匹配 `/^[A-Za-z0-9._-]+$/`（另拒绝 `.` / `..`）。服务端对点号 session 使用精确目录，避免与下划线名称碰撞；本地默认路径仍兼容旧版“点号转下划线”的既有 workspace，精确目录一旦存在则自动跟随。
 
 ---
 

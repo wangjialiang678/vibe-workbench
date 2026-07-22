@@ -2,7 +2,7 @@
 // bin/workbench.mjs — CLI 编排入口（DESIGN §7）
 // 零外部依赖，ESM
 
-import { createReadStream, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -13,76 +13,17 @@ const ROOT = path.resolve(__dirname, '..');
 const {
   paths,
   readJSON,
-  writeJSON,
-  writeText,
   writeStatus,
   exists,
-  latestRound,
+  writeRound,
 } = await import(`${ROOT}/src/workspace.mjs`);
 
-const { validateContent } = await import(`${ROOT}/src/protocol/schema.mjs`);
 const {
   lintContent,
   formatLint,
   findIncompleteDecisions,
   formatIncompleteDecisions,
 } = await import(`${ROOT}/src/protocol/lint.mjs`);
-
-// ─── blocks → markdown 线性序列化 ────────────────────────────────────────────
-function blocksToMarkdown(content) {
-  const lines = [];
-  const { title, session, round, blocks = [] } = content;
-
-  if (title) lines.push(`# ${title}`, '');
-  else lines.push(`# Round ${round} — ${session}`, '');
-
-  for (const block of blocks) {
-    // 标题
-    if (block.title) lines.push(`## ${block.title}`, '');
-
-    // 正文（按 type）
-    switch (block.type) {
-      case 'markdown':
-      case 'verdict':
-      case 'freetext':
-      case 'editable':
-        if (block.body) lines.push(block.body, '');
-        if (block.value) lines.push(block.value, '');
-        break;
-      case 'diagram':
-        lines.push('```' + (block.lang || 'mermaid'), block.body || '', '```', '');
-        break;
-      case 'code':
-        lines.push('```' + (block.lang || ''), block.body || '', '```', '');
-        break;
-      case 'choice': {
-        if (block.body) lines.push(block.body, '');
-        const opts = block.options || [];
-        for (const opt of opts) {
-          const rec = block.recommendation === opt.id ? ' *(推荐)*' : '';
-          lines.push(`- **${opt.label || opt.id}**${rec}${opt.desc ? ': ' + opt.desc : ''}`);
-        }
-        lines.push('');
-        break;
-      }
-      case 'table': {
-        const cols = block.columns || [];
-        const rows = block.rows || [];
-        if (cols.length) {
-          lines.push('| ' + cols.join(' | ') + ' |');
-          lines.push('| ' + cols.map(() => '---').join(' | ') + ' |');
-          for (const row of rows) lines.push('| ' + row.join(' | ') + ' |');
-          lines.push('');
-        }
-        break;
-      }
-      default:
-        if (block.body) lines.push(block.body, '');
-    }
-  }
-
-  return lines.join('\n');
-}
 
 // ─── cmdRender ───────────────────────────────────────────────────────────────
 /**
@@ -92,39 +33,96 @@ function blocksToMarkdown(content) {
  * @returns {{ session: string, round: number }}
  */
 export async function cmdRender(session, contentObj) {
-  // 若 contentObj 没有 round，先赋值再校验（以便 validateContent 通过 round>=1）
-  const round = contentObj.round != null
-    ? contentObj.round
-    : latestRound(session) + 1;
-
-  const toValidate = { ...contentObj, session, round };
-
-  const result = validateContent(toValidate);
-  if (!result.ok) {
-    const err = new Error(`validateContent failed: ${result.errors.join('; ')}`);
-    err.errors = result.errors;
-    throw err;
-  }
+  const result = writeRound(session, contentObj);
 
   // 作者侧 lint（iteration-brief P1）：warn 不阻断，打 stderr（保持 stdout 的 JSON 干净）
-  const warnings = lintContent(toValidate);
+  const warnings = lintContent(result.content);
   if (warnings.length) console.error(formatLint(warnings));
 
-  // 写 content.json
-  writeJSON(paths.content(session, round), toValidate);
-
-  // 写 content.md（blocks 线性序列化）
-  const md = blocksToMarkdown(toValidate);
-  writeText(paths.contentMd(session, round), md);
-
-  // 更新 status
-  writeStatus(session, { state: 'rendered', round });
-
-  return { session, round };
+  return { session: result.session, round: result.round };
 }
 
 // ─── present / wait（供 skill 一键调用）─────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function remoteBaseUrl() {
+  const raw = process.env.WORKBENCH_REMOTE_URL?.trim();
+  if (!raw) return null;
+  try {
+    const base = new URL(raw);
+    if (!['http:', 'https:'].includes(base.protocol)) throw new Error('仅支持 HTTP/HTTPS');
+    base.search = '';
+    base.hash = '';
+    if (!base.pathname.endsWith('/')) base.pathname += '/';
+    return base;
+  } catch (error) {
+    throw new Error(`WORKBENCH_REMOTE_URL 无效：${error.message}`);
+  }
+}
+
+function remoteUrl(base, relativePath, query = {}) {
+  const target = new URL(relativePath.replace(/^\//, ''), base);
+  for (const [key, value] of Object.entries(query)) {
+    if (value != null) target.searchParams.set(key, String(value));
+  }
+  return target;
+}
+
+async function requestRemoteJson(base, relativePath, {
+  method = 'GET',
+  query,
+  body,
+  timeoutMs = 30000,
+} = {}) {
+  const target = remoteUrl(base, relativePath, query);
+  const headers = {};
+  const token = process.env.WORKBENCH_TOKEN || '';
+  if (token) headers['x-workbench-token'] = token;
+  if (body != null) headers['content-type'] = 'application/json';
+
+  let response;
+  let raw;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  timer.unref?.();
+  try {
+    response = await fetch(target, {
+      method,
+      headers,
+      body: body == null ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+      // 共享口令绝不跟随 30x 发往另一个 origin；重定向由调用者改正 REMOTE_URL 后重试。
+      redirect: 'manual',
+    });
+    raw = await response.text();
+  } catch (error) {
+    const timedOut = controller.signal.aborted;
+    const detail = timedOut
+      ? `请求超过 ${Math.max(1, timeoutMs)}ms 未完成`
+      : (/ByteString|character.*255/i.test(error?.message || '')
+          ? 'WORKBENCH_TOKEN 用作请求头时必须只包含 ASCII 字符'
+          : (error?.message || String(error)));
+    const wrapped = new Error(`远程工作台请求失败：${detail}`);
+    if (timedOut) wrapped.code = 'REMOTE_TIMEOUT';
+    throw wrapped;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let payload;
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error(`远程工作台返回格式无效（HTTP ${response.status}）`);
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`远程工作台返回格式无效（HTTP ${response.status}）`);
+  }
+  if (!response.ok) {
+    throw new Error(`远程工作台返回 ${response.status}：${payload?.error || '请求失败'}`);
+  }
+  return payload;
+}
 
 async function readSource(src) {
   if (!src || src === '-' || src.startsWith('--')) return await readStdin();
@@ -161,6 +159,39 @@ export async function cmdPresent(session, contentObj, { port = 8099, allowIncomp
     }
   }
 
+  const remote = remoteBaseUrl();
+  if (remote) {
+    // 远程也在 CLI 侧输出 warn，保持 present 的 stderr 体验；服务端仍独立执行硬校验。
+    const warnings = lintContent({ ...contentObj, session });
+    if (warnings.length) console.error(formatLint(warnings));
+
+    const response = await requestRemoteJson(remote, '/api/rounds', {
+      method: 'POST',
+      query: allowIncompleteDecisions ? { allowIncomplete: 1 } : undefined,
+      body: { ...contentObj, session },
+    });
+    const { round } = response;
+    if (response.ok !== true || response.session !== session || !Number.isSafeInteger(round) || round < 1) {
+      throw new Error('远程工作台返回格式无效：缺少有效的 session/round');
+    }
+    const pageUrl = remoteUrl(remote, '/render/', { session });
+    const token = process.env.WORKBENCH_TOKEN || '';
+    if (token) pageUrl.searchParams.set('token', token);
+    const url = pageUrl.href;
+    pageUrl.searchParams.set('round', String(round));
+    const result = {
+      ok: true,
+      session,
+      round,
+      url,
+      urlPinned: pageUrl.href,
+      server: 'remote',
+      next: `node bin/workbench.mjs wait ${session} ${round}`,
+    };
+    if (allowIncompleteDecisions || response.lintBypassed) result.lintBypassed = true;
+    return result;
+  }
+
   const server = await ensureServer(port);
   const { round } = await cmdRender(session, contentObj);
   const pageUrl = new URL(`http://127.0.0.1:${port}/render/`);
@@ -178,14 +209,45 @@ export async function cmdPresent(session, contentObj, { port = 8099, allowIncomp
 }
 
 /** 阻塞轮询该轮 feedback，出现即返回其内容；超时返回 timeout。供 Agent 后台运行→提交即被唤醒。 */
-export async function cmdWait(session, round, { timeoutMs = 3600000, intervalMs = 2000, nowFn = Date.now } = {}) {
-  const fbPath = paths.feedback(session, round);
+export async function cmdWait(session, round, {
+  timeoutMs = 3600000,
+  intervalMs,
+  nowFn = Date.now,
+  sleepFn = sleep,
+} = {}) {
+  const remote = remoteBaseUrl();
+  const pollInterval = intervalMs ?? (remote ? 3000 : 2000);
+  const fbPath = remote ? null : paths.feedback(session, round);
   const deadline = nowFn() + timeoutMs;
   while (nowFn() < deadline) {
-    if (exists(fbPath)) {
+    if (remote) {
+      let response;
+      try {
+        response = await requestRemoteJson(remote, '/api/feedback', {
+          query: { session, round },
+          timeoutMs: Math.max(1, deadline - nowFn()),
+        });
+      } catch (error) {
+        if (error?.code === 'REMOTE_TIMEOUT' && nowFn() >= deadline) {
+          return { ok: false, event: 'timeout', session, round };
+        }
+        throw error;
+      }
+      if (response.ok && response.feedback) {
+        if (typeof response.feedback !== 'object'
+          || response.feedback.session !== session
+          || response.feedback.round !== round) {
+          throw new Error('远程工作台返回格式无效：feedback 与请求的 session/round 不一致');
+        }
+        return { ok: true, event: 'feedback', session, round, feedback: response.feedback };
+      }
+      if (!response.pending) throw new Error('远程工作台返回了无法识别的反馈状态');
+    } else if (exists(fbPath)) {
       return { ok: true, event: 'feedback', session, round, feedback: readJSON(fbPath) };
     }
-    await sleep(intervalMs);
+    const remaining = deadline - nowFn();
+    if (remaining <= 0) break;
+    await sleepFn(Math.min(pollInterval, remaining));
   }
   return { ok: false, event: 'timeout', session, round };
 }

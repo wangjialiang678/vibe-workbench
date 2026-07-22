@@ -3,23 +3,30 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 
 // We import workspace helpers to set up fixture data
 // These are already tested contracts.
-let writeJSON, writeStatus, paths, writeText, removeFile, exists;
+let writeJSON, readJSON, writeStatus, paths, writeText, removeFile, exists;
 let startServer;
 let rewriteEmbedHtml;
 let safeTokenEqual;
 let requiresPageToken;
+let postWebhookEvent;
 let server;
 let port;
 let tmpDir;
 let session;
+const savedServerEnv = {};
 
 // Setup: create temp workspace, start server on ephemeral port
 before(async () => {
+  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+    savedServerEnv[key] = process.env[key];
+    delete process.env[key];
+  }
   // Create temp dir for workspace
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-e2e-'));
   process.env.WB_WORKSPACE = tmpDir;
@@ -27,6 +34,7 @@ before(async () => {
   // Now import (dynamic, so env var is picked up)
   const ws = await import('../../src/workspace.mjs');
   writeJSON = ws.writeJSON;
+  readJSON = ws.readJSON;
   writeStatus = ws.writeStatus;
   paths = ws.paths;
   writeText = ws.writeText;
@@ -38,6 +46,7 @@ before(async () => {
   rewriteEmbedHtml = srv.rewriteEmbedHtml;
   safeTokenEqual = srv.safeTokenEqual;
   requiresPageToken = srv.requiresPageToken;
+  postWebhookEvent = srv.postWebhookEvent;
 
   server = startServer(0);
   await new Promise((resolve) => server.once('listening', resolve));
@@ -46,13 +55,40 @@ before(async () => {
   session = 'ses_test01';
 });
 
-after(() => {
-  server.close();
+after(async () => {
+  await new Promise((resolve) => server.close(resolve));
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+    if (savedServerEnv[key] == null) delete process.env[key];
+    else process.env[key] = savedServerEnv[key];
+  }
 });
 
 function url(p) {
   return `http://localhost:${port}${p}`;
+}
+
+function roundContent(session, extra = {}) {
+  return {
+    session,
+    title: '远程轮次',
+    blocks: [{ id: 'remote-note', type: 'markdown', body: '云端是唯一事实源' }],
+    ...extra,
+  };
+}
+
+function incompleteChoice(id = 'incomplete-choice') {
+  return {
+    id,
+    type: 'choice',
+    needsDecision: true,
+    hasRecommendation: true,
+    recommendation: 'safe',
+    options: [
+      { id: 'safe', label: '稳妥方案' },
+      { id: 'fast', label: '快速方案' },
+    ],
+  };
 }
 
 // ---- health ----
@@ -200,6 +236,238 @@ test('POST /api/feedback returns 409 when status=claimed', async () => {
   const body = await res.json();
   assert.equal(body.ok, false);
   assert.equal(body.error, 'claimed');
+});
+
+test('POST /api/feedback 拒绝非法 session 名称', async () => {
+  const res = await fetch(url('/api/feedback'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: '../escape', round: 1, items: [] }),
+  });
+
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /session|会话/i);
+});
+
+// ---- 远程会话写入 / feedback 轮询 ----
+
+test('POST /api/rounds 自动编号并写入 content/content.md/status', async () => {
+  const s = 'remote.session-01';
+  const legacyContent = path.join(tmpDir, 'remote_session-01', 'round-1', 'content.json');
+  fs.mkdirSync(path.dirname(legacyContent), { recursive: true });
+  fs.writeFileSync(legacyContent, JSON.stringify({ session: 'remote_session-01', round: 1, blocks: [] }));
+  const res = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(roundContent(s)),
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual({ ok: body.ok, session: body.session, round: body.round }, { ok: true, session: s, round: 1 });
+  assert.equal(new URL(body.url).searchParams.get('session'), s);
+  assert.equal(readJSON(paths.content(s, 1)).title, '远程轮次');
+  assert.match(fs.readFileSync(paths.contentMd(s, 1), 'utf8'), /云端是唯一事实源/);
+  assert.equal(readJSON(paths.status(s)).state, 'rendered');
+  assert.equal(fs.existsSync(path.join(tmpDir, s, 'round-1', 'content.json')), true, '点号 session 应按原名落盘');
+  assert.equal(JSON.parse(fs.readFileSync(legacyContent, 'utf8')).session, 'remote_session-01', '远程精确 session 不得覆盖旧版同名映射目录');
+});
+
+test('POST /api/rounds 忽略客户端 round 并由服务端连续编号', async () => {
+  const s = 'remote-round-server-owned';
+  const first = roundContent(s, { round: 99 });
+  const firstRes = await fetch(url('/api/rounds'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(first),
+  });
+  assert.equal(firstRes.status, 200);
+  assert.equal((await firstRes.json()).round, 1);
+
+  const second = roundContent(s, {
+    round: 1,
+    blocks: [{ id: 'second', type: 'markdown', body: '服务端分配第二轮' }],
+  });
+  const res = await fetch(url('/api/rounds'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(second),
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).round, 2);
+  assert.equal(readJSON(paths.content(s, 1)).round, 1);
+  assert.equal(readJSON(paths.content(s, 1)).blocks[0].id, 'remote-note');
+  assert.equal(readJSON(paths.content(s, 2)).round, 2);
+  assert.equal(readJSON(paths.content(s, 2)).blocks[0].id, 'second');
+});
+
+test('POST /api/rounds 同 session 并发请求获得连续且不同的服务端轮次', async () => {
+  const s = 'remote-round-concurrent';
+  const post = (id) => fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(roundContent(s, {
+      round: 88,
+      blocks: [{ id, type: 'markdown', body: `并发请求 ${id}` }],
+    })),
+  });
+
+  const responses = await Promise.all([post('concurrent-a'), post('concurrent-b')]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 200]);
+  const bodies = await Promise.all(responses.map((response) => response.json()));
+  assert.deepEqual(bodies.map((body) => body.round).sort((a, b) => a - b), [1, 2]);
+  assert.deepEqual(
+    [readJSON(paths.content(s, 1)).round, readJSON(paths.content(s, 2)).round],
+    [1, 2],
+  );
+});
+
+test('POST /api/rounds 在口令门开启时拒绝无 token 请求', async () => {
+  const s = 'remote-auth-denied';
+  await withTokenServer('round-token', async (authPort) => {
+    const res = await fetch(`http://127.0.0.1:${authPort}/api/rounds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(roundContent(s)),
+    });
+    assert.equal(res.status, 403);
+  });
+  assert.equal(exists(paths.content(s, 1)), false);
+});
+
+test('POST /api/rounds body 超过 2 MiB 返回 413 且不落盘', async () => {
+  const s = 'remote-too-large';
+  const oversized = roundContent(s, {
+    blocks: [{ id: 'large', type: 'markdown', body: 'x'.repeat(2 * 1024 * 1024) }],
+  });
+  const res = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(oversized),
+  });
+
+  assert.equal(res.status, 413);
+  assert.match((await res.json()).error, /2\s*MB|过大|上限/i);
+  assert.equal(exists(paths.content(s, 1)), false);
+});
+
+test('POST /api/rounds 拒绝非法 session 与无效 content', async () => {
+  const invalidSession = await fetch(url('/api/rounds'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(roundContent('../escape')),
+  });
+  assert.equal(invalidSession.status, 400);
+  assert.match((await invalidSession.json()).error, /session/i);
+
+  const tooLongSession = 's'.repeat(81);
+  const tooLong = await fetch(url('/api/rounds'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(roundContent(tooLongSession)),
+  });
+  assert.equal(tooLong.status, 400);
+  assert.match((await tooLong.json()).error, /80/);
+
+  const invalidContent = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: 'invalid-content', round: 0, blocks: 'not-an-array' }),
+  });
+  assert.equal(invalidContent.status, 400);
+  assert.match((await invalidContent.json()).error, /validateContent|内容校验|blocks/i);
+
+  const ignoredUnsafeRound = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: 'unsafe-round', round: Number.MAX_SAFE_INTEGER + 1, blocks: [] }),
+  });
+  assert.equal(ignoredUnsafeRound.status, 200);
+  assert.equal((await ignoredUnsafeRound.json()).round, 1);
+});
+
+test('POST /api/rounds 决策不完整默认拒绝，allowIncomplete=1 时放行', async () => {
+  const rejectedSession = 'remote-lint-rejected';
+  const rejected = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: rejectedSession, blocks: [incompleteChoice()] }),
+  });
+  assert.equal(rejected.status, 400);
+  const rejectedBody = await rejected.json();
+  assert.match(rejectedBody.error, /决策块|background/);
+  assert.equal(exists(paths.content(rejectedSession, 1)), false);
+
+  const bypassedSession = 'remote-lint-bypassed';
+  const bypassed = await fetch(url('/api/rounds?allowIncomplete=1'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: bypassedSession, blocks: [incompleteChoice('bypassed-choice')] }),
+  });
+  assert.equal(bypassed.status, 200);
+  const bypassedBody = await bypassed.json();
+  assert.equal(bypassedBody.lintBypassed, true);
+  assert.equal(exists(paths.content(bypassedSession, 1)), true);
+});
+
+test('GET /api/feedback pending 与命中均返回 HTTP 200', async () => {
+  const s = 'remote-feedback-poll';
+  const pending = await fetch(url(`/api/feedback?session=${s}&round=1`));
+  assert.equal(pending.status, 200);
+  assert.deepEqual(await pending.json(), { ok: false, pending: true });
+
+  const feedback = { session: s, round: 1, items: [{ blockId: 'remote-note', type: 'verdict', value: 'approve' }] };
+  writeJSON(paths.feedback(s, 1), feedback);
+  const hit = await fetch(url(`/api/feedback?session=${s}&round=1`));
+  assert.equal(hit.status, 200);
+  assert.deepEqual(await hit.json(), { ok: true, feedback });
+});
+
+test('GET /api/feedback 对非法 session/round 返回 400', async () => {
+  for (const query of ['session=../escape&round=1', 'session=valid&round=0', 'session=valid&round=1x']) {
+    const res = await fetch(url(`/api/feedback?${query}`));
+    assert.equal(res.status, 400, query);
+    assert.match((await res.json()).error, /session|round/i);
+  }
+});
+
+test('远程精确 session 的 status/content/feedback 读取不串到 legacySafe 目录', async () => {
+  const s = 'remote.exact-reads';
+  const legacyDir = path.join(tmpDir, 'remote_exact-reads');
+  fs.mkdirSync(path.join(legacyDir, 'round-1'), { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'status.json'), JSON.stringify({ session: s, round: 9, state: 'error' }));
+  fs.writeFileSync(path.join(legacyDir, 'round-1', 'content.json'), JSON.stringify({
+    session: s,
+    round: 1,
+    title: 'legacy-content',
+    blocks: [{ id: 'legacy', type: 'markdown', body: '旧映射目录' }],
+  }));
+  fs.writeFileSync(path.join(legacyDir, 'round-1', 'feedback.json'), JSON.stringify({
+    session: s,
+    round: 1,
+    items: [{ blockId: 'legacy', type: 'verdict', value: 'legacy' }],
+  }));
+
+  const presented = await fetch(url('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(roundContent(s, { title: 'exact-content' })),
+  });
+  assert.equal(presented.status, 200);
+  const exactFeedback = {
+    session: s,
+    round: 1,
+    items: [{ blockId: 'remote-note', type: 'verdict', value: 'exact' }],
+  };
+  writeJSON(paths.feedback(s, 1, { exactSession: true }), exactFeedback);
+
+  const [statusRes, contentRes, feedbackRes] = await Promise.all([
+    fetch(url(`/api/status?session=${encodeURIComponent(s)}`)),
+    fetch(url(`/api/content?session=${encodeURIComponent(s)}&round=1`)),
+    fetch(url(`/api/feedback?session=${encodeURIComponent(s)}&round=1`)),
+  ]);
+  const statusBody = await statusRes.json();
+  const contentBody = await contentRes.json();
+  const feedbackBody = await feedbackRes.json();
+
+  assert.equal(statusBody.status.round, 1);
+  assert.equal(statusBody.status.state, 'rendered');
+  assert.equal(contentBody.title, 'exact-content');
+  assert.equal(contentBody.blocks[0].id, 'remote-note');
+  assert.deepEqual(feedbackBody, { ok: true, feedback: exactFeedback });
 });
 
 // ---- GET /api/status: claimed + fresh heartbeat → display=processing ----
@@ -790,5 +1058,86 @@ test('鉴权模式下 /api/proxy 返回的 HTML 会把 token 继续透传给二�
     });
   } finally {
     srv.close();
+  }
+});
+
+// ---- 可选事件 webhook ----
+
+test('postWebhookEvent：超时会 abort，失败只记录日志不向上抛出', async () => {
+  let aborted = false;
+  const errors = [];
+  await postWebhookEvent('http://127.0.0.1:1/events', { event: 'round-presented' }, {
+    timeoutMs: 20,
+    fetchImpl: (_target, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(new Error('aborted'));
+      }, { once: true });
+    }),
+    logger: { error: (...args) => errors.push(args.join(' ')) },
+  });
+
+  assert.equal(aborted, true);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /webhook/i);
+});
+
+test('WORKBENCH_EVENT_WEBHOOK：轮次呈现与反馈提交后异步发送两个事件', async () => {
+  const received = [];
+  let resolveEvents;
+  const bothEvents = new Promise((resolve) => { resolveEvents = resolve; });
+  const webhookServer = http.createServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      received.push({ method: req.method, headers: req.headers, body: JSON.parse(raw) });
+      res.writeHead(204);
+      res.end();
+      if (received.length === 2) resolveEvents();
+    });
+  });
+  webhookServer.listen(0, '127.0.0.1');
+  await new Promise((resolve) => webhookServer.once('listening', resolve));
+
+  const previous = process.env.WORKBENCH_EVENT_WEBHOOK;
+  process.env.WORKBENCH_EVENT_WEBHOOK = `http://127.0.0.1:${webhookServer.address().port}/events`;
+  const eventServer = startServer(0);
+  await new Promise((resolve) => eventServer.once('listening', resolve));
+  if (previous == null) delete process.env.WORKBENCH_EVENT_WEBHOOK;
+  else process.env.WORKBENCH_EVENT_WEBHOOK = previous;
+
+  const s = 'webhook-events';
+  const base = `http://127.0.0.1:${eventServer.address().port}`;
+  try {
+    const presented = await fetch(`${base}/api/rounds`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(roundContent(s, { title: 'Webhook 标题' })),
+    });
+    assert.equal(presented.status, 200);
+
+    const submitted = await fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: s, round: 1, items: [] }),
+    });
+    assert.equal(submitted.status, 200);
+
+    await Promise.race([
+      bothEvents,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('等待 webhook 事件超时')), 1000)),
+    ]);
+
+    assert.deepEqual(received.map((item) => item.method), ['POST', 'POST']);
+    assert.ok(received.every((item) => /application\/json/i.test(item.headers['content-type'] || '')));
+    assert.deepEqual(received.map((item) => item.body.event), ['round-presented', 'feedback-submitted']);
+    assert.deepEqual(received.map((item) => [item.body.session, item.body.round]), [[s, 1], [s, 1]]);
+    assert.equal(received[0].body.title, 'Webhook 标题');
+    assert.equal(received[1].body.title, undefined);
+    assert.ok(received.every((item) => Number.isFinite(Date.parse(item.body.at))));
+  } finally {
+    await new Promise((resolve) => eventServer.close(resolve));
+    await new Promise((resolve) => webhookServer.close(resolve));
   }
 });

@@ -33,3 +33,56 @@ test('listSessions / listRounds / latestRound + removeFile', async () => {
   ws.removeFile(ws.paths.ack('s2', 1));
   assert.equal(ws.exists(ws.paths.ack('s2', 1)), false);
 });
+
+test('writeRound: 共享完成自动编号、双轨落盘与独占冲突保护', async () => {
+  const ws = await import('../../src/workspace.mjs');
+  const session = 'shared.round-1';
+  const first = ws.writeRound(session, {
+    title: '共享写入',
+    blocks: [{ id: 'shared-block', type: 'markdown', body: '第一轮内容' }],
+  }, { exactSession: true });
+
+  assert.equal(first.round, 1);
+  assert.equal(ws.readJSON(ws.paths.content(session, 1)).session, session);
+  assert.match(ws.readText(ws.paths.contentMd(session, 1)), /第一轮内容/);
+  assert.equal(ws.readStatus(session).state, 'rendered');
+  assert.equal(fs.existsSync(path.join(tmp, session, 'round-1', 'content.json')), true, '合法的点号 session 应保留原名');
+
+  assert.throws(
+    () => ws.writeRound(session, {
+      round: 1,
+      blocks: [{ id: 'replacement', type: 'markdown', body: '不得覆盖' }],
+    }, { allowOverwrite: false, exactSession: true }),
+    (error) => error?.code === 'ROUND_EXISTS',
+  );
+  assert.equal(ws.readJSON(ws.paths.content(session, 1)).blocks[0].id, 'shared-block');
+});
+
+test('点号 session 默认继续读取旧版下划线目录，服务端可显式使用精确目录', async () => {
+  const ws = await import('../../src/workspace.mjs');
+  const session = 'legacy.session';
+  const legacyDir = path.join(tmp, 'legacy_session');
+  fs.mkdirSync(legacyDir, { recursive: true });
+
+  assert.equal(ws.sessionDir(session), legacyDir);
+  assert.equal(ws.sessionDir(session, { exactSession: true }), path.join(tmp, session));
+});
+
+test('独占写入中途失败会回收本次占位，允许同 round 重试', async () => {
+  const ws = await import('../../src/workspace.mjs');
+  const session = 'failed-round-cleanup';
+  const cyclic = {};
+  cyclic.self = cyclic;
+
+  assert.throws(() => ws.writeRound(session, {
+    round: 1,
+    blocks: [{ id: 'cyclic', type: 'markdown', extra: cyclic }],
+  }, { allowOverwrite: false }));
+  assert.equal(fs.existsSync(ws.roundDir(session, 1)), false);
+
+  const retried = ws.writeRound(session, {
+    round: 1,
+    blocks: [{ id: 'valid', type: 'markdown', body: '重试成功' }],
+  }, { allowOverwrite: false });
+  assert.equal(retried.round, 1);
+});

@@ -7,6 +7,12 @@ import { fileURLToPath } from 'node:url';
 
 import { computeDiff, removedBlocks, diffSanity } from '../protocol/diff.mjs';
 import { validateFeedback } from '../protocol/schema.mjs';
+import {
+  lintContent,
+  formatLint,
+  findIncompleteDecisions,
+  formatIncompleteDecisions,
+} from '../protocol/lint.mjs';
 import { displayState } from '../protocol/status.mjs';
 import { HEARTBEAT_STALE_MS } from '../protocol/constants.mjs';
 import {
@@ -20,11 +26,16 @@ import {
   readStatus,
   writeStatus,
   listSessions,
+  isValidSessionName,
+  prepareRound,
+  writeRound,
 } from '../workspace.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
 const SRC_ROOT = path.resolve(__dirname, '..');
+const ROUND_BODY_LIMIT = 2 * 1024 * 1024;
+const WEBHOOK_TIMEOUT_MS = 5000;
 
 // ---- MIME ----
 const MIME = {
@@ -92,16 +103,105 @@ function parseQuery(reqUrl) {
   return Object.fromEntries(u.searchParams.entries());
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = Infinity) {
   return new Promise((resolve, reject) => {
-    let buf = '';
-    req.on('data', (c) => { buf += c; });
+    const contentLength = Number(req.headers['content-length']);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      const error = new Error('请求体超过 2 MB 上限');
+      error.code = 'BODY_TOO_LARGE';
+      req.resume();
+      reject(error);
+      return;
+    }
+
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > maxBytes) {
+        settled = true;
+        const error = new Error('请求体超过 2 MB 上限');
+        error.code = 'BODY_TOO_LARGE';
+        req.resume();
+        reject(error);
+        return;
+      }
+      chunks.push(buffer);
+    });
     req.on('end', () => {
-      try { resolve(JSON.parse(buf || 'null')); }
+      if (settled) return;
+      settled = true;
+      const raw = Buffer.concat(chunks, size).toString('utf8');
+      try { resolve(JSON.parse(raw || 'null')); }
       catch (e) { reject(e); }
     });
     req.on('error', reject);
   });
+}
+
+function validRoundQuery(value) {
+  if (!/^[1-9]\d*$/.test(String(value || ''))) return null;
+  const round = Number(value);
+  return Number.isSafeInteger(round) ? round : null;
+}
+
+function requestOrigin(req) {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = /^https?$/i.test(forwardedProto)
+    ? forwardedProto.toLowerCase()
+    : (req.socket.encrypted ? 'https' : 'http');
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = forwardedHost || req.headers.host || '127.0.0.1';
+  return `${protocol}://${host}`;
+}
+
+function renderUrl(req, session) {
+  let target;
+  try {
+    target = new URL('/render/', requestOrigin(req));
+  } catch {
+    // Host/转发头异常不能把已成功落盘的轮次变成 500。
+    target = new URL('/render/', 'http://127.0.0.1');
+  }
+  target.searchParams.set('session', session);
+  return target.href;
+}
+
+/** 可选事件投递：任何失败都在此吞掉，调用方只需 fire-and-forget。 */
+export async function postWebhookEvent(webhookUrl, payload, {
+  fetchImpl = fetch,
+  timeoutMs = WEBHOOK_TIMEOUT_MS,
+  logger = console,
+} = {}) {
+  if (!webhookUrl) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    const response = await fetchImpl(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel?.();
+      throw new Error(`HTTP ${response.status}`);
+    }
+    await response.body?.cancel?.();
+  } catch (error) {
+    logger.error('[workbench:webhook] 事件投递失败：', error?.message || String(error));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function emitWebhook(webhookUrl, payload) {
+  if (!webhookUrl) return;
+  setImmediate(() => { void postWebhookEvent(webhookUrl, payload); });
 }
 
 // Feedback → human-readable markdown
@@ -185,7 +285,7 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
 }
 
 // ---- request handler ----
-function handleRequest(req, res, expectedToken = '') {
+function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
   const method = req.method.toUpperCase();
   const rawUrl = req.url || '/';
   const requestUrl = new URL(rawUrl, 'http://localhost');
@@ -232,6 +332,107 @@ function handleRequest(req, res, expectedToken = '') {
 
   if (urlPath === '/api/sessions' && method === 'GET') {
     json(res, 200, { ok: true, sessions: listSessions() });
+    return;
+  }
+
+  if (urlPath === '/api/rounds' && method === 'POST') {
+    readBody(req, ROUND_BODY_LIMIT).then((body) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: '请求体必须是完整的 content JSON' });
+        return;
+      }
+      if (!isValidSessionName(body.session)) {
+        json(res, 400, { ok: false, error: 'session 名称无效：限 80 字符，仅允许字母、数字、点、下划线和连字符' });
+        return;
+      }
+
+      let content;
+      try {
+        // 轮次号由云端唯一分配：忽略客户端指定值，响应返回实际轮号。
+        // 并发写仍由 writeRound 的原子 mkdir 兜底，绝不覆盖已有目录。
+        const bodyWithoutRound = { ...body };
+        delete bodyWithoutRound.round;
+        content = prepareRound(body.session, bodyWithoutRound, { exactSession: true });
+      } catch (error) {
+        if (error?.code === 'INVALID_CONTENT') {
+          json(res, 400, { ok: false, error: `内容校验失败：${error.errors.join('; ')}`, errors: error.errors });
+          return;
+        }
+        throw error;
+      }
+
+      const allowIncomplete = requestUrl.searchParams.get('allowIncomplete') === '1';
+      const incomplete = findIncompleteDecisions(content);
+      if (incomplete.length && !allowIncomplete) {
+        json(res, 400, {
+          ok: false,
+          error: formatIncompleteDecisions(incomplete),
+          errors: incomplete.map((issue) => `[${issue.blockId}] 缺少：${issue.missingFields.join('、')}`),
+        });
+        return;
+      }
+
+      const warnings = lintContent(content);
+      if (warnings.length) console.error(formatLint(warnings));
+
+      try {
+        const saved = writeRound(content.session, content, { allowOverwrite: false, exactSession: true });
+        const response = {
+          ok: true,
+          session: saved.session,
+          round: saved.round,
+          url: renderUrl(req, saved.session),
+        };
+        if (allowIncomplete) response.lintBypassed = true;
+        json(res, 200, response);
+        emitWebhook(eventWebhook, {
+          event: 'round-presented',
+          session: saved.session,
+          round: saved.round,
+          ...(typeof content.title === 'string' && content.title ? { title: content.title } : {}),
+          at: new Date().toISOString(),
+        });
+      } catch (error) {
+        if (error?.code === 'ROUND_EXISTS') {
+          json(res, 409, { ok: false, error: `round ${content.round} 已存在，不允许覆盖` });
+          return;
+        }
+        if (error?.code === 'INVALID_CONTENT') {
+          json(res, 400, { ok: false, error: `内容校验失败：${error.errors.join('; ')}`, errors: error.errors });
+          return;
+        }
+        console.error('[workbench:rounds] 写入失败：', error);
+        json(res, 500, { ok: false, error: '轮次写入失败，请查看服务端日志' });
+      }
+    }).catch((error) => {
+      if (error?.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { ok: false, error: '请求体过大：上限为 2 MB' });
+        return;
+      }
+      console.error('[workbench:rounds] 请求处理失败：', error);
+      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+    });
+    return;
+  }
+
+  if (urlPath === '/api/feedback' && method === 'GET') {
+    const { session, round } = parseQuery(rawUrl);
+    const parsedRound = validRoundQuery(round);
+    if (!isValidSessionName(session) || parsedRound == null) {
+      json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
+      return;
+    }
+    const feedbackPath = paths.feedback(session, parsedRound, { exactSession: true });
+    if (!exists(feedbackPath)) {
+      json(res, 200, { ok: false, pending: true });
+      return;
+    }
+    const feedback = readJSON(feedbackPath, null);
+    if (!feedback) {
+      json(res, 500, { ok: false, error: 'feedback.json 无法读取或内容损坏' });
+      return;
+    }
+    json(res, 200, { ok: true, feedback });
     return;
   }
 
@@ -301,7 +502,13 @@ function handleRequest(req, res, expectedToken = '') {
       const vr = validateFeedback(fb);
       if (!vr.ok) { json(res, 400, { ok: false, error: vr.errors.join('; ') }); return; }
 
-      const { session, round } = fb;
+      const { session } = fb;
+      const round = parseInt(fb.round, 10);
+      // 与 GET 侧一致的防御深度：session/round 先过白名单再进任何路径拼接
+      if (!isValidSessionName(session) || !Number.isInteger(round) || round < 1) {
+        json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
+        return;
+      }
       const st = readStatus(session);
       if (st && st.state === 'claimed') {
         json(res, 409, { ok: false, error: 'claimed' });
@@ -314,6 +521,12 @@ function handleRequest(req, res, expectedToken = '') {
       writeText(paths.feedbackMd(session, round), feedbackToMd(saved));
       writeStatus(session, { state: 'submitted', round, error: null });
       json(res, 200, { ok: true, count: (fb.items || []).length });
+      emitWebhook(eventWebhook, {
+        event: 'feedback-submitted',
+        session,
+        round,
+        at: now,
+      });
     }).catch((e) => {
       json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
     });
@@ -470,10 +683,11 @@ function handleRequest(req, res, expectedToken = '') {
 export function startServer(port, host = '127.0.0.1') {
   const listenHost = host || '127.0.0.1';
   const token = process.env.WORKBENCH_TOKEN || '';
+  const eventWebhook = process.env.WORKBENCH_EVENT_WEBHOOK || '';
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
     throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   }
-  const server = http.createServer((req, res) => handleRequest(req, res, token));
+  const server = http.createServer((req, res) => handleRequest(req, res, token, eventWebhook));
   const listenPort = port != null ? port : (parseInt(process.env.PORT, 10) || 8099);
   server.listen(listenPort, listenHost);
   return server;

@@ -123,7 +123,7 @@ export function validateContent(content) {
   const errors = [];
   if (!content || typeof content !== 'object') return { ok: false, errors: ['content must be object'] };
   if (!content.session || typeof content.session !== 'string') errors.push('session required string');
-  if (!Number.isInteger(content.round) || content.round < 1) errors.push('round must be integer >=1');
+  if (!Number.isSafeInteger(content.round) || content.round < 1) errors.push('round must be integer >=1');
   if (!Array.isArray(content.blocks)) errors.push('blocks must be array');
   else {
     const ids = new Set();
@@ -140,7 +140,7 @@ export function validateFeedback(fb) {
   const errors = [];
   if (!fb || typeof fb !== 'object') return { ok: false, errors: ['feedback must be object'] };
   if (!fb.session) errors.push('session required');
-  if (!Number.isInteger(fb.round)) errors.push('round required integer');
+  if (!Number.isSafeInteger(fb.round) || fb.round < 1) errors.push('round required integer');
   // 会话级留言（iteration-brief P1）：不针对任何块的自由发言。可空；老消费者忽略即可
   if (fb.sessionComment != null && typeof fb.sessionComment !== 'string') errors.push('sessionComment must be string');
   if (!Array.isArray(fb.items)) errors.push('items must be array');
