@@ -110,8 +110,9 @@ export function readStreamEntries(session, {
   const parsedLimit = Number(limit);
   if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1) throw new Error('limit 必须是正整数');
 
+  const hasCursor = since != null && since !== '';
   let selected = entries;
-  if (since != null && since !== '') {
+  if (hasCursor) {
     const cursor = String(since);
     const idIndex = entries.findIndex((entry) => entry.id === cursor);
     if (idIndex >= 0) {
@@ -123,7 +124,8 @@ export function readStreamEntries(session, {
         : entries.filter((entry) => Date.parse(entry.at) > timestamp);
     }
   }
-  return selected.slice(-parsedLimit);
+  // 首次读取给最近窗口；增量读取必须从游标后第一条向前分页，避免积压超过 limit 时永久跳消息。
+  return hasCursor ? selected.slice(0, parsedLimit) : selected.slice(-parsedLimit);
 }
 
 function migrationId(session, round, feedback) {

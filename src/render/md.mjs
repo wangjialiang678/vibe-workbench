@@ -1,5 +1,5 @@
 // 极简 markdown → HTML 转换器。浏览器安全，无 node 依赖，纯函数。
-// 支持：# ## 标题、**粗体**、`代码`、```围栏代码块、- 列表、[t](u) 链接、段落/换行。
+// 支持：# ## 标题、**粗体**、`代码`、```围栏代码块、- 列表、链接、图片、段落/换行。
 // 先转义 < > &，再处理 md 语法，保证 XSS 安全。
 
 function escapeHtml(str) {
@@ -9,11 +9,21 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;');
 }
 
-// 行内转换（粗体、代码、链接）—— 在已转义的文本上操作
+function safeInlineUrl(value) {
+  const raw = String(value ?? '').trim();
+  if (!/^(?:https?:\/\/|\/)/i.test(raw)) return '#';
+  return raw.replace(/"/g, '&quot;');
+}
+
+// 行内转换（图片、粗体、代码、链接）—— 在已转义的文本上操作
 function inlineConvert(escaped) {
   return escaped
+    // 图片 ![alt](url) —— 必须先于普通链接处理
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, (_all, alt, url) => (
+      `<img class="md-image" src="${safeInlineUrl(url)}" alt="${alt.replace(/"/g, '&quot;')}" loading="lazy">`
+    ))
     // 链接 [text](url)  —— 先处理（含方括号，避免和粗体冲突）
-    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '<a href="$2">$1</a>')
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_all, text, url) => `<a href="${safeInlineUrl(url)}">${text}</a>`)
     // 粗体 **text**
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     // 行内代码 `code`

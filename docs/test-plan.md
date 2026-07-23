@@ -13,6 +13,8 @@
 - [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events、受保护附件上传
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
+- [frontend] 桌面会话流可拖分栏、决策/文档切换、手机对话/决策/文档三标签与未读角标
+- [frontend] 消息分侧、receipt/progress、增量轮询、附件 Markdown、最新轮决策芯片、pin 浮层边缘翻转
 - [templates] think-discuss / dev-review 产出合协议、决策块元数据正确
 - [CLI] workbench render 写入 + status=rendered；--help
 - [CLI] WORKBENCH_REMOTE_URL 下 present/wait 只读写云端；未设置时本地路径零回归
@@ -35,6 +37,7 @@
 | 远程 CLI | tests/e2e/present.test.mjs | 远程 present/wait、token URL、错误中文化 | [CLI] |
 | 会话流数据层 | tests/unit/stream.test.mjs | append/read since/最近100/精确路径/迁移幂等 | [backend] |
 | 会话流与附件 API | tests/e2e/session-stream.test.mjs | 消息实名/长度/回执/管理员事件/webhook/附件类型大小清洗鉴权 | [backend] |
+| 会话流前端 G2 | tests/unit/render.test.mjs、Playwright 冒烟 | 分栏/三区 DOM、消息分侧、系统事件、决策芯片、附件 Markdown、手机未读、文档资产、pin 锚定 | [frontend] |
 | 事件化 CLI | tests/e2e/stream-cli.test.mjs | wait --events 本地/远程唤醒、默认兼容、stream-migrate | [CLI] |
 | D5 个人链接 | tests/unit/participants.test.mjs、tests/e2e/server.test.mjs | 名册原子写/脱敏/吊销、参与者 token、管理 API 鉴权 | [backend] |
 | D6 逐人反馈 | tests/e2e/server.test.mjs、tests/unit/render.test.mjs | 独立落盘、兼容桥、owner 优先、select 分歧、只读转义渲染 | [backend]/[frontend] |

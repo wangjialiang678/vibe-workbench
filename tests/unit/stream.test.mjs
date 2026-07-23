@@ -118,6 +118,29 @@ test('readStreamEntries：since 命中 ID 时只返回该条目之后的内容',
   );
 });
 
+test('readStreamEntries：since 后积压超过 100 条时从游标后向前分页，不跳过消息', () => {
+  const session = 'since-backlog';
+  for (let index = 0; index < 205; index += 1) appendAt(session, index);
+
+  const firstPage = readStreamEntries(session, { since: uuid(0) });
+  assert.equal(firstPage.length, 100);
+  assert.equal(firstPage[0].id, uuid(1));
+  assert.equal(firstPage.at(-1).id, uuid(100));
+
+  const secondPage = readStreamEntries(session, { since: firstPage.at(-1).id });
+  assert.equal(secondPage.length, 100);
+  assert.equal(secondPage[0].id, uuid(101));
+  assert.equal(secondPage.at(-1).id, uuid(200));
+
+  const finalPage = readStreamEntries(session, { since: secondPage.at(-1).id });
+  assert.deepEqual(finalPage.map((entry) => entry.id), [
+    uuid(201),
+    uuid(202),
+    uuid(203),
+    uuid(204),
+  ]);
+});
+
 test('readStreamEntries：since 为 ISO 时间时只返回时间严格更晚的内容', () => {
   const session = 'since-time';
   appendAt(session, 1, { at: '2026-07-23T08:00:00.000Z' });

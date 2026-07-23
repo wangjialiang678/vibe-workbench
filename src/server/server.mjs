@@ -244,6 +244,46 @@ function writeAttachment(session, originalName, extension, body) {
   }
 }
 
+function assetUrl(session, relativePath) {
+  const encodedPath = relativePath.split('/').map(encodeURIComponent).join('/');
+  return `/assets/${encodeURIComponent(session)}/${encodedPath}`;
+}
+
+function listSessionAssets(session) {
+  const root = path.resolve(workspaceDir(), session, 'assets');
+  const files = [];
+
+  function walk(directory, relativeDirectory = '') {
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    for (const entry of entries) {
+      // 不跟随软链接，避免资产索引越出会话目录。
+      if (entry.isSymbolicLink()) continue;
+      const relativePath = relativeDirectory
+        ? path.posix.join(relativeDirectory, entry.name)
+        : entry.name;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        files.push({
+          path: relativePath,
+          url: assetUrl(session, relativePath),
+          size: fs.statSync(absolutePath).size,
+        });
+      }
+    }
+  }
+
+  try {
+    walk(root);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+  return files;
+}
+
 function requestOrigin(req) {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const protocol = /^https?$/i.test(forwardedProto)
@@ -556,7 +596,12 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
         ...(since ? { since } : {}),
         exactSession: true,
       });
-      json(res, 200, { ok: true, entries });
+      // 前端需要服务端确认的身份来判断消息左右分侧；只返回公开身份字段，不暴露 token。
+      json(res, 200, {
+        ok: true,
+        identity: { id: identity.id, name: identity.name, role: identity.role },
+        entries,
+      });
     } catch (error) {
       console.error('[workbench:messages] 读取失败：', error.message);
       json(res, 500, { ok: false, error: '会话消息读取失败' });
@@ -682,6 +727,21 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
       }
       json(res, 400, { ok: false, error: `附件读取失败：${error.message}` });
     });
+    return;
+  }
+
+  if (urlPath === '/api/assets' && method === 'GET') {
+    const { session } = parseQuery(rawUrl);
+    if (!isValidSessionName(session)) {
+      json(res, 400, { ok: false, error: 'session 参数无效' });
+      return;
+    }
+    try {
+      json(res, 200, { ok: true, files: listSessionAssets(session) });
+    } catch (error) {
+      console.error('[workbench:assets] 索引失败：', error.message);
+      json(res, 500, { ok: false, error: '会话资产读取失败' });
+    }
     return;
   }
 

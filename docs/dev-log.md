@@ -108,3 +108,14 @@
 - `import-prd-project.mjs` 默认把 `ui/*.html` 拷进 session assets 并把 `src` 指向工作台自身；`--ui-base` 可回退到引用外部 URL。
 - `renderPrototype(iframe)`：同源相对 src 直连（不绕代理），外站绝对 URL 仍走代理。
 - 实证：**关掉 prd-studio 后 UI 面仍正常**（10 个屏全在，iframe 同源直连）。测试 +3 → `npm test` **275 pass / 0 fail**。
+
+## 会话流第一期·前端 G2（2026-07-23）
+
+- 桌面改为会话流 / 内容左右分栏，分隔线可拖动，宽度按会话写入 `localStorage`；右区保留完整决策渲染并新增文档资产页。
+- 手机改为底部「对话 / 决策 / 文档」三标签；对话显示增量新消息数，决策显示未答决策数。
+- 会话流每 3 秒按 `since` 增量轮询；消息按 AI / 自己 / 他人分侧，receipt 可跳轮，progress 居中显示；最新轮 receipt 生成流内决策芯片。
+- 输入区支持消息即时追加、剪贴板图片和图片/PDF 文件上传；上传结果自动转为 Markdown 图片或链接，所有新请求沿用页面 token。
+- 文档页汇总 `content.meta.docsUrl`、各轮 content 与会话流中引用的 `/assets/` 文件（含 `uploads/`），并列出历史轮次。
+- 原型 pin 批注浮层改为按视口固定锚定，右/下空间不足时向左/上翻转，滚动和缩放时重新定位。
+- 为消息分侧补充 GET `/api/messages` 的公开 `identity` 字段，不含 token。
+- 验证：render/CSS 定向 **100 pass**，会话流 API 定向 **12 pass**，Playwright 桌面/手机/pin 冒烟通过；`npm test` **387 pass / 0 fail**。

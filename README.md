@@ -8,7 +8,7 @@
 
 ```bash
 # 1. 跑测试（零依赖，Node ≥20）
-npm test                         # 348 项单元/集成测试
+npm test                         # 387 项单元/集成测试
 
 # 2. 起服务（HTTP + 异步唤醒 listener）
 node bin/workbench.mjs up --port 8099     # 默认只监听 127.0.0.1，serve + watch
@@ -96,7 +96,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 | `src/workspace.mjs` | 文件契约与共享轮次写入（content/feedback/ack/response/error/status） |
 | `src/server/` | 零依赖 HTTP + API（rounds / feedback / messages / stream-events / attachments / webhook） |
 | `src/loop/` | 异步唤醒 listener（对账幂等 + 独立心跳 + 容错）/ claude-exec / session-store |
-| `src/render/` | 前端：纯函数 HTML 渲染 + 四区注意力 + diff 徽章 + 状态/重试 |
+| `src/render/` | 前端：桌面会话流分栏 / 手机三标签 + 纯函数 HTML 渲染 + 四区注意力 + diff 徽章 + 状态/重试 |
 | `templates/` | think-discuss（思考共创/文档审阅）/ dev-review（PRD 审核·研发评审）/ design-review（UI·交互设计评审）—— 模板 = block 组合工厂 |
 | `bin/workbench.mjs` | CLI：render / present / wait --events / stream-migrate / participant / serve / watch / up |
 
@@ -109,7 +109,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 - [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-**378 项自动化测试全绿**。已落地：append-only 会话流后端、事件化 wait、受保护附件上传、历史留言迁移、公网绑定防呆 + 管理员/个人专属链接口令门、逐人反馈与分歧标注、远程会话服务与事件 webhook、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
+**387 项自动化测试全绿**。已落地：桌面会话流分栏与手机三标签、append-only 会话流前后端、事件化 wait、受保护附件上传、历史留言迁移、公网绑定防呆 + 管理员/个人专属链接口令门、逐人反馈与分歧标注、远程会话服务与事件 webhook、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
 决策块结构化（背景/为什么/选项利弊/推荐理由 + 作者 lint）、会话级留言、live 实时系统标识、受众分层折叠、editable 一键确认、embed 代理支持 POST（实证 bug 修复）、prd-studio 高保真 UI 一键导入（手机壳呈现）。
 
 **作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会硬校验决策块四段完整性；仅在明确使用 `--allow-incomplete-decisions` 时临时退回 lint 警告。

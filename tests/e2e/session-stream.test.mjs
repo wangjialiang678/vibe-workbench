@@ -168,6 +168,21 @@ test('POST /api/messages 以服务端身份写入 owner 与参与者实名，忽
   ]);
 });
 
+test('GET /api/messages 返回当前公开身份，供前端判断自己的消息分侧', async () => {
+  const query = new URLSearchParams({ session: 'message-viewer-identity' });
+  const response = await fetch(`${baseUrl}/api/messages?${query}`, {
+    headers: authHeaders(PARTICIPANT.token),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.identity, {
+    id: PARTICIPANT.id,
+    name: PARTICIPANT.name,
+    role: 'participant',
+  });
+  assert.equal(Object.hasOwn(body.identity, 'token'), false);
+});
+
 test('POST /api/messages 拒绝空白正文和超过 4000 个 Unicode 字符的正文', async () => {
   for (const text of ['', ' \n\t ', '字'.repeat(4001)]) {
     const response = await postJson('/api/messages', {
@@ -415,6 +430,31 @@ test('POST /api/attachments 对不支持的 MIME 返回 415，缺 token 返回 4
   });
   assert.equal(unauthenticated.status, 403);
   assert.equal((await unauthenticated.json()).ok, false);
+});
+
+test('GET /api/assets 递归列出会话全部资产，包含旧 uploads 且不依赖最近消息窗口', async () => {
+  const session = 'asset-inventory';
+  const assetRoot = path.join(tmpDir, session, 'assets');
+  fs.mkdirSync(path.join(assetRoot, 'uploads'), { recursive: true });
+  fs.mkdirSync(path.join(assetRoot, 'prototype'), { recursive: true });
+  fs.writeFileSync(path.join(assetRoot, 'uploads', 'old-screen.png'), 'old-image');
+  fs.writeFileSync(path.join(assetRoot, 'prototype', 'index.html'), '<h1>prototype</h1>');
+
+  const response = await fetch(`${baseUrl}/api/assets?session=${session}`, {
+    headers: authHeaders(),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.files.map((file) => file.path), [
+    'prototype/index.html',
+    'uploads/old-screen.png',
+  ]);
+  assert.deepEqual(body.files.map((file) => file.url), [
+    `/assets/${session}/prototype/index.html`,
+    `/assets/${session}/uploads/old-screen.png`,
+  ]);
+  assert.deepEqual(body.files.map((file) => file.size), [18, 9]);
 });
 
 test('POST /api/attachments 清洗危险文件名为安全 ASCII slug、时间戳和 MIME 扩展，且不能路径穿越', async () => {

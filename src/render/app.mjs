@@ -5,7 +5,24 @@ import { renderZones } from './attention-view.mjs';
 import { participantFeedbackHtml } from './blocks.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
-import { unansweredDecisions, confirmModel, countAnsweredDecisions, groupBySection, sectionPendingStats } from '../protocol/attention.mjs';
+import {
+  attachmentMessageMarkdown,
+  clampStreamPanelWidth,
+  collectAssetLinks,
+  composerValueAfterSend,
+  decisionChipForLatestReceipt,
+  documentsPanelHtml,
+  pinPopoverPosition,
+  streamEntryHtml,
+} from './stream-view.mjs';
+import {
+  unansweredDecisions,
+  confirmModel,
+  countAnsweredDecisions,
+  groupBySection,
+  pendingDecisionBlocks,
+  sectionPendingStats,
+} from '../protocol/attention.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -22,11 +39,12 @@ function apiUrl(input) {
 
 // 当前展示的轮次；为 null 时在 bootstrap 里解析为服务端最新一轮，并可随新轮自动推进
 let currentRound = URL_ROUND !== '' ? Number(URL_ROUND) : null;
+let _latestRound = currentRound;
 // URL 未带 round = "跟随最新轮"模式（bootstrap 解析最新 + 轮询自动推进）；
 // 带了 round=N = 用户锁定该轮，绝不自动跳走。
 const FOLLOW_LATEST = URL_ROUND === '';
 
-function draftKey() { return `wb:${SESSION}:${currentRound}:fb`; }
+function draftKey(round = currentRound) { return `wb:${SESSION}:${round}:fb`; }
 
 // ── 元素引用 ─────────────────────────────────────────────
 const $zones        = document.getElementById('zones-mount');
@@ -37,6 +55,19 @@ const $sessionLabel = document.getElementById('session-label');
 const $sessionNav   = document.getElementById('session-nav');
 const $docsLink     = document.getElementById('docs-link');
 const $sessionComment = document.getElementById('session-comment-input');   // 会话级留言（P1）
+const $workspaceShell = document.getElementById('workspace-shell');
+const $splitter = document.getElementById('workspace-splitter');
+const $streamEntries = document.getElementById('stream-entries');
+const $streamConnection = document.getElementById('stream-connection');
+const $streamMigrationHint = document.getElementById('stream-migration-hint');
+const $streamComposer = document.getElementById('stream-composer');
+const $streamInput = document.getElementById('stream-input');
+const $streamFileInput = document.getElementById('stream-file-input');
+const $streamSendBtn = document.getElementById('stream-send-btn');
+const $streamSendStatus = document.getElementById('stream-send-status');
+const $documentsMount = document.getElementById('documents-mount');
+const $streamUnreadBadge = document.getElementById('stream-unread-badge');
+const $decisionUnreadBadge = document.getElementById('decision-unread-badge');
 
 // CSS 选择器防守（id 含特殊字符时不失效）
 function cssEsc(v) {
@@ -90,6 +121,134 @@ if ($sessionComment) {
     try { localStorage.setItem(scKey(), $sessionComment.value); } catch { /* 忽略 */ }
   });
 }
+
+// ── 桌面分栏 / 手机三区切换 ───────────────────────────────
+let _activeView = 'decision';
+let _streamUnread = 0;
+
+function isNarrowScreen() {
+  return typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches;
+}
+
+function setBadge($badge, count) {
+  if (!$badge) return;
+  $badge.textContent = String(count);
+  $badge.hidden = count < 1;
+}
+
+function pendingDecisionCount() {
+  return Math.max(0, pendingDecisionBlocks(_blocks).length - countAnsweredDecisions(_blocks, loadDraft()));
+}
+
+function updateMobileBadges() {
+  setBadge($streamUnreadBadge, _streamUnread);
+  setBadge($decisionUnreadBadge, pendingDecisionCount());
+}
+
+function setActiveView(view, { scrollTop = false } = {}) {
+  if (!['stream', 'decision', 'documents'].includes(view)) return;
+  _activeView = view;
+  if ($workspaceShell) $workspaceShell.dataset.activeView = view;
+
+  const contentView = view === 'documents' ? 'documents' : 'decision';
+  document.querySelectorAll('[data-content-view]').forEach((panel) => {
+    panel.hidden = panel.dataset.contentView !== contentView;
+  });
+  document.querySelectorAll('.content-switch-btn').forEach((button) => {
+    const active = button.dataset.view === contentView;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('.mobile-tab').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.view === view);
+  });
+  if ($submitBtn) {
+    $submitBtn.hidden = isNarrowScreen() ? view !== 'decision' : contentView !== 'decision';
+  }
+
+  if (view === 'stream') {
+    _streamUnread = 0;
+    setBadge($streamUnreadBadge, 0);
+    requestAnimationFrame(() => {
+      if ($streamEntries) $streamEntries.scrollTop = $streamEntries.scrollHeight;
+      if (isNarrowScreen()) window.scrollTo({ top: 0 });
+      else $streamInput?.focus();
+    });
+  }
+  if (view === 'documents') void loadDocumentsPanel();
+  if (view === 'decision' && scrollTop) {
+    requestAnimationFrame(() => {
+      if (isNarrowScreen()) window.scrollTo({ top: 0, behavior: 'smooth' });
+      else document.getElementById('content-region')?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+  updateMobileBadges();
+}
+
+document.querySelectorAll('.content-switch-btn, .mobile-tab').forEach((button) => {
+  button.addEventListener('click', () => setActiveView(button.dataset.view));
+});
+
+// 拖动分隔线调整会话流宽度，并按会话持久化。
+const splitWidthKey = `wb:${SESSION}:stream-width`;
+let _preferredStreamWidth = null;
+
+function clampStreamWidth(value) {
+  return clampStreamPanelWidth(value, window.innerWidth);
+}
+
+function applyStreamWidth(value, { persist = false } = {}) {
+  const width = clampStreamWidth(value);
+  $workspaceShell?.style.setProperty('--stream-panel-width', `${width}px`);
+  $splitter?.setAttribute('aria-valuenow', String(Math.round(width)));
+  if (persist) {
+    _preferredStreamWidth = Math.round(width);
+    try { localStorage.setItem(splitWidthKey, String(Math.round(width))); } catch { /* 忽略 */ }
+  }
+}
+
+try {
+  const savedWidth = Number(localStorage.getItem(splitWidthKey));
+  if (savedWidth > 0) {
+    _preferredStreamWidth = savedWidth;
+    applyStreamWidth(savedWidth);
+  }
+} catch { /* 忽略 */ }
+
+function syncResponsiveLayout() {
+  if (!isNarrowScreen()) applyStreamWidth(_preferredStreamWidth || window.innerWidth * .33);
+  const contentView = _activeView === 'documents' ? 'documents' : 'decision';
+  if ($submitBtn) {
+    $submitBtn.hidden = isNarrowScreen() ? _activeView !== 'decision' : contentView !== 'decision';
+  }
+}
+
+window.addEventListener('resize', syncResponsiveLayout);
+
+$splitter?.addEventListener('pointerdown', (event) => {
+  if (isNarrowScreen()) return;
+  event.preventDefault();
+  $splitter.setPointerCapture?.(event.pointerId);
+  $workspaceShell?.classList.add('is-resizing');
+  const onMove = (moveEvent) => applyStreamWidth(moveEvent.clientX);
+  const onUp = (upEvent) => {
+    $splitter.releasePointerCapture?.(upEvent.pointerId);
+    $splitter.removeEventListener('pointermove', onMove);
+    $splitter.removeEventListener('pointerup', onUp);
+    $workspaceShell?.classList.remove('is-resizing');
+    const width = parseFloat(getComputedStyle($workspaceShell).getPropertyValue('--stream-panel-width'));
+    applyStreamWidth(width, { persist: true });
+  };
+  $splitter.addEventListener('pointermove', onMove);
+  $splitter.addEventListener('pointerup', onUp);
+});
+
+$splitter?.addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const current = parseFloat(getComputedStyle($workspaceShell).getPropertyValue('--stream-panel-width')) || 360;
+  applyStreamWidth(current + (event.key === 'ArrowRight' ? 16 : -16), { persist: true });
+});
 
 // ── 原型「编辑」模式：拖动 / 缩放控件（零依赖原生 pointer events，复刻 prd-studio 的 interact.js 拖拽）──
 function bindPrototypeEdit() {
@@ -214,8 +373,8 @@ function updateSessionLabel() {
 updateSessionLabel();
 
 // ── 草稿 ─────────────────────────────────────────────────
-function loadDraft() {
-  try { return JSON.parse(localStorage.getItem(draftKey()) ?? 'null') ?? {}; }
+function loadDraft(round = currentRound) {
+  try { return JSON.parse(localStorage.getItem(draftKey(round)) ?? 'null') ?? {}; }
   catch { return {}; }
 }
 
@@ -227,7 +386,10 @@ function saveDraft(patch) {
 
 // ── 渲染 ─────────────────────────────────────────────────
 let _blocks = [];        // 当前轮 blocks（带 _change）
+let _latestBlocks = [];  // 最新轮 blocks；锁定历史轮时供流内决策芯片独立计数
 let _sectionData = null; // content.sections（tab 分面类目顺序，可空）
+let _currentContent = null;
+let _documentsCacheKey = '';
 
 async function loadAndRender() {
   let data;
@@ -240,8 +402,11 @@ async function loadAndRender() {
     return;
   }
 
+  _currentContent = data;
   _blocks = data.blocks ?? [];
+  if (Number(currentRound) === Number(_latestRound)) _latestBlocks = _blocks;
   _sectionData = data.sections ?? null;
+  _documentsCacheKey = '';
   updateDocsLink(data.meta?.docsUrl);
   // template 中先给受保护资源补 token，再挂进 DOM，避免首次加载就被门禁拒绝。
   const rendered = document.createElement('template');
@@ -284,6 +449,7 @@ async function loadAndRender() {
   // 绑定互动事件
   bindInteractions();
   await loadParticipantFeedback();
+  updateMobileBadges();
 }
 
 async function loadParticipantFeedback() {
@@ -304,6 +470,290 @@ async function loadParticipantFeedback() {
       host.append(template.content);
     }
   } catch { /* 意见轮询失败不影响自己的填写流程 */ }
+}
+
+// ── 会话流 ───────────────────────────────────────────────
+let _viewerId = '';
+let _lastStreamId = '';
+const _seenStreamIds = new Set();
+const _streamEntriesData = [];
+
+function latestPendingDecisionCount() {
+  return Math.max(
+    0,
+    pendingDecisionBlocks(_latestBlocks).length
+      - countAnsweredDecisions(_latestBlocks, loadDraft(_latestRound)),
+  );
+}
+
+function setStreamConnection(label, state = '') {
+  if (!$streamConnection) return;
+  $streamConnection.textContent = label;
+  $streamConnection.dataset.state = state;
+}
+
+function streamTemplate(entry) {
+  const template = document.createElement('template');
+  template.innerHTML = streamEntryHtml(entry, { viewerId: _viewerId });
+  template.content.querySelectorAll('[src^="/assets/"], [href^="/assets/"]').forEach((element) => {
+    const attribute = element.hasAttribute('src') ? 'src' : 'href';
+    element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
+  });
+  return template;
+}
+
+function refreshDecisionChip() {
+  if (!$streamEntries) return;
+  $streamEntries.querySelectorAll('.stream-decision-chip').forEach((chip) => chip.remove());
+  const model = decisionChipForLatestReceipt(_streamEntriesData, {
+    latestRound: _latestRound,
+    pendingCount: latestPendingDecisionCount(),
+  });
+  if (!model) return;
+  const receipt = $streamEntries.querySelector(`[data-entry-id="${cssEsc(model.entryId)}"]`);
+  if (!receipt) return;
+  const template = document.createElement('template');
+  template.innerHTML = model.html;
+  receipt.after(template.content);
+}
+
+async function refreshLatestDecisionState() {
+  if (!_latestRound) return;
+  if (Number(_latestRound) === Number(currentRound)) {
+    _latestBlocks = _blocks;
+    refreshDecisionChip();
+    return;
+  }
+  try {
+    const response = await fetch(apiUrl(
+      `/api/content?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(_latestRound)}`,
+    ));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const content = await response.json();
+    _latestBlocks = Array.isArray(content.blocks) ? content.blocks : [];
+  } catch {
+    _latestBlocks = [];
+  }
+  refreshDecisionChip();
+}
+
+function appendStreamEntries(entries, { countUnread = false, advanceCursor = true } = {}) {
+  if (!$streamEntries || !Array.isArray(entries)) return;
+  const nearBottom = $streamEntries.scrollHeight - $streamEntries.scrollTop - $streamEntries.clientHeight < 72;
+  let addedMessages = 0;
+  let addedEntries = 0;
+  for (const entry of entries) {
+    if (advanceCursor && entry?.id) _lastStreamId = entry.id;
+    if (!entry?.id || _seenStreamIds.has(entry.id)) continue;
+    _seenStreamIds.add(entry.id);
+    _streamEntriesData.push(entry);
+    $streamEntries.append(streamTemplate(entry).content);
+    addedEntries += 1;
+    if (entry.kind === 'message') addedMessages += 1;
+  }
+  if (nearBottom || !countUnread || (_activeView === 'stream' && isNarrowScreen())) {
+    requestAnimationFrame(() => { $streamEntries.scrollTop = $streamEntries.scrollHeight; });
+  }
+  if (countUnread && addedMessages > 0 && (isNarrowScreen() ? _activeView !== 'stream' : false)) {
+    _streamUnread += addedMessages;
+  }
+  if (_streamEntriesData.length > 0 && $streamMigrationHint) $streamMigrationHint.hidden = true;
+  if (addedEntries > 0) _documentsCacheKey = '';
+  refreshDecisionChip();
+  updateMobileBadges();
+}
+
+async function loadStream({ initial = false } = {}) {
+  if (!SESSION || !$streamEntries) return;
+  const since = !initial && _lastStreamId ? `&since=${encodeURIComponent(_lastStreamId)}` : '';
+  try {
+    const response = await fetch(apiUrl(`/api/messages?session=${encodeURIComponent(SESSION)}${since}`));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    if (data.identity?.id) _viewerId = data.identity.id;
+    if (initial) {
+      $streamEntries.replaceChildren();
+      _seenStreamIds.clear();
+      _streamEntriesData.length = 0;
+      _lastStreamId = '';
+    }
+    appendStreamEntries(data.entries || [], { countUnread: !initial });
+    if ($streamMigrationHint) {
+      $streamMigrationHint.hidden = !(initial && _streamEntriesData.length === 0 && Number(_latestRound) > 0);
+    }
+    setStreamConnection('已连接', 'ok');
+  } catch {
+    setStreamConnection('稍后重试', 'error');
+  }
+}
+
+function roundPageUrl(round) {
+  const target = new URL('/render/', location.origin);
+  target.searchParams.set('session', SESSION);
+  target.searchParams.set('round', String(round));
+  if (TOKEN) target.searchParams.set('token', TOKEN);
+  return target.href;
+}
+
+$streamEntries?.addEventListener('click', (event) => {
+  const decisionChip = event.target.closest('[data-open-decision]');
+  if (decisionChip) {
+    const round = Number(decisionChip.dataset.round);
+    if (Number.isInteger(round) && round > 0 && round !== Number(currentRound)) {
+      location.assign(roundPageUrl(round));
+    } else {
+      setActiveView('decision', { scrollTop: true });
+    }
+    return;
+  }
+  const roundTarget = event.target.closest('.stream-system-pill[data-round]');
+  if (!roundTarget) return;
+  const round = Number(roundTarget.dataset.round);
+  if (!Number.isInteger(round) || round < 1) return;
+  if (round === currentRound) setActiveView('decision', { scrollTop: true });
+  else location.assign(roundPageUrl(round));
+});
+
+let _composerBusy = false;
+function setComposerBusy(busy, label = '') {
+  _composerBusy = busy;
+  if ($streamSendBtn) $streamSendBtn.disabled = busy;
+  if ($streamFileInput) $streamFileInput.disabled = busy;
+  if ($streamSendStatus) $streamSendStatus.textContent = label;
+}
+
+async function postStreamMessage(text) {
+  const response = await fetch(apiUrl('/api/messages'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: SESSION, text }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.entry) throw new Error(data.error || `HTTP ${response.status}`);
+  // 成功响应后立刻本地追加，不等待下一次 3 秒轮询。
+  appendStreamEntries([data.entry], { advanceCursor: false });
+  return data.entry;
+}
+
+async function sendComposerText() {
+  if (_composerBusy) return;
+  const text = $streamInput?.value.trim() || '';
+  if (!text) return;
+  setComposerBusy(true, '发送中…');
+  try {
+    await postStreamMessage(text);
+    $streamInput.value = composerValueAfterSend($streamInput.value, text);
+    if (!$streamInput.value) $streamInput.style.height = '';
+    setComposerBusy(false, '');
+  } catch (error) {
+    setComposerBusy(false, `发送失败：${error.message}`);
+  }
+}
+
+$streamComposer?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void sendComposerText();
+});
+
+$streamInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $streamComposer?.requestSubmit();
+  }
+});
+
+$streamInput?.addEventListener('input', () => {
+  $streamInput.style.height = '';
+  $streamInput.style.height = `${Math.min(144, $streamInput.scrollHeight)}px`;
+});
+
+async function uploadAndSendFiles(files) {
+  const accepted = [...files].filter((file) => file && (
+    file.type.startsWith('image/') || file.type === 'application/pdf'
+  ));
+  if (!accepted.length) return;
+  setComposerBusy(true, `上传 0/${accepted.length}`);
+  try {
+    for (let index = 0; index < accepted.length; index += 1) {
+      const file = accepted[index];
+      setComposerBusy(true, `上传 ${index + 1}/${accepted.length}`);
+      const response = await fetch(apiUrl(`/api/attachments?session=${encodeURIComponent(SESSION)}`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type,
+          'X-File-Name': encodeURIComponent(file.name || 'attachment'),
+        },
+        body: file,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.url) throw new Error(data.error || `HTTP ${response.status}`);
+      await postStreamMessage(attachmentMessageMarkdown({
+        url: data.url,
+        name: file.name || '附件',
+        type: file.type,
+      }));
+    }
+    setComposerBusy(false, '');
+    _documentsCacheKey = '';
+  } catch (error) {
+    setComposerBusy(false, `上传失败：${error.message}`);
+  } finally {
+    if ($streamFileInput) $streamFileInput.value = '';
+  }
+}
+
+$streamFileInput?.addEventListener('change', () => {
+  void uploadAndSendFiles($streamFileInput.files || []);
+});
+
+$streamInput?.addEventListener('paste', (event) => {
+  const files = [...(event.clipboardData?.files || [])];
+  if (!files.length) return;
+  event.preventDefault();
+  void uploadAndSendFiles(files);
+});
+
+// ── 文档区 ───────────────────────────────────────────────
+async function loadDocumentsPanel() {
+  if (!$documentsMount || !_currentContent || !_latestRound) return;
+  const cacheKey = `${_latestRound}:${_streamEntriesData.length}:${_currentContent.meta?.docsUrl || ''}`;
+  if (_documentsCacheKey === cacheKey) return;
+  $documentsMount.innerHTML = '<p class="documents-loading">正在整理会话资产…</p>';
+  const rounds = [];
+  const contents = [];
+  const inventoryJob = fetch(apiUrl(`/api/assets?session=${encodeURIComponent(SESSION)}`))
+    .then((response) => (response.ok ? response.json() : { files: [] }))
+    .then((data) => (Array.isArray(data.files) ? data.files : []))
+    .catch(() => []);
+  const jobs = Array.from({ length: Number(_latestRound) }, (_, index) => index + 1).map(async (round) => {
+    try {
+      const response = await fetch(apiUrl(`/api/content?session=${encodeURIComponent(SESSION)}&round=${round}`));
+      if (!response.ok) return;
+      const content = await response.json();
+      contents.push(content);
+      rounds.push({ round, title: content.title, url: roundPageUrl(round) });
+    } catch { /* 单轮缺失不阻断资产页 */ }
+  });
+  const [inventory] = await Promise.all([inventoryJob, Promise.all(jobs)]);
+
+  const assets = [];
+  const seenAssetUrls = new Set();
+  for (const file of inventory) {
+    if (!file || typeof file.url !== 'string' || typeof file.path !== 'string') continue;
+    seenAssetUrls.add(file.url);
+    assets.push({ label: file.path, url: apiUrl(file.url) });
+  }
+  for (const asset of collectAssetLinks(contents, _streamEntriesData)) {
+    if (seenAssetUrls.has(asset.url)) continue;
+    seenAssetUrls.add(asset.url);
+    assets.push({
+      ...asset,
+      url: asset.url.startsWith('/assets/') ? apiUrl(asset.url) : asset.url,
+    });
+  }
+  const docsUrl = contentLink(_currentContent.meta?.docsUrl) || '';
+  $documentsMount.innerHTML = documentsPanelHtml({ docsUrl, assets, rounds });
+  _documentsCacheKey = cacheKey;
 }
 
 function escapeHtml(str) {
@@ -408,6 +858,44 @@ function restoreChecklistItem(blockId, itemId, label) {
 
 let _pinSeq = 0;
 
+function positionPinComment(blockId, pin, bubble) {
+  const overlay = $zones.querySelector(`svg.proto-overlay[data-proto-overlay="${blockId}"]`);
+  if (!overlay || !bubble) return;
+  const rect = overlay.getBoundingClientRect();
+  const anchor = {
+    x: rect.left + (Number(pin.xPct) / 100) * rect.width,
+    y: rect.top + (Number(pin.yPct) / 100) * rect.height,
+  };
+  const position = pinPopoverPosition(
+    anchor,
+    { width: window.innerWidth, height: window.innerHeight },
+    { width: bubble.offsetWidth || 280, height: bubble.offsetHeight || 120 },
+  );
+  bubble.style.position = 'fixed';
+  bubble.style.left = `${position.left}px`;
+  bubble.style.top = `${position.top}px`;
+  bubble.dataset.horizontal = position.horizontal;
+  bubble.dataset.vertical = position.vertical;
+}
+
+let _pinRepositionQueued = false;
+function repositionVisiblePinComments() {
+  if (_pinRepositionQueued) return;
+  _pinRepositionQueued = true;
+  requestAnimationFrame(() => {
+    _pinRepositionQueued = false;
+    $zones.querySelectorAll('.proto-pin-comment:not([hidden])').forEach((bubble) => {
+      positionPinComment(bubble.dataset.blockId, {
+        xPct: Number(bubble.dataset.xPct),
+        yPct: Number(bubble.dataset.yPct),
+      }, bubble);
+    });
+  });
+}
+
+window.addEventListener('resize', repositionVisiblePinComments);
+window.addEventListener('scroll', repositionVisiblePinComments, true);
+
 /**
  * 在 SVG overlay 上渲染（或更新）一个 pin。
  * pin: { id, xPct, yPct, text }
@@ -447,8 +935,6 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
     commentBubble.className = 'proto-pin-comment';
     commentBubble.dataset.pinId = pin.id;
     commentBubble.dataset.blockId = blockId;
-    // 定位：相对 proto-container，跟随百分比坐标
-    commentBubble.style.cssText = `position:absolute;left:calc(${cx}% + 16px);top:calc(${cy}% - 8px);z-index:10`;
     // 找 proto-container 挂载
     const container = $zones.querySelector(`.proto-container[data-proto="${blockId}"]`);
     if (container) {
@@ -456,6 +942,8 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
       container.appendChild(commentBubble);
     }
   }
+  commentBubble.dataset.xPct = String(cx);
+  commentBubble.dataset.yPct = String(cy);
 
   if (readMode && pin.text) {
     commentBubble.innerHTML = `<div class="proto-pin-read">
@@ -467,6 +955,7 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
     </div>`;
     commentBubble.hidden = false;
     bindPinBubbleActions(blockId, pin, commentBubble);
+    positionPinComment(blockId, pin, commentBubble);
   } else {
     commentBubble.innerHTML = `<div class="proto-pin-edit">
       <textarea class="proto-pin-input" data-pin-id="${pin.id}" rows="2" placeholder="写下批注…">${escapeHtml(pin.text || '')}</textarea>
@@ -477,6 +966,7 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
     </div>`;
     commentBubble.hidden = false;
     bindPinBubbleActions(blockId, pin, commentBubble);
+    positionPinComment(blockId, pin, commentBubble);
     commentBubble.querySelector('.proto-pin-input')?.focus();
   }
 
@@ -484,6 +974,7 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
   g.addEventListener('click', (e) => {
     e.stopPropagation();
     commentBubble.hidden = !commentBubble.hidden;
+    if (!commentBubble.hidden) positionPinComment(blockId, pin, commentBubble);
   });
 }
 
@@ -532,6 +1023,7 @@ function bindPinBubbleActions(blockId, pin, bubble) {
         </div>
       </div>`;
       bindPinBubbleActions(blockId, updated, bubble);
+      positionPinComment(blockId, updated, bubble);
     });
   }
 
@@ -548,6 +1040,7 @@ function bindPinBubbleActions(blockId, pin, bubble) {
         </div>
       </div>`;
       bindPinBubbleActions(blockId, pin, bubble);
+      positionPinComment(blockId, pin, bubble);
       bubble.querySelector('.proto-pin-input')?.focus();
     });
   }
@@ -1122,6 +1615,8 @@ function updateDecisionProgress() {
     }
   }
   updateFacetBadges();
+  updateMobileBadges();
+  refreshDecisionChip();
 }
 
 // ── tab 分面导航（DESIGN §15）─────────────────────────────
@@ -1301,22 +1796,29 @@ async function resolveLatestRound() {
 // 就地推进到新一轮：重置本轮 UI 状态 + 重新载入渲染（无需手动刷新/换链接）。
 async function advanceToRound(newRound) {
   currentRound = newRound;
+  _latestRound = Math.max(Number(_latestRound) || 0, newRound);
   $submitBtn.disabled = false;
   $submitBtn.textContent = '提交';
   updateSessionLabel();
   document.title = `第 ${newRound} 轮 — 振动编码工作台`;
   await loadAndRender();
+  await refreshLatestDecisionState();
   showToast(`AI 已生成第 ${newRound} 轮，已为你自动载入 ✦`);
 }
 
 // 启动：URL 不带 round → 解析为最新一轮；否则用 URL 指定的轮。
 async function bootstrap() {
   await loadSessions();
+  const resolvedLatest = await resolveLatestRound();
+  if (resolvedLatest != null) _latestRound = resolvedLatest;
   if (currentRound == null) {
-    currentRound = (await resolveLatestRound()) ?? 1;
+    currentRound = resolvedLatest ?? 1;
     updateSessionLabel();
   }
   await loadAndRender();
+  await refreshLatestDecisionState();
+  await loadStream({ initial: true });
+  setActiveView('decision');
 }
 
 // ── 状态轮询 ─────────────────────────────────────────────
@@ -1337,10 +1839,19 @@ async function pollStatus() {
 
     // 自动推进：仅在"跟随最新轮"模式（URL 未锁定 round）下，服务端出现更高轮次才就地载入
     const latest = status?.status?.round;
+    const latestChanged = Number.isInteger(latest) && latest !== _latestRound;
+    if (Number.isInteger(latest)) {
+      if (latestChanged) {
+        _documentsCacheKey = '';
+        _latestBlocks = [];
+      }
+      _latestRound = latest;
+    }
     if (FOLLOW_LATEST && Number.isInteger(latest) && currentRound != null && latest > currentRound) {
       await advanceToRound(latest);
       return;
     }
+    if (latestChanged) await refreshLatestDecisionState();
 
     const now = Date.now();
 
@@ -1372,11 +1883,20 @@ async function handleRetry(force = false) {
   await pollStatus();
 }
 
-// 每 3s 同步状态和其他参与者意见；只替换只读意见区，不重渲当前草稿。
-setInterval(() => {
-  void pollStatus();
-  void loadParticipantFeedback();
-}, 3000);
+// 每 3s 先同步最新轮状态，再并行拉增量消息与其他参与者意见。
+// 同一轮询周期不重入，避免慢网络下乱序覆盖游标。
+let _pollCycleRunning = false;
+async function pollCycle() {
+  if (_pollCycleRunning) return;
+  _pollCycleRunning = true;
+  try {
+    await pollStatus();
+    await Promise.all([loadParticipantFeedback(), loadStream()]);
+  } finally {
+    _pollCycleRunning = false;
+  }
+}
+setInterval(() => { void pollCycle(); }, 3000);
 
 // 决策进度：委托监听 $zones（一次绑定，innerHTML 重渲后仍生效）——决策类交互后刷新「已填 m/X」
 ['change', 'input', 'click'].forEach((evt) => {

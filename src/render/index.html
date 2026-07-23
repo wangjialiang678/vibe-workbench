@@ -22,18 +22,68 @@
     </div>
   </header>
 
-  <main id="main-content" class="main-content">
-    <div id="zones-mount"></div>
+  <main id="workspace-shell" class="workspace-shell" data-active-view="decision">
+    <aside id="stream-panel" class="stream-panel" aria-label="会话流">
+      <div class="stream-panel-head">
+        <div>
+          <p class="stream-panel-kicker">SESSION STREAM</p>
+          <h2>会话流</h2>
+        </div>
+        <span id="stream-connection" class="stream-connection" aria-live="polite">连接中</span>
+      </div>
+      <p id="stream-migration-hint" class="stream-migration-hint" hidden>历史留言可由管理员迁移进来</p>
+      <div id="stream-entries" class="stream-entries" role="log" aria-live="polite" aria-relevant="additions"></div>
+      <form id="stream-composer" class="stream-composer">
+        <label class="stream-composer-label" for="stream-input">发消息</label>
+        <textarea id="stream-input" class="stream-input" rows="1" maxlength="4000"
+          placeholder="输入消息，或粘贴截图…"></textarea>
+        <div class="stream-composer-actions">
+          <label class="stream-attach" title="上传图片或 PDF">
+            <input id="stream-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf" multiple>
+            <span aria-hidden="true">＋</span><span>附件</span>
+          </label>
+          <span id="stream-send-status" class="stream-send-status" aria-live="polite"></span>
+          <button id="stream-send-btn" class="stream-send-btn" type="submit">发送</button>
+        </div>
+      </form>
+    </aside>
 
-    <!-- 会话级常驻留言（iteration-brief P1）：不针对任何块的自由发言通道。
-         病例 6：用户被迫把给工作台的产品反馈挂在不相干块的批注里。 -->
-    <section id="session-comment" class="session-comment">
-      <h3 class="session-comment-h">💬 给 AI 留言（不针对任何具体块）</h3>
-      <p class="session-comment-hint">对整体的看法、对工作台本身的意见、或任何没地方说的话，写这里——会随本轮反馈一起回传。</p>
-      <textarea id="session-comment-input" class="session-comment-input" rows="3"
-        placeholder="例如：背景讲清楚了，但第 3 个决策我还是不懂 X 是什么；另外工作台能不能……"></textarea>
+    <div id="workspace-splitter" class="workspace-splitter" role="separator"
+      aria-label="调整会话流宽度" aria-orientation="vertical" tabindex="0"></div>
+
+    <section id="content-region" class="content-region">
+      <nav class="content-switch" aria-label="内容区">
+        <button class="content-switch-btn is-active" type="button" data-view="decision" aria-selected="true">决策</button>
+        <button class="content-switch-btn" type="button" data-view="documents" aria-selected="false">文档</button>
+      </nav>
+
+      <section id="decision-panel" class="content-panel decision-panel" data-content-view="decision">
+        <div id="zones-mount"></div>
+
+        <!-- 会话级常驻留言保留在决策区，提交协议与历史行为不变。 -->
+        <section id="session-comment" class="session-comment">
+          <h3 class="session-comment-h">💬 给 AI 留言（不针对任何具体块）</h3>
+          <p class="session-comment-hint">对整体的看法、对工作台本身的意见、或任何没地方说的话，写这里——会随本轮反馈一起回传。</p>
+          <textarea id="session-comment-input" class="session-comment-input" rows="3"
+            placeholder="例如：背景讲清楚了，但第 3 个决策我还是不懂 X 是什么；另外工作台能不能……"></textarea>
+        </section>
+      </section>
+
+      <section id="documents-panel" class="content-panel documents-panel" data-content-view="documents" hidden>
+        <div id="documents-mount" class="documents-mount"></div>
+      </section>
     </section>
   </main>
+
+  <nav class="mobile-tabs" aria-label="手机页面分区">
+    <button class="mobile-tab" type="button" data-view="stream">
+      <span>对话</span><span id="stream-unread-badge" class="mobile-tab-badge" hidden>0</span>
+    </button>
+    <button class="mobile-tab is-active" type="button" data-view="decision">
+      <span>决策</span><span id="decision-unread-badge" class="mobile-tab-badge" hidden>0</span>
+    </button>
+    <button class="mobile-tab" type="button" data-view="documents"><span>文档</span></button>
+  </nav>
 
   <!-- 提交前确认模态（§13 P0-1）：内容由 app.mjs 注入 -->
   <dialog id="confirm-dialog" class="confirm-dialog"></dialog>

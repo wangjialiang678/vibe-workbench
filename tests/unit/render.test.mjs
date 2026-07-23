@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mdToHtml } from '../../src/render/md.mjs';
 import {
   blockHtml,
@@ -10,6 +13,169 @@ import {
 } from '../../src/render/blocks.mjs';
 import { changeBadge, prevCompareHtml, diffToggleHtml } from '../../src/render/diff-view.mjs';
 import { renderZones } from '../../src/render/attention-view.mjs';
+import {
+  attachmentMessageMarkdown,
+  clampStreamPanelWidth,
+  composerValueAfterSend,
+  decisionChipHtml,
+  decisionChipForLatestReceipt,
+  pinPopoverPosition,
+  streamEntryHtml,
+} from '../../src/render/stream-view.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const renderIndex = readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
+
+// ---------- G2 会话流与三区布局 ----------
+
+test('render 页面包含桌面分栏、右区双切换与手机底部三标签', () => {
+  assert.match(renderIndex, /id="workspace-shell"[^>]*class="[^"]*workspace-shell/);
+  assert.match(renderIndex, /id="stream-panel"/);
+  assert.match(renderIndex, /id="workspace-splitter"/);
+  assert.match(renderIndex, /id="decision-panel"/);
+  assert.match(renderIndex, /id="documents-panel"/);
+  assert.match(renderIndex, /data-view="decision"/);
+  assert.match(renderIndex, /data-view="documents"/);
+  assert.match(renderIndex, /class="mobile-tab[^"]*"[^>]*data-view="stream"/);
+  assert.match(renderIndex, /class="mobile-tab[^"]*"[^>]*data-view="decision"/);
+  assert.match(renderIndex, /class="mobile-tab[^"]*"[^>]*data-view="documents"/);
+  assert.match(renderIndex, /id="stream-unread-badge"/);
+  assert.match(renderIndex, /id="decision-unread-badge"/);
+});
+
+test('streamEntryHtml：AI 左侧、自己右侧、他人左侧并显示名字', () => {
+  const ai = streamEntryHtml({
+    id: 'm-ai',
+    kind: 'message',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: '正在看。',
+  }, { viewerId: 'owner' });
+  const self = streamEntryHtml({
+    id: 'm-self',
+    kind: 'message',
+    author: { id: 'owner', name: 'Michael', role: 'owner' },
+    text: '收到。',
+  }, { viewerId: 'owner' });
+  const other = streamEntryHtml({
+    id: 'm-other',
+    kind: 'message',
+    author: { id: 'alice', name: '小艾', role: 'participant' },
+    text: '我补一句。',
+  }, { viewerId: 'owner' });
+
+  assert.match(ai, /stream-entry--left/);
+  assert.match(ai, /stream-entry--ai/);
+  assert.match(self, /stream-entry--right/);
+  assert.match(self, /stream-entry--self/);
+  assert.match(other, /stream-entry--left/);
+  assert.match(other, /stream-author[^>]*>小艾</);
+});
+
+test('streamEntryHtml：receipt 与 progress 使用各自醒目的居中样式类', () => {
+  const receipt = streamEntryHtml({
+    id: 'r1',
+    kind: 'receipt',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: '已出第 3 轮',
+    refs: { round: 3 },
+  });
+  const progress = streamEntryHtml({
+    id: 'p1',
+    kind: 'progress',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: 'SDK 托底：正在执行',
+  });
+
+  assert.match(receipt, /stream-entry--receipt/);
+  assert.match(receipt, /data-round="3"/);
+  assert.match(progress, /stream-entry--progress/);
+  assert.match(progress, /SDK 托底：正在执行/);
+});
+
+test('decisionChipHtml：仅最新轮 receipt 且有待确认决策时生成芯片', () => {
+  const entry = {
+    id: 'receipt-3',
+    kind: 'receipt',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: '已出第 3 轮',
+    refs: { round: 3 },
+  };
+
+  assert.match(
+    decisionChipHtml(entry, { latestRound: 3, pendingCount: 2 }),
+    /第 3 轮有 2 个决策待你确认/,
+  );
+  assert.equal(decisionChipHtml(entry, { latestRound: 2, pendingCount: 2 }), '');
+  assert.equal(decisionChipHtml(entry, { latestRound: 3, pendingCount: 0 }), '');
+  assert.equal(decisionChipHtml({ ...entry, kind: 'message' }, { latestRound: 3, pendingCount: 2 }), '');
+});
+
+test('decisionChipForLatestReceipt：同轮多个回执只保留最后一个芯片锚点', () => {
+  const entries = [
+    { id: 'receipt-old', kind: 'receipt', refs: { round: 2 } },
+    { id: 'receipt-latest-a', kind: 'receipt', refs: { round: 3 } },
+    { id: 'message-latest', kind: 'message', refs: { round: 3 } },
+    { id: 'receipt-latest-b', kind: 'receipt', refs: { round: 3 } },
+  ];
+  const model = decisionChipForLatestReceipt(entries, { latestRound: 3, pendingCount: 4 });
+
+  assert.equal(model.entryId, 'receipt-latest-b');
+  assert.match(model.html, /第 3 轮有 4 个决策待你确认/);
+  assert.equal(decisionChipForLatestReceipt(entries, { latestRound: 3, pendingCount: 0 }), null);
+});
+
+test('clampStreamPanelWidth：窗口缩窄时会重新夹取已保存宽度', () => {
+  assert.equal(clampStreamPanelWidth(540, 1400), 540);
+  assert.equal(clampStreamPanelWidth(540, 900), 380);
+  assert.equal(clampStreamPanelWidth(120, 1400), 288);
+});
+
+test('composerValueAfterSend：仅清空本次已发送文本，不覆盖等待期间的新输入', () => {
+  assert.equal(composerValueAfterSend('第一条', '第一条'), '');
+  assert.equal(composerValueAfterSend('正在写第二条', '第一条'), '正在写第二条');
+});
+
+test('attachmentMessageMarkdown：图片生成图片 Markdown，PDF 生成链接 Markdown', () => {
+  assert.equal(
+    attachmentMessageMarkdown({
+      url: '/assets/demo/uploads/shot-1.png',
+      name: '界面截图.png',
+      type: 'image/png',
+    }),
+    '![界面截图.png](/assets/demo/uploads/shot-1.png)',
+  );
+  assert.equal(
+    attachmentMessageMarkdown({
+      url: '/assets/demo/uploads/spec-1.pdf',
+      name: '需求说明.pdf',
+      type: 'application/pdf',
+    }),
+    '[需求说明.pdf](/assets/demo/uploads/spec-1.pdf)',
+  );
+});
+
+test('pinPopoverPosition：默认锚在 pin 附近，视口右下角自动向左上翻转', () => {
+  assert.deepEqual(
+    pinPopoverPosition(
+      { x: 100, y: 200 },
+      { width: 1000, height: 800 },
+      { width: 280, height: 120 },
+    ),
+    { left: 114, top: 188, horizontal: 'right', vertical: 'below' },
+  );
+
+  const flipped = pinPopoverPosition(
+    { x: 980, y: 790 },
+    { width: 1000, height: 800 },
+    { width: 280, height: 120 },
+  );
+  assert.deepEqual(flipped, {
+    left: 686,
+    top: 658,
+    horizontal: 'left',
+    vertical: 'above',
+  });
+});
 
 // ---------- mdToHtml ----------
 
@@ -80,6 +246,20 @@ test('mdToHtml: link [t](u)', () => {
   assert.ok(out.includes('<a '), `expected <a> in: ${out}`);
   assert.ok(out.includes('href="https://example.com"'), `expected href in: ${out}`);
   assert.ok(out.includes('链接'), `expected text in: ${out}`);
+});
+
+test('mdToHtml: attachment image markdown renders safe lazy image', () => {
+  const out = mdToHtml('![截图](/assets/demo/uploads/screen.png)');
+  assert.match(out, /<img class="md-image"/);
+  assert.match(out, /src="\/assets\/demo\/uploads\/screen\.png"/);
+  assert.match(out, /alt="截图"/);
+  assert.match(out, /loading="lazy"/);
+});
+
+test('mdToHtml: unsafe link protocols are neutralized', () => {
+  const out = mdToHtml('[危险链接](javascript:alert(1))');
+  assert.match(out, /href="#"/);
+  assert.doesNotMatch(out, /href="javascript:/);
 });
 
 test('mdToHtml: escapes < > &', () => {
