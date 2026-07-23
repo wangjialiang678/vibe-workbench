@@ -944,6 +944,53 @@ body {
   font-weight: 600;
 }
 
+/* Markdown 表格：保留 Markdown 作为源数据，浏览器端生成可读、可横向滚动的 HTML。 */
+.md-table-scroll {
+  max-width: 100%;
+  margin: 1.2em 0;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  -webkit-overflow-scrolling: touch;
+}
+
+.md-table-scroll:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.md-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.md-table th,
+.md-table td {
+  max-width: 32rem;
+  padding: 9px 12px;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.md-table th:last-child,
+.md-table td:last-child { border-right: 0; }
+.md-table tbody tr:last-child td { border-bottom: 0; }
+.md-table th {
+  background: var(--color-bg);
+  font-weight: 650;
+}
+.md-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--color-bg) 60%, transparent); }
+.md-table .md-align-center { text-align: center; }
+.md-table .md-align-right { text-align: right; }
+.md-table .md-align-left { text-align: left; }
+
 /* ===== Code ===== */
 .code-block {
   background: var(--color-bg);

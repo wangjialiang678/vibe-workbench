@@ -76,6 +76,8 @@ workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标�
 
 设置 `WORKBENCH_REMOTE_URL` 时该命令与 `present` 一样只写远程工作台；每次发布或更新都会向会话流追加「文档已更新」回执。
 
+文档库始终以 Markdown 文件作为单一信息源，不另存一份容易漂移的 HTML；阅读页在浏览器端按需生成安全的语义化 HTML。GFM 表格会渲染为带表头、对齐和边框的表格，窄屏上可横向滚动。
+
 可选设置 `WORKBENCH_EVENT_WEBHOOK`。服务端在新轮次成功落盘、反馈成功提交或新消息落流后，分别异步 POST `round-presented` / `feedback-submitted` / `message-posted` 事件；单次投递 5 秒超时，失败只记日志，不改变主请求结果。
 
 ## Hybrid 驱动与 SDK 托底标注

@@ -16,7 +16,7 @@
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
 - [frontend] 桌面会话流可拖分栏、决策/文档切换、手机对话/决策/文档三标签与未读角标
 - [frontend] 消息分侧、receipt/progress、增量轮询、附件 Markdown、最新轮决策芯片、pin 浮层边缘翻转
-- [frontend] 文档按类目分组、Markdown 单篇阅读（含图片）、历史轮次移入决策区；pin 使用容器坐标且布局变化不脱锚
+- [frontend] 文档按类目分组、Markdown 单篇阅读（含图片与响应式 GFM 表格）、历史轮次移入决策区；pin 使用容器坐标且布局变化不脱锚
 - [templates] think-discuss / dev-review 产出合协议、决策块元数据正确
 - [CLI] workbench render 写入 + status=rendered；--help
 - [CLI] workbench doc-publish 本地/WORKBENCH_REMOTE_URL 远程发布与更新

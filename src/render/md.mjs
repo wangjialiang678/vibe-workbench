@@ -1,5 +1,5 @@
 // 极简 markdown → HTML 转换器。浏览器安全，无 node 依赖，纯函数。
-// 支持：# ## 标题、**粗体**、`代码`、```围栏代码块、- 列表、链接、图片、段落/换行。
+// 支持：# ## 标题、**粗体**、`代码`、```围栏代码块、- 列表、GFM 表格、链接、图片、段落/换行。
 // 先转义 < > &，再处理 md 语法，保证 XSS 安全。
 
 function escapeHtml(str) {
@@ -30,6 +30,96 @@ function inlineConvert(escaped) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+function hasTablePipe(value) {
+  let inCode = false;
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i];
+    if (char === '\\' && value[i + 1] === '|') {
+      i += 1;
+      continue;
+    }
+    if (char === '`') inCode = !inCode;
+    else if (char === '|' && !inCode) return true;
+  }
+  return false;
+}
+
+function splitTableRow(value) {
+  let row = String(value ?? '').trim();
+  if (row.startsWith('|')) row = row.slice(1);
+  if (row.endsWith('|') && !row.endsWith('\\|')) row = row.slice(0, -1);
+
+  const cells = [];
+  let cell = '';
+  let inCode = false;
+
+  for (let i = 0; i < row.length; i += 1) {
+    const char = row[i];
+    if (char === '\\' && row[i + 1] === '|') {
+      cell += '|';
+      i += 1;
+      continue;
+    }
+    if (char === '`') {
+      inCode = !inCode;
+      cell += char;
+      continue;
+    }
+    if (char === '|' && !inCode) {
+      cells.push(cell.trim());
+      cell = '';
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function tableAlignment(delimiter) {
+  const value = delimiter.trim();
+  if (!/^:?-{3,}:?$/.test(value)) return undefined;
+  if (value.startsWith(':') && value.endsWith(':')) return 'center';
+  if (value.endsWith(':')) return 'right';
+  if (value.startsWith(':')) return 'left';
+  return '';
+}
+
+function tableCellHtml(tag, value, alignment) {
+  const className = alignment ? ` class="md-align-${alignment}"` : '';
+  return `<${tag}${className}>${inlineConvert(escapeHtml(value))}</${tag}>`;
+}
+
+function tableAt(lines, start) {
+  if (start + 1 >= lines.length || !hasTablePipe(lines[start])) return null;
+
+  const headers = splitTableRow(lines[start]);
+  const delimiters = splitTableRow(lines[start + 1]);
+  if (!headers.length || headers.length !== delimiters.length) return null;
+
+  const alignments = delimiters.map(tableAlignment);
+  if (alignments.some((alignment) => alignment === undefined)) return null;
+
+  const rows = [];
+  let end = start + 2;
+  while (end < lines.length && lines[end].trim() !== '' && hasTablePipe(lines[end])) {
+    const cells = splitTableRow(lines[end]).slice(0, headers.length);
+    while (cells.length < headers.length) cells.push('');
+    rows.push(cells);
+    end += 1;
+  }
+
+  const thead = `<thead><tr>${headers.map((cell, index) => tableCellHtml('th', cell, alignments[index])).join('')}</tr></thead>`;
+  const tbody = rows.length
+    ? `<tbody>${rows.map((row) => `<tr>${row.map((cell, index) => tableCellHtml('td', cell, alignments[index])).join('')}</tr>`).join('')}</tbody>`
+    : '';
+
+  return {
+    end,
+    html: `<div class="md-table-scroll" role="region" aria-label="Markdown 表格" tabindex="0"><table class="md-table">${thead}${tbody}</table></div>`,
+  };
+}
+
 export function mdToHtml(src) {
   if (!src) return '';
   const lines = src.split('\n');
@@ -55,6 +145,15 @@ export function mdToHtml(src) {
       continue;
     }
     if (inFence) { fenceBuf.push(esc); continue; }
+
+    // GFM 表格：Markdown 仍是源数据，HTML 只负责语义化与响应式展示。
+    const table = tableAt(lines, i);
+    if (table) {
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push(table.html);
+      i = table.end - 1;
+      continue;
+    }
 
     // 标题
     const h2 = esc.match(/^## (.+)/);

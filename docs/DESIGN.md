@@ -113,7 +113,7 @@ vibecoding 工作台/
 ## 3. 渲染器（FR-2）
 
 - `blocks.mjs`：导出 `renderBlock(block) -> HTMLElement`，按 type 分派；纯函数、无副作用、可单测（jsdom-free：用字符串/DOM 断言）。
-- markdown：内置极简 md→HTML（标题/列表/粗体/代码/换行/链接），避免外部依赖。
+- markdown：Markdown 是持久化的单一信息源，浏览器按需派生安全 HTML；内置 md→HTML 支持标题/列表/粗体/代码/换行/链接/图片和 GFM 表格（含对齐与窄屏横向滚动），避免外部依赖。
 - diagram：输出 `<pre class="mermaid">{src}</pre>`，页面加载后 `mermaid.run()`；`rationale` 折叠。
 - choice/verdict/freetext/editable：受控控件，状态写入 localStorage 草稿（键 `wb:<session>:<round>:fb`）。
 - 每个 block 外层带 `data-block-id`、`data-change`（diff）、`data-zone`（注意力分区）。

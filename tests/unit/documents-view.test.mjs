@@ -55,6 +55,23 @@ test('单篇文档用 mdToHtml 渲染正文与图片，并提供返回列表入�
   assert.match(html, /src="\/assets\/demo\/uploads\/home\.png"/);
 });
 
+test('单篇文档把 Markdown 表格渲染为可横向滚动的语义化 HTML 表格', () => {
+  const html = documentsPanelHtml({
+    selectedDocument: {
+      category: '需求',
+      slug: 'platform',
+      title: '平台需求',
+      body: '| 层 | 项目 |\n| --- | --- |\n| L1 | 工作台 |',
+    },
+  });
+
+  assert.match(html, /<div class="document-body">/);
+  assert.match(html, /class="md-table-scroll"/);
+  assert.match(html, /<table class="md-table">/);
+  assert.match(html, /<th>层<\/th><th>项目<\/th>/);
+  assert.match(html, /<td>L1<\/td><td>工作台<\/td>/);
+});
+
 test('历史轮次从文档区移到决策区底部折叠区', () => {
   const decisionStart = renderIndex.indexOf('id="decision-panel"');
   const decisionEnd = renderIndex.indexOf('id="documents-panel"');

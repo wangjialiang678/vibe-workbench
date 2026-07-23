@@ -341,6 +341,33 @@ test('mdToHtml: escapes & ampersand', () => {
   assert.ok(out.includes('&amp;'), `expected &amp; in: ${out}`);
 });
 
+test('mdToHtml: GFM table renders semantic HTML with responsive wrapper and alignment', () => {
+  const out = mdToHtml([
+    '| 左对齐 | 居中 | 右对齐 |',
+    '| :--- | :---: | ---: |',
+    '| **粗体** | `代码` | 42 |',
+  ].join('\n'));
+
+  assert.match(out, /class="md-table-scroll"/);
+  assert.match(out, /<table class="md-table">/);
+  assert.match(out, /<thead><tr><th class="md-align-left">左对齐<\/th><th class="md-align-center">居中<\/th><th class="md-align-right">右对齐<\/th><\/tr><\/thead>/);
+  assert.match(out, /<tbody><tr><td class="md-align-left"><strong>粗体<\/strong><\/td><td class="md-align-center"><code>代码<\/code><\/td><td class="md-align-right">42<\/td><\/tr><\/tbody>/);
+});
+
+test('mdToHtml: table supports escaped pipes, pads short rows, and remains XSS safe', () => {
+  const out = mdToHtml([
+    '| 字段 | 值 |',
+    '| --- | --- |',
+    '| A \\| B | <script>alert(1)</script> |',
+    '| 只有一列 |',
+  ].join('\n'));
+
+  assert.match(out, /<td>A \| B<\/td>/);
+  assert.match(out, /<td>&lt;script&gt;alert\(1\)&lt;\/script&gt;<\/td>/);
+  assert.match(out, /<tr><td>只有一列<\/td><td><\/td><\/tr>/);
+  assert.doesNotMatch(out, /<script>/);
+});
+
 // ---------- blockHtml ----------
 
 test('blockHtml: markdown type renders md content', () => {
