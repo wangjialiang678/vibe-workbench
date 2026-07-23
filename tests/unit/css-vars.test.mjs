@@ -20,3 +20,10 @@ test('app.css 定义了亮/暗两套 --color-* 且暗色覆盖关键色', () => 
     assert.ok(css.includes(v), `应定义 ${v}`);
   }
 });
+
+test('云端 worker 在线状态使用既有绿色状态变量', () => {
+  assert.match(
+    css,
+    /\.status-worker-online\s*\{[^}]*--color-status-ok[^}]*\}/s,
+  );
+});

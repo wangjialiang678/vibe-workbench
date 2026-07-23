@@ -54,6 +54,8 @@ const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 // JSON 控制字符最坏会膨胀为 \uXXXX（6 倍）；业务限额仍按解析后的正文 UTF-8 字节判断。
 const DOCUMENT_REQUEST_LIMIT = (DOCUMENT_BODY_LIMIT * 6) + (64 * 1024);
 const WEBHOOK_TIMEOUT_MS = 5000;
+const WORKER_HEARTBEAT_BODY_LIMIT = 8 * 1024;
+export const WORKER_HEARTBEAT_STALE_MS = 90 * 1000;
 const AI_IDENTITY = Object.freeze({ id: 'ai', name: 'AI', role: 'ai' });
 const ATTACHMENT_TYPES = new Map([
   ['image/png', '.png'],
@@ -342,6 +344,16 @@ function publicParticipant(participant) {
   return { id, name, createdAt };
 }
 
+function workerPresence(runtimeState, now = Date.now()) {
+  const heartbeat = runtimeState.workerHeartbeat;
+  const at = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
+  const age = now - at;
+  return {
+    workerOnline: Number.isFinite(at) && age >= 0 && age < WORKER_HEARTBEAT_STALE_MS,
+    workerLabel: heartbeat?.label || null,
+  };
+}
+
 function participantInviteUrl(req, token) {
   const target = new URL('/render/', requestOrigin(req));
   target.searchParams.set('token', token);
@@ -539,7 +551,14 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
 }
 
 // ---- request handler ----
-function handleRequest(req, res, expectedToken = '', eventWebhook = '', participantsFile = DEFAULT_PARTICIPANTS_FILE) {
+function handleRequest(
+  req,
+  res,
+  expectedToken = '',
+  eventWebhook = '',
+  participantsFile = DEFAULT_PARTICIPANTS_FILE,
+  runtimeState = { workerHeartbeat: null },
+) {
   const method = req.method.toUpperCase();
   const rawUrl = req.url || '/';
   const requestUrl = new URL(rawUrl, 'http://localhost');
@@ -590,6 +609,38 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
   // --- API routes ---
   if (urlPath === '/api/health') {
     json(res, 200, { ok: true, ts: Date.now() });
+    return;
+  }
+
+  if (urlPath === '/api/worker-heartbeat' && method === 'POST') {
+    // 该端点只服务于持有管理员口令的常驻 worker；本地兼容 owner 身份不能写入。
+    if (!expectedToken || identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员 worker 可上报心跳' });
+      return;
+    }
+    readBody(req, WORKER_HEARTBEAT_BODY_LIMIT).then((body) => {
+      const at = typeof body?.at === 'string' ? Date.parse(body.at) : NaN;
+      const label = body?.label;
+      if (!Number.isFinite(at)) {
+        json(res, 400, { ok: false, error: 'at 必须是有效时间' });
+        return;
+      }
+      if (label != null && (typeof label !== 'string' || !label.trim() || label.trim().length > 100)) {
+        json(res, 400, { ok: false, error: 'label 必须是 1—100 字符的字符串' });
+        return;
+      }
+      runtimeState.workerHeartbeat = {
+        at: new Date(at).toISOString(),
+        ...(label == null ? {} : { label: label.trim() }),
+      };
+      json(res, 200, { ok: true, ...runtimeState.workerHeartbeat });
+    }).catch((error) => {
+      if (error?.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { ok: false, error: '心跳请求体过大' });
+        return;
+      }
+      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+    });
     return;
   }
 
@@ -999,8 +1050,14 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
   if (urlPath === '/api/status' && method === 'GET') {
     const { session } = parseQuery(rawUrl);
     const status = session ? readStatus(session) : null;
+    const worker = workerPresence(runtimeState);
     if (!status) {
-      json(res, 200, { ok: true, status: null, display: 'unknown' });
+      json(res, 200, {
+        ok: true,
+        status: null,
+        display: 'unknown',
+        ...worker,
+      });
       return;
     }
     const roundError = status.state === 'error' && Number.isInteger(status.round)
@@ -1012,7 +1069,13 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
     const display = displayState(responseStatus, now);
     const hb = responseStatus.heartbeatAt ? Date.parse(responseStatus.heartbeatAt) : NaN;
     const stale = !Number.isFinite(hb) || (now - hb) > HEARTBEAT_STALE_MS;
-    json(res, 200, { ok: true, status: responseStatus, display, stale });
+    json(res, 200, {
+      ok: true,
+      status: responseStatus,
+      display,
+      stale,
+      ...worker,
+    });
     return;
   }
 
@@ -1274,10 +1337,18 @@ export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAU
   const listenHost = host || '127.0.0.1';
   const token = process.env.WORKBENCH_TOKEN || '';
   const eventWebhook = process.env.WORKBENCH_EVENT_WEBHOOK || '';
+  const runtimeState = { workerHeartbeat: null };
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
     throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   }
-  const server = http.createServer((req, res) => handleRequest(req, res, token, eventWebhook, participantsFile));
+  const server = http.createServer((req, res) => handleRequest(
+    req,
+    res,
+    token,
+    eventWebhook,
+    participantsFile,
+    runtimeState,
+  ));
   const listenPort = port != null ? port : (parseInt(process.env.PORT, 10) || 8099);
   server.listen(listenPort, listenHost);
   return server;

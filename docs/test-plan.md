@@ -13,6 +13,7 @@
 - [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events（message/progress/receipt）、受保护附件上传
 - [backend] 云端文档库分类存储、管理员发布/更新、列表/单篇读取、校验与更新回执
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
+- [backend] 常驻 worker 管理员心跳 + 90 秒在线判定、本机 webhook 即时唤醒、60 秒轮询兜底、同轮重新提交
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
 - [frontend] 桌面会话流可拖分栏、决策/文档切换、手机对话/决策/文档三标签与未读角标
 - [frontend] 消息分侧、receipt/progress、增量轮询、附件 Markdown、最新轮决策芯片、pin 浮层边缘翻转
@@ -48,4 +49,5 @@
 | participant CLI | tests/e2e/bin.test.mjs、tests/e2e/present.test.mjs | 本地/远程 add/list/revoke | [CLI] |
 | 导航/meta | tests/unit/protocol.test.mjs、tests/e2e/present.test.mjs | meta.docsUrl 校验、会话列表与设计资产数据流 | [frontend] |
 | FR-4/6 回路 | tests/e2e/loop.test.mjs | 对账/幂等/error/心跳 | [scenario] |
+| 云端常驻 worker | tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs、tests/unit/status-bar.test.mjs | 心跳鉴权/过期、在线横幅、推送唤醒、兜底轮询、同轮二次提交 | [backend]/[frontend] |
 | CLI | tests/e2e/bin.test.mjs | render/help | [CLI] |

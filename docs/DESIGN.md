@@ -236,7 +236,8 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
 | POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
 | GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；无反馈则 HTTP 200 + `pending:true` |
-| GET `/api/status?session=` | 返回 status.json + 心跳新鲜度 |
+| GET `/api/status?session=` | 返回 status.json、本地驱动心跳新鲜度，以及 `workerOnline` / `workerLabel` |
+| POST `/api/worker-heartbeat` | 仅口令门内管理员可写；记录常驻 worker 的 `{at,label?}`，90 秒未更新即离线 |
 | POST `/api/retry?session=&round=` | 重置该轮为 submitted（清 ack/error） |
 | GET `/api/sessions` | 列出 workspace 下会话（dev 用） |
 | GET/POST `/api/participants` | 管理员脱敏列表 / 新增参与者并返回完整邀请链接 |
@@ -255,7 +256,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，默认 `wait` 每 3 秒轮询云端 feedback；显式 `wait --events` 同时增量轮询 messages，任一新事件即返回。`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
 
-事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘、feedback 成功落盘和 message 成功落流后异步 POST 最小事件 JSON。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。
+事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘、feedback 成功落盘和 message 成功落流后异步 POST 最小事件 JSON。云端常驻 worker 固定在 `127.0.0.1:WORKER_EVENT_PORT`（默认 8097）接收这些事件并立即检查指定 session；60 秒全量轮询仅用于 webhook 丢失兜底。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。worker 另以 30 秒周期写管理员心跳，页面优先据此展示云端 AI 在线状态。
 
 远程写入的 session 限 80 字符且必须匹配 `/^[A-Za-z0-9._-]+$/`（另拒绝 `.` / `..`）。服务端对点号 session 使用精确目录，避免与下划线名称碰撞；本地默认路径仍兼容旧版“点号转下划线”的既有 workspace，精确目录一旦存在则自动跟随。
 
