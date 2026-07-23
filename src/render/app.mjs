@@ -5,14 +5,14 @@ import { renderZones } from './attention-view.mjs';
 import { participantFeedbackHtml } from './blocks.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
+import { documentsPanelHtml, historyRoundsHtml } from './documents-view.mjs';
 import {
   attachmentMessageMarkdown,
   clampStreamPanelWidth,
   collectAssetLinks,
   composerValueAfterSend,
+  containerPinPopoverPosition,
   decisionChipForLatestReceipt,
-  documentsPanelHtml,
-  pinPopoverPosition,
   streamEntryHtml,
 } from './stream-view.mjs';
 import {
@@ -66,6 +66,7 @@ const $streamFileInput = document.getElementById('stream-file-input');
 const $streamSendBtn = document.getElementById('stream-send-btn');
 const $streamSendStatus = document.getElementById('stream-send-status');
 const $documentsMount = document.getElementById('documents-mount');
+const $historyRoundsMount = document.getElementById('history-rounds-mount');
 const $streamUnreadBadge = document.getElementById('stream-unread-badge');
 const $decisionUnreadBadge = document.getElementById('decision-unread-badge');
 
@@ -125,6 +126,7 @@ if ($sessionComment) {
 // ── 桌面分栏 / 手机三区切换 ───────────────────────────────
 let _activeView = 'decision';
 let _streamUnread = 0;
+let _pinRepositionQueued = false;
 
 function isNarrowScreen() {
   return typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches;
@@ -176,11 +178,14 @@ function setActiveView(view, { scrollTop = false } = {}) {
     });
   }
   if (view === 'documents') void loadDocumentsPanel();
-  if (view === 'decision' && scrollTop) {
-    requestAnimationFrame(() => {
-      if (isNarrowScreen()) window.scrollTo({ top: 0, behavior: 'smooth' });
-      else document.getElementById('content-region')?.scrollTo({ top: 0, behavior: 'smooth' });
-    });
+  if (view === 'decision') {
+    repositionVisiblePinComments();
+    if (scrollTop) {
+      requestAnimationFrame(() => {
+        if (isNarrowScreen()) window.scrollTo({ top: 0, behavior: 'smooth' });
+        else document.getElementById('content-region')?.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
   }
   updateMobileBadges();
 }
@@ -205,6 +210,7 @@ function applyStreamWidth(value, { persist = false } = {}) {
     _preferredStreamWidth = Math.round(width);
     try { localStorage.setItem(splitWidthKey, String(Math.round(width))); } catch { /* 忽略 */ }
   }
+  repositionVisiblePinComments();
 }
 
 try {
@@ -390,6 +396,8 @@ let _latestBlocks = [];  // 最新轮 blocks；锁定历史轮时供流内决策
 let _sectionData = null; // content.sections（tab 分面类目顺序，可空）
 let _currentContent = null;
 let _documentsCacheKey = '';
+let _documentsViewModel = null;
+let _historyRoundsCacheKey = '';
 
 async function loadAndRender() {
   let data;
@@ -713,47 +721,112 @@ $streamInput?.addEventListener('paste', (event) => {
   void uploadAndSendFiles(files);
 });
 
-// ── 文档区 ───────────────────────────────────────────────
+// ── 云端文档库 / 历史轮次 ────────────────────────────────
+
+function renderDocumentsPanel(selectedDocument = null) {
+  if (!$documentsMount || !_documentsViewModel) return;
+  const template = document.createElement('template');
+  template.innerHTML = documentsPanelHtml({ ..._documentsViewModel, selectedDocument });
+  // Markdown 正文中的会话图片也要继承页面 token。
+  template.content.querySelectorAll('[src^="/assets/"], [href^="/assets/"]').forEach((element) => {
+    const attribute = element.hasAttribute('src') ? 'src' : 'href';
+    element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
+  });
+  $documentsMount.replaceChildren(template.content);
+}
+
 async function loadDocumentsPanel() {
-  if (!$documentsMount || !_currentContent || !_latestRound) return;
-  const cacheKey = `${_latestRound}:${_streamEntriesData.length}:${_currentContent.meta?.docsUrl || ''}`;
-  if (_documentsCacheKey === cacheKey) return;
-  $documentsMount.innerHTML = '<p class="documents-loading">正在整理会话资产…</p>';
+  if (!$documentsMount || !_currentContent) return;
+  const cacheKey = `${_streamEntriesData.length}:${_currentContent.meta?.docsUrl || ''}`;
+  if (_documentsCacheKey === cacheKey && _documentsViewModel) return;
+  $documentsMount.innerHTML = '<p class="documents-loading">正在读取云端文档库…</p>';
+
+  try {
+    const [documentsResponse, inventoryResponse] = await Promise.all([
+      fetch(apiUrl(`/api/documents?session=${encodeURIComponent(SESSION)}`)),
+      fetch(apiUrl(`/api/assets?session=${encodeURIComponent(SESSION)}`)),
+    ]);
+    if (!documentsResponse.ok) throw new Error(`HTTP ${documentsResponse.status}`);
+    const documentsData = await documentsResponse.json();
+    const inventoryData = inventoryResponse.ok ? await inventoryResponse.json() : { files: [] };
+    const inventory = Array.isArray(inventoryData.files) ? inventoryData.files : [];
+
+    const assets = [];
+    const seenAssetUrls = new Set();
+    for (const file of inventory) {
+      if (!file || typeof file.url !== 'string' || typeof file.path !== 'string') continue;
+      seenAssetUrls.add(file.url);
+      assets.push({ label: file.path, url: apiUrl(file.url) });
+    }
+    for (const asset of collectAssetLinks([_currentContent], _streamEntriesData)) {
+      if (seenAssetUrls.has(asset.url)) continue;
+      seenAssetUrls.add(asset.url);
+      assets.push({
+        ...asset,
+        url: asset.url.startsWith('/assets/') ? apiUrl(asset.url) : asset.url,
+      });
+    }
+
+    _documentsViewModel = {
+      docsUrl: contentLink(_currentContent.meta?.docsUrl) || '',
+      assets,
+      documents: Array.isArray(documentsData.documents) ? documentsData.documents : [],
+    };
+    _documentsCacheKey = cacheKey;
+    renderDocumentsPanel();
+  } catch (error) {
+    $documentsMount.innerHTML = `<p class="load-error">加载文档库失败：${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function openDocument(category, slug) {
+  if (!$documentsMount || !slug) return;
+  $documentsMount.innerHTML = '<p class="documents-loading">正在打开文档…</p>';
+  const query = new URLSearchParams({ session: SESSION, slug });
+  if (category) query.set('category', category);
+
+  try {
+    const response = await fetch(apiUrl(`/api/documents?${query}`));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.document) throw new Error(data.error || `HTTP ${response.status}`);
+    renderDocumentsPanel(data.document);
+  } catch (error) {
+    $documentsMount.innerHTML = `<div class="document-reader-error">
+      <button class="document-back" type="button" data-document-back>← 返回文档库</button>
+      <p class="load-error">打开文档失败：${escapeHtml(error.message)}</p>
+    </div>`;
+  }
+}
+
+$documentsMount?.addEventListener('click', (event) => {
+  const back = event.target.closest('[data-document-back]');
+  if (back) {
+    renderDocumentsPanel();
+    return;
+  }
+  const target = event.target.closest('[data-document-slug]');
+  if (!target) return;
+  void openDocument(target.dataset.documentCategory, target.dataset.documentSlug);
+});
+
+async function loadHistoryRounds({ force = false } = {}) {
+  if (!$historyRoundsMount) return;
+  const cacheKey = String(Number(_latestRound) || 0);
+  if (!force && _historyRoundsCacheKey === cacheKey) return;
+  $historyRoundsMount.innerHTML = '<p class="documents-loading">正在读取历史轮次…</p>';
+
   const rounds = [];
-  const contents = [];
-  const inventoryJob = fetch(apiUrl(`/api/assets?session=${encodeURIComponent(SESSION)}`))
-    .then((response) => (response.ok ? response.json() : { files: [] }))
-    .then((data) => (Array.isArray(data.files) ? data.files : []))
-    .catch(() => []);
-  const jobs = Array.from({ length: Number(_latestRound) }, (_, index) => index + 1).map(async (round) => {
+  const jobs = Array.from({ length: Number(_latestRound) || 0 }, (_, index) => index + 1).map(async (round) => {
     try {
       const response = await fetch(apiUrl(`/api/content?session=${encodeURIComponent(SESSION)}&round=${round}`));
       if (!response.ok) return;
       const content = await response.json();
-      contents.push(content);
       rounds.push({ round, title: content.title, url: roundPageUrl(round) });
-    } catch { /* 单轮缺失不阻断资产页 */ }
+    } catch { /* 单轮缺失不阻断归档 */ }
   });
-  const [inventory] = await Promise.all([inventoryJob, Promise.all(jobs)]);
-
-  const assets = [];
-  const seenAssetUrls = new Set();
-  for (const file of inventory) {
-    if (!file || typeof file.url !== 'string' || typeof file.path !== 'string') continue;
-    seenAssetUrls.add(file.url);
-    assets.push({ label: file.path, url: apiUrl(file.url) });
-  }
-  for (const asset of collectAssetLinks(contents, _streamEntriesData)) {
-    if (seenAssetUrls.has(asset.url)) continue;
-    seenAssetUrls.add(asset.url);
-    assets.push({
-      ...asset,
-      url: asset.url.startsWith('/assets/') ? apiUrl(asset.url) : asset.url,
-    });
-  }
-  const docsUrl = contentLink(_currentContent.meta?.docsUrl) || '';
-  $documentsMount.innerHTML = documentsPanelHtml({ docsUrl, assets, rounds });
-  _documentsCacheKey = cacheKey;
+  await Promise.all(jobs);
+  $historyRoundsMount.innerHTML = historyRoundsHtml(rounds);
+  _historyRoundsCacheKey = cacheKey;
 }
 
 function escapeHtml(str) {
@@ -862,23 +935,27 @@ function positionPinComment(blockId, pin, bubble) {
   const overlay = $zones.querySelector(`svg.proto-overlay[data-proto-overlay="${blockId}"]`);
   if (!overlay || !bubble) return;
   const rect = overlay.getBoundingClientRect();
-  const anchor = {
-    x: rect.left + (Number(pin.xPct) / 100) * rect.width,
-    y: rect.top + (Number(pin.yPct) / 100) * rect.height,
-  };
-  const position = pinPopoverPosition(
-    anchor,
-    { width: window.innerWidth, height: window.innerHeight },
+  const position = containerPinPopoverPosition(
+    { width: rect.width, height: rect.height },
+    pin,
     { width: bubble.offsetWidth || 280, height: bubble.offsetHeight || 120 },
+    {
+      // 把视口可见区换算为 overlay 内坐标，翻转后仍返回容器内位置。
+      visibleBounds: {
+        left: Math.max(0, -rect.left),
+        top: Math.max(0, -rect.top),
+        right: Math.min(rect.width, window.innerWidth - rect.left),
+        bottom: Math.min(rect.height, window.innerHeight - rect.top),
+      },
+    },
   );
-  bubble.style.position = 'fixed';
+  bubble.style.position = 'absolute';
   bubble.style.left = `${position.left}px`;
   bubble.style.top = `${position.top}px`;
   bubble.dataset.horizontal = position.horizontal;
   bubble.dataset.vertical = position.vertical;
 }
 
-let _pinRepositionQueued = false;
 function repositionVisiblePinComments() {
   if (_pinRepositionQueued) return;
   _pinRepositionQueued = true;
@@ -935,11 +1012,10 @@ function renderPinOnOverlay(blockId, pin, readMode = false) {
     commentBubble.className = 'proto-pin-comment';
     commentBubble.dataset.pinId = pin.id;
     commentBubble.dataset.blockId = blockId;
-    // 找 proto-container 挂载
-    const container = $zones.querySelector(`.proto-container[data-proto="${blockId}"]`);
-    if (container) {
-      container.style.position = 'relative';
-      container.appendChild(commentBubble);
+    // 浮层与 SVG pin 共用图片/原型媒体容器，滚动和缩放时不会脱锚。
+    const pinContainer = overlay.parentElement;
+    if (pinContainer) {
+      pinContainer.appendChild(commentBubble);
     }
   }
   commentBubble.dataset.xPct = String(cx);
@@ -1627,6 +1703,7 @@ function activateFacet(idx) {
     t.classList.toggle('tab-active', on);
     if (!t.disabled) t.setAttribute('aria-selected', String(on));
   });
+  repositionVisiblePinComments();
 }
 
 // 按当前草稿选默认激活面：URL ?facet=<面名|序号> 优先；否则第一个"含未确认必须决策"的非空面；再否则第一个非空面
@@ -1797,12 +1874,14 @@ async function resolveLatestRound() {
 async function advanceToRound(newRound) {
   currentRound = newRound;
   _latestRound = Math.max(Number(_latestRound) || 0, newRound);
+  _historyRoundsCacheKey = '';
   $submitBtn.disabled = false;
   $submitBtn.textContent = '提交';
   updateSessionLabel();
   document.title = `第 ${newRound} 轮 — 振动编码工作台`;
   await loadAndRender();
   await refreshLatestDecisionState();
+  await loadHistoryRounds();
   showToast(`AI 已生成第 ${newRound} 轮，已为你自动载入 ✦`);
 }
 
@@ -1816,8 +1895,11 @@ async function bootstrap() {
     updateSessionLabel();
   }
   await loadAndRender();
-  await refreshLatestDecisionState();
-  await loadStream({ initial: true });
+  await Promise.all([
+    refreshLatestDecisionState(),
+    loadStream({ initial: true }),
+    loadHistoryRounds(),
+  ]);
   setActiveView('decision');
 }
 
@@ -1843,6 +1925,7 @@ async function pollStatus() {
     if (Number.isInteger(latest)) {
       if (latestChanged) {
         _documentsCacheKey = '';
+        _historyRoundsCacheKey = '';
         _latestBlocks = [];
       }
       _latestRound = latest;
@@ -1851,7 +1934,12 @@ async function pollStatus() {
       await advanceToRound(latest);
       return;
     }
-    if (latestChanged) await refreshLatestDecisionState();
+    if (latestChanged) {
+      await Promise.all([
+        refreshLatestDecisionState(),
+        loadHistoryRounds(),
+      ]);
+    }
 
     const now = Date.now();
 

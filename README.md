@@ -68,6 +68,14 @@ node bin/workbench.mjs stream-migrate <session>   # 历史 sessionComment 幂等
 
 每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 写 `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
 
+会话文档保存在 `workspace/<session>/documents/<category>/<slug>.md`，分类限于「需求 / PRD / 架构 / UI 设计 / 交互设计 / 测试 / 其他」，正文上限 256 KiB（按 UTF-8 字节）。管理员可用 `POST /api/documents` 发布或更新；`GET /api/documents?session=...` 返回列表，增加 `slug=...` 返回单篇正文，跨分类出现同名 slug 时可再传 `category=...` 消歧。CLI 会优先采用源文件 frontmatter 的 `title`，否则用文件名，也可显式覆盖：
+
+```bash
+workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标题]
+```
+
+设置 `WORKBENCH_REMOTE_URL` 时该命令与 `present` 一样只写远程工作台；每次发布或更新都会向会话流追加「文档已更新」回执。
+
 可选设置 `WORKBENCH_EVENT_WEBHOOK`。服务端在新轮次成功落盘、反馈成功提交或新消息落流后，分别异步 POST `round-presented` / `feedback-submitted` / `message-posted` 事件；单次投递 5 秒超时，失败只记日志，不改变主请求结果。
 
 ## Hybrid 驱动与 SDK 托底标注
@@ -93,6 +101,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 | `src/protocol/` | 内容协议：constants / schema / **diff**（轮次差异）/ **attention**（注意力路由）/ **status**（状态联合判定） |
 | `src/participants.mjs` | 私密参与者名册：magic-link token、脱敏列表、即时吊销 |
 | `src/stream.mjs` | append-only 会话流：消息/回执/进度、增量读取、历史留言迁移 |
+| `src/documents.mjs` | 会话文档库：分类/slug 校验、frontmatter、列表/单篇读取与更新 |
 | `src/workspace.mjs` | 文件契约与共享轮次写入（content/feedback/ack/response/error/status） |
 | `src/server/` | 零依赖 HTTP + API（rounds / feedback / messages / stream-events / attachments / webhook） |
 | `src/loop/` | 异步唤醒 listener（对账幂等 + 独立心跳 + 容错）/ claude-exec / session-store |

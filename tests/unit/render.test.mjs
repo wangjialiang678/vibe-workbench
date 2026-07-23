@@ -17,6 +17,7 @@ import {
   attachmentMessageMarkdown,
   clampStreamPanelWidth,
   composerValueAfterSend,
+  containerPinPopoverPosition,
   decisionChipHtml,
   decisionChipForLatestReceipt,
   pinPopoverPosition,
@@ -25,6 +26,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const renderIndex = readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
+const renderApp = readFileSync(path.resolve(__dirname, '../../src/render/app.mjs'), 'utf8');
+const renderCss = readFileSync(path.resolve(__dirname, '../../src/render/app.css'), 'utf8');
 
 // ---------- G2 会话流与三区布局 ----------
 
@@ -175,6 +178,70 @@ test('pinPopoverPosition：默认锚在 pin 附近，视口右下角自动向左
     horizontal: 'left',
     vertical: 'above',
   });
+});
+
+test('containerPinPopoverPosition：百分比 pin 换算为容器内坐标，右下角自动翻转', () => {
+  assert.deepEqual(
+    containerPinPopoverPosition(
+      { width: 400, height: 200 },
+      { xPct: 25, yPct: 50 },
+      { width: 120, height: 60 },
+    ),
+    { left: 114, top: 88, horizontal: 'right', vertical: 'below' },
+  );
+
+  assert.deepEqual(
+    containerPinPopoverPosition(
+      { width: 400, height: 200 },
+      { xPct: 95, yPct: 95 },
+      { width: 120, height: 60 },
+    ),
+    { left: 246, top: 118, horizontal: 'left', vertical: 'above' },
+  );
+});
+
+test('containerPinPopoverPosition：容器部分滚出视口时，在容器内可见边界翻转并防溢出', () => {
+  assert.deepEqual(
+    containerPinPopoverPosition(
+      { width: 600, height: 400 },
+      { xPct: 90, yPct: 70 },
+      { width: 180, height: 100 },
+      { visibleBounds: { left: 100, top: 40, right: 500, bottom: 340 } },
+    ),
+    { left: 308, top: 168, horizontal: 'left', vertical: 'above' },
+  );
+});
+
+test('prototype pin：浮层与 SVG overlay 共用原型媒体容器定位上下文', () => {
+  assert.match(
+    renderApp,
+    /const pinContainer = overlay\.parentElement;/,
+    '浮层应挂到 overlay 所属的图片/原型容器',
+  );
+  assert.match(renderApp, /pinContainer\.appendChild\(commentBubble\)/);
+  assert.match(
+    renderCss,
+    /\.proto-pin-comment\s*\{[^}]*position:\s*absolute;/s,
+    '浮层应使用容器内绝对定位',
+  );
+});
+
+test('prototype pin：分栏宽度和隐藏分面变化后都会重新计算容器坐标', () => {
+  assert.match(
+    renderApp,
+    /function applyStreamWidth\([^)]*\)\s*\{[\s\S]*?repositionVisiblePinComments\(\);/,
+    '拖动分栏改变原型容器宽度后应重算浮层',
+  );
+  assert.match(
+    renderApp,
+    /function activateFacet\([^)]*\)\s*\{[\s\S]*?repositionVisiblePinComments\(\);/,
+    '隐藏分面重新显示后应重算浮层',
+  );
+  assert.match(
+    renderApp,
+    /function setActiveView\([^)]*\)\s*\{[\s\S]*?view === 'decision'[\s\S]*?repositionVisiblePinComments\(\);/,
+    '从文档或手机对话返回决策区后应重算浮层',
+  );
 });
 
 // ---------- mdToHtml ----------

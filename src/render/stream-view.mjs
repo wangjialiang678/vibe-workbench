@@ -1,5 +1,6 @@
 // 会话流与文档区的纯渲染函数。仅使用浏览器通用能力，便于 Node 单测。
 import { mdToHtml } from './md.mjs';
+export { documentsPanelHtml } from './documents-view.mjs';
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -149,6 +150,54 @@ export function pinPopoverPosition(
   return { left, top, horizontal, vertical };
 }
 
+/**
+ * 把百分比 pin 换算为容器内浮层坐标。
+ * visibleBounds 是视口可见区映射到容器后的边界；滚动时仍返回容器坐标。
+ */
+export function containerPinPopoverPosition(
+  container,
+  pin,
+  popover,
+  { visibleBounds, ...positionOptions } = {},
+) {
+  const width = Math.max(0, Number(container?.width) || 0);
+  const height = Math.max(0, Number(container?.height) || 0);
+  const xPct = Math.min(100, Math.max(0, Number(pin?.xPct) || 0));
+  const yPct = Math.min(100, Math.max(0, Number(pin?.yPct) || 0));
+
+  const leftBound = Math.min(width, Math.max(0, Number(visibleBounds?.left) || 0));
+  const topBound = Math.min(height, Math.max(0, Number(visibleBounds?.top) || 0));
+  const rawRight = Number(visibleBounds?.right);
+  const rawBottom = Number(visibleBounds?.bottom);
+  const rightBound = Math.max(
+    leftBound,
+    Math.min(width, Number.isFinite(rawRight) ? rawRight : width),
+  );
+  const bottomBound = Math.max(
+    topBound,
+    Math.min(height, Number.isFinite(rawBottom) ? rawBottom : height),
+  );
+
+  const position = pinPopoverPosition(
+    {
+      x: (xPct / 100) * width - leftBound,
+      y: (yPct / 100) * height - topBound,
+    },
+    {
+      width: rightBound - leftBound,
+      height: bottomBound - topBound,
+    },
+    popover,
+    positionOptions,
+  );
+
+  return {
+    ...position,
+    left: position.left + leftBound,
+    top: position.top + topBound,
+  };
+}
+
 /** 从内容字段与会话消息里找出可访问的 /assets/ 链接。 */
 export function collectAssetLinks(contents = [], entries = []) {
   const found = new Map();
@@ -172,35 +221,4 @@ export function collectAssetLinks(contents = [], entries = []) {
   contents.forEach(visit);
   entries.forEach((entry) => visit(entry?.text));
   return [...found].map(([url, label]) => ({ url, label }));
-}
-
-/** 文档区第一版：设计文档入口、会话资产和历史轮次。 */
-export function documentsPanelHtml({ docsUrl = '', assets = [], rounds = [] } = {}) {
-  const docs = docsUrl
-    ? `<a class="document-primary-link" href="${escapeHtml(docsUrl)}" target="_blank" rel="noopener noreferrer">打开设计文档 <span aria-hidden="true">↗</span></a>`
-    : '<p class="document-empty">本轮没有提供 content.meta.docsUrl。</p>';
-  const assetItems = assets.length
-    ? assets.map((asset) => `<li><a href="${escapeHtml(asset.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(asset.label || asset.url)}</a></li>`).join('')
-    : '<li class="document-empty">尚未发现会话资产。</li>';
-  const roundItems = rounds.length
-    ? rounds.slice().sort((a, b) => b.round - a.round).map((round) => `<li>
-      <a href="${escapeHtml(round.url)}" data-history-round="${round.round}">
-        <strong>第 ${round.round} 轮</strong><span>${escapeHtml(round.title || '未命名轮次')}</span>
-      </a>
-    </li>`).join('')
-    : '<li class="document-empty">暂无历史轮次。</li>';
-
-  return `<div class="documents-grid">
-  <section class="document-card document-card--primary">
-    <p class="document-eyebrow">DESIGN SOURCE</p><h2>设计文档</h2>${docs}
-  </section>
-  <section class="document-card">
-    <div class="document-card-head"><h2>会话资产</h2><span>${assets.length}</span></div>
-    <ul class="document-list document-assets">${assetItems}</ul>
-  </section>
-  <section class="document-card">
-    <div class="document-card-head"><h2>历史轮次</h2><span>${rounds.length}</span></div>
-    <ul class="document-list document-rounds">${roundItems}</ul>
-  </section>
-</div>`;
 }

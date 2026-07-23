@@ -33,9 +33,15 @@ const {
 } = await import(`${ROOT}/src/participants.mjs`);
 
 const {
+  appendStreamEntry,
   migrateSessionComments,
   readStreamEntries,
 } = await import(`${ROOT}/src/stream.mjs`);
+
+const {
+  parseMarkdownSource,
+  publishDocument,
+} = await import(`${ROOT}/src/documents.mjs`);
 
 // ─── cmdRender ───────────────────────────────────────────────────────────────
 /**
@@ -212,6 +218,42 @@ export async function cmdParticipantRevoke(id, { participantsFile = DEFAULT_PART
   }
   if (!revokeParticipant(id, { filePath: participantsFile })) throw new Error(`参与者 ${id} 不存在`);
   return { ok: true, id };
+}
+
+/** 发布 Markdown 文档；远程模式走 API，本地模式直接写当前 workspace。 */
+export async function cmdDocPublish(session, category, slug, sourcePath, { title } = {}) {
+  const source = readFileSync(sourcePath, 'utf8');
+  const parsed = parseMarkdownSource(source);
+  const defaultTitle = path.basename(sourcePath, path.extname(sourcePath));
+  const document = {
+    session,
+    category,
+    slug,
+    title: title ?? parsed.title ?? defaultTitle,
+    body: parsed.body,
+  };
+
+  const remote = remoteBaseUrl();
+  if (remote) {
+    const response = await requestRemoteJson(remote, '/api/documents', {
+      method: 'POST',
+      body: document,
+    });
+    if (response.ok !== true || !response.document
+      || response.document.category !== category
+      || response.document.slug !== slug) {
+      throw new Error('远程工作台返回格式无效：缺少匹配的 document');
+    }
+    return response;
+  }
+
+  const saved = publishDocument(document, { exactSession: true });
+  appendStreamEntry(session, {
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    kind: 'receipt',
+    text: `文档已更新：${saved.document.title}`,
+  }, { exactSession: true });
+  return { ok: true, ...saved };
 }
 
 async function readSource(src) {
@@ -446,6 +488,7 @@ vibecoding workbench — CLI 编排
 用法：
   workbench present <session> [content.json|-] [--allow-incomplete-decisions]  校验并渲染一轮（推荐给 skill 用）
   workbench wait <session> <round> [--timeout 秒] [--events]  监听反馈；events 模式也监听新消息
+  workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标题]  发布或更新文档
   workbench stream-migrate <session>            把历史 feedback.sessionComment 幂等迁入会话流
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
   workbench participant add <id> <name>         新增参与者并输出个人邀请链接
@@ -461,6 +504,7 @@ vibecoding workbench — CLI 编排
   --host HOST                      指定监听地址（默认 127.0.0.1；非本机地址须设置 WORKBENCH_TOKEN）
   --allow-incomplete-decisions     present 临时跳过决策完整性硬校验（仍输出 lint）
   --events                         wait 同时监听 feedback 与会话流新事件
+  --title 标题                     doc-publish 显式标题（默认取 frontmatter title 或文件名）
 
 示例：
   workbench render ses_001 content.json
@@ -597,6 +641,21 @@ async function main() {
       const r = await cmdWait(session, round, { timeoutMs, events });
       console.log(JSON.stringify(r));
       if (!r.ok) process.exit(2);
+      break;
+    }
+
+    case 'doc-publish': {
+      const [session, category, slug, sourcePath] = rest;
+      const titleIndex = rest.indexOf('--title');
+      if (!session || !category || !slug || !sourcePath
+        || (titleIndex >= 0 && !rest[titleIndex + 1])) {
+        console.error('用法: workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标题]');
+        process.exit(1);
+      }
+      const title = titleIndex >= 0 ? rest[titleIndex + 1] : undefined;
+      console.log(JSON.stringify(
+        await cmdDocPublish(session, category, slug, sourcePath, { title }),
+      ));
       break;
     }
 
