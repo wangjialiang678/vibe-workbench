@@ -87,7 +87,9 @@ before(async () => {
   port = server.address().port;
 
   process.env.WORKBENCH_TOKEN = remoteToken;
-  remoteServer = srv.startServer(0);
+  remoteServer = srv.startServer(0, '127.0.0.1', {
+    participantsFile: path.join(tmp, 'config', 'participants.json'),
+  });
   await new Promise((r) => remoteServer.once('listening', r));
   remotePort = remoteServer.address().port;
   delete process.env.WORKBENCH_TOKEN;
@@ -249,6 +251,38 @@ test('CLI 远程 present：只写云端 workspace，返回带 token 的远程 UR
   assert.equal(ws.readJSON(ws.paths.content(session, 1)).title, '来自本地 CLI');
   assert.equal(ws.readJSON(ws.paths.content(session, 1)).round, 1, 'CLI 应采用服务端响应轮号，忽略输入 round');
   assert.equal(fs.existsSync(path.join(clientTmp, session, 'round-1', 'content.json')), false);
+});
+
+test('CLI 远程 participant add/list/revoke：走管理 API 且列表脱敏', async () => {
+  const result = await runRemoteCli(['participant', 'add', 'remote-alice', '远程小艾']);
+  assert.equal(result.code, 0, result.stderr);
+  const added = JSON.parse(result.stdout);
+  assert.equal(added.participant.id, 'remote-alice');
+  assert.equal(Object.hasOwn(added.participant, 'token'), false);
+  const invite = new URL(added.url);
+  assert.equal(invite.origin, `http://127.0.0.1:${remotePort}`);
+  assert.match(invite.searchParams.get('token'), /^[a-f0-9]{32}$/);
+
+  const listedResult = await runRemoteCli(['participant', 'list']);
+  assert.equal(listedResult.code, 0, listedResult.stderr);
+  const listed = JSON.parse(listedResult.stdout);
+  assert.equal(listed.participants.some(({ id }) => id === 'remote-alice'), true);
+  assert.equal(JSON.stringify(listed).includes(invite.searchParams.get('token')), false);
+
+  const revoked = await runRemoteCli(['participant', 'revoke', 'remote-alice']);
+  assert.equal(revoked.code, 0, revoked.stderr);
+  assert.deepEqual(JSON.parse(revoked.stdout), { ok: true, id: 'remote-alice' });
+});
+
+test('渲染页头部提供会话列表和设计资产入口，前端消费 sessions/meta.docsUrl', () => {
+  const html = fs.readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
+  const source = fs.readFileSync(APP, 'utf8');
+  assert.match(html, /id=["']session-nav["']/);
+  assert.match(html, /会话列表/);
+  assert.match(html, /id=["']docs-link["']/);
+  assert.match(source, /\/api\/sessions/);
+  assert.match(source, /meta\?\.docsUrl|meta\.docsUrl/);
+  assert.match(source, /docs-link/);
 });
 
 test('CLI 远程 present：--allow-incomplete-decisions 映射 query 并返回 lintBypassed', async () => {

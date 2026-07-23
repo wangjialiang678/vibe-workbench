@@ -11,6 +11,14 @@ test('validateContent: valid', () => {
   assert.equal(validateContent(c).ok, true);
 });
 
+test('validateContent: 允许可选 meta.docsUrl，并拒绝错误类型', () => {
+  const base = { session: 's-meta', round: 1, blocks: [] };
+  assert.equal(validateContent({ ...base, meta: { docsUrl: 'https://example.com/design' } }).ok, true);
+  assert.equal(validateContent({ ...base, meta: {} }).ok, true);
+  assert.equal(validateContent({ ...base, meta: 'not-an-object' }).ok, false);
+  assert.equal(validateContent({ ...base, meta: { docsUrl: 123 } }).ok, false);
+});
+
 test('validateContent: bad round + dup id + bad type', () => {
   const c = { session: 's1', round: 0, blocks: [{ id: 'a', type: 'nope' }, { id: 'a', type: 'markdown' }] };
   const r = validateContent(c);

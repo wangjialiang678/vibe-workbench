@@ -25,6 +25,13 @@ const {
   formatIncompleteDecisions,
 } = await import(`${ROOT}/src/protocol/lint.mjs`);
 
+const {
+  DEFAULT_PARTICIPANTS_FILE,
+  addParticipant,
+  listParticipants,
+  revokeParticipant,
+} = await import(`${ROOT}/src/participants.mjs`);
+
 // ─── cmdRender ───────────────────────────────────────────────────────────────
 /**
  * 渲染一轮内容到 workspace 文件。
@@ -122,6 +129,55 @@ async function requestRemoteJson(base, relativePath, {
     throw new Error(`远程工作台返回 ${response.status}：${payload?.error || '请求失败'}`);
   }
   return payload;
+}
+
+function localInviteBase(baseUrl) {
+  const raw = baseUrl || process.env.WORKBENCH_BASE_URL || `http://127.0.0.1:${parseInt(process.env.PORT, 10) || 8099}`;
+  try {
+    const base = new URL(raw);
+    if (!['http:', 'https:'].includes(base.protocol)) throw new Error('仅支持 HTTP/HTTPS');
+    return base;
+  } catch (error) {
+    throw new Error(`WORKBENCH_BASE_URL 无效：${error.message}`);
+  }
+}
+
+function localInviteUrl(token, baseUrl) {
+  const target = new URL('/render/', localInviteBase(baseUrl));
+  target.searchParams.set('token', token);
+  return target.href;
+}
+
+/** 管理参与者：设置远程地址时调用管理 API，否则直接维护本地 config/participants.json。 */
+export async function cmdParticipantAdd(id, name, {
+  participantsFile = DEFAULT_PARTICIPANTS_FILE,
+  baseUrl,
+} = {}) {
+  const remote = remoteBaseUrl();
+  if (remote) {
+    return requestRemoteJson(remote, '/api/participants', {
+      method: 'POST',
+      body: { id, name },
+    });
+  }
+  const participant = addParticipant({ id, name }, { filePath: participantsFile });
+  const { token, ...safeParticipant } = participant;
+  return { ok: true, participant: safeParticipant, url: localInviteUrl(token, baseUrl) };
+}
+
+export async function cmdParticipantList({ participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {
+  const remote = remoteBaseUrl();
+  if (remote) return requestRemoteJson(remote, '/api/participants');
+  return { ok: true, participants: listParticipants(participantsFile) };
+}
+
+export async function cmdParticipantRevoke(id, { participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {
+  const remote = remoteBaseUrl();
+  if (remote) {
+    return requestRemoteJson(remote, `/api/participants/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  if (!revokeParticipant(id, { filePath: participantsFile })) throw new Error(`参与者 ${id} 不存在`);
+  return { ok: true, id };
 }
 
 async function readSource(src) {
@@ -274,6 +330,9 @@ vibecoding workbench — CLI 编排
   workbench present <session> [content.json|-] [--allow-incomplete-decisions]  校验并渲染一轮（推荐给 skill 用）
   workbench wait <session> <round> [--timeout 秒]  监听该轮提交，出现反馈即返回其内容（后台运行）
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
+  workbench participant add <id> <name>         新增参与者并输出个人邀请链接
+  workbench participant list                    列出参与者（不显示 token）
+  workbench participant revoke <id>             吊销参与者链接
   workbench serve [--port N] [--host HOST]      启动 HTTP server（默认 127.0.0.1:8099）
   workbench watch                               启动 listener，监管自愈（最多重启 5 次）
   workbench up [--port N] [--host HOST]         同时启动 serve + watch
@@ -418,6 +477,26 @@ async function main() {
       const r = await cmdWait(session, round, { timeoutMs });
       console.log(JSON.stringify(r));
       if (!r.ok) process.exit(2);
+      break;
+    }
+
+    case 'participant': {
+      const action = rest[0];
+      if (action === 'add') {
+        const id = rest[1];
+        const name = rest.slice(2).join(' ').trim();
+        if (!id || !name) { console.error('用法: workbench participant add <id> <name>'); process.exit(1); }
+        console.log(JSON.stringify(await cmdParticipantAdd(id, name)));
+      } else if (action === 'list') {
+        console.log(JSON.stringify(await cmdParticipantList()));
+      } else if (action === 'revoke') {
+        const id = rest[1];
+        if (!id) { console.error('用法: workbench participant revoke <id>'); process.exit(1); }
+        console.log(JSON.stringify(await cmdParticipantRevoke(id)));
+      } else {
+        console.error('用法: workbench participant <add|list|revoke>');
+        process.exit(1);
+      }
       break;
     }
 

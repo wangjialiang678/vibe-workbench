@@ -342,6 +342,41 @@ function recommendReasonHtml(block) {
 </section>`;
 }
 
+function feedbackValueText(block, item) {
+  const values = Array.isArray(item.value) ? item.value : [item.value];
+  return values.map((value) => {
+    if (item.type === 'select' && Array.isArray(block.options)) {
+      const option = block.options.find((candidate) => candidate.id === value);
+      if (option) return option.label || option.id;
+    }
+    if (value == null) return '';
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  }).filter(Boolean).join('、');
+}
+
+/** 把已提交反馈渲染成块下只读意见；不包含任何可编辑控件。 */
+export function participantFeedbackHtml(block, byParticipant = [], conflicts = []) {
+  const conflict = conflicts.some((item) => item?.blockId === block?.id);
+  const opinions = byParticipant.flatMap((entry) => {
+    const items = (entry?.feedback?.items || []).filter((item) => item?.blockId === block?.id);
+    if (!items.length) return [];
+    const details = items.map((item) => {
+      const value = feedbackValueText(block, item);
+      const valueHtml = value ? `<div class="participant-opinion-value">${escHtml(value)}</div>` : '';
+      const commentHtml = item.comment
+        ? `<div class="participant-opinion-comment">${escHtml(item.comment)}</div>`
+        : '';
+      return `${valueHtml}${commentHtml}`;
+    }).join('');
+    return [`<article class="participant-opinion" data-participant-id="${escHtml(entry.id || '')}">
+  <div class="participant-opinion-head"><strong>${escHtml(entry.name || entry.id || '参与者')} 的意见</strong>${conflict ? '<span class="conflict-badge">意见分歧</span>' : ''}</div>
+  ${details}
+</article>`];
+  });
+  if (!opinions.length) return '';
+  return `<section class="participant-feedbacks" aria-label="参与者已提交意见">${opinions.join('')}</section>`;
+}
+
 // 主导出：block → HTML 字符串
 export function blockHtml(block) {
   const id = escHtml(block.id ?? '');

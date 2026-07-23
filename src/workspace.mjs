@@ -35,6 +35,7 @@ export const paths = {
   content: (s, r, options) => path.join(roundDir(s, r, options), 'content.json'),
   contentMd: (s, r, options) => path.join(roundDir(s, r, options), 'content.md'),
   feedback: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.json'),
+  participantFeedback: (s, r, id, options) => path.join(roundDir(s, r, options), `feedback-${id}.json`),
   feedbackMd: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.md'),
   ack: (s, r, options) => path.join(roundDir(s, r, options), 'ack.json'),
   response: (s, r, options) => path.join(roundDir(s, r, options), 'response.md'),

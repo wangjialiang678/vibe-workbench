@@ -16,6 +16,13 @@ import {
 import { displayState } from '../protocol/status.mjs';
 import { HEARTBEAT_STALE_MS } from '../protocol/constants.mjs';
 import {
+  DEFAULT_PARTICIPANTS_FILE,
+  addParticipant,
+  findParticipantByToken,
+  listParticipants,
+  revokeParticipant,
+} from '../participants.mjs';
+import {
   paths,
   workspaceDir,
   readJSON,
@@ -170,6 +177,116 @@ function renderUrl(req, session) {
   return target.href;
 }
 
+const OWNER_IDENTITY = Object.freeze({ id: 'owner', name: '管理员', role: 'owner' });
+const TERMINAL_OR_PROCESSING_STATES = new Set(['claimed', 'responded', 'error']);
+
+function requestTokens(req, requestUrl, isApi) {
+  const queryToken = requestUrl.searchParams.get('token');
+  const headerToken = req.headers['x-workbench-token'];
+  return (isApi ? [headerToken, queryToken] : [queryToken])
+    .filter((token) => typeof token === 'string' && token);
+}
+
+// 管理员口令优先；参与者 token 每次请求都重新查名册，吊销可立即生效。
+function resolveRequestIdentity(tokens, expectedToken, participantsFile) {
+  for (const token of tokens) {
+    if (safeTokenEqual(token, expectedToken)) return { identity: OWNER_IDENTITY, token };
+  }
+  for (const token of tokens) {
+    const participant = findParticipantByToken(token, { filePath: participantsFile });
+    if (participant) return { identity: { ...participant, role: 'participant' }, token };
+  }
+  // 未开启口令门时保持原有本地流程：无身份请求按 owner 落兼容文件。
+  return expectedToken ? null : { identity: OWNER_IDENTITY, token: '' };
+}
+
+function publicParticipant(participant) {
+  const { id, name, createdAt } = participant;
+  return { id, name, createdAt };
+}
+
+function participantInviteUrl(req, token) {
+  const target = new URL('/render/', requestOrigin(req));
+  target.searchParams.set('token', token);
+  return target.href;
+}
+
+function participantFeedbackEntries(session, round) {
+  const dir = path.dirname(paths.feedback(session, round, { exactSession: true }));
+  let filenames;
+  try {
+    filenames = fs.readdirSync(dir).filter((name) => /^feedback-[A-Za-z0-9_-]+\.json$/.test(name)).sort();
+  } catch {
+    return [];
+  }
+  return filenames.flatMap((filename) => {
+    const feedback = readJSON(path.join(dir, filename), null);
+    const id = feedback?.submittedBy?.id;
+    const name = feedback?.submittedBy?.name;
+    if (!feedback || typeof id !== 'string' || typeof name !== 'string') return [];
+    return [{ id, name, submittedAt: feedback.submittedAt ?? null, feedback }];
+  });
+}
+
+function conflictValue(values) {
+  const unique = [];
+  const seen = new Set();
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique.length === 1 ? unique[0] : unique;
+}
+
+function detectFeedbackConflicts(ownerFeedback, byParticipant) {
+  const sources = [];
+  if (ownerFeedback) sources.push({ name: ownerFeedback.submittedBy?.name || '管理员', feedback: ownerFeedback });
+  for (const entry of byParticipant) sources.push({ name: entry.name, feedback: entry.feedback });
+
+  const byBlock = new Map();
+  for (const source of sources) {
+    const selected = new Map();
+    for (const item of source.feedback?.items || []) {
+      if (item?.type !== 'select' || typeof item.blockId !== 'string') continue;
+      const values = selected.get(item.blockId) || [];
+      values.push(item.value);
+      selected.set(item.blockId, values);
+    }
+    for (const [blockId, values] of selected) {
+      const choices = byBlock.get(blockId) || [];
+      choices.push({ participant: source.name, value: conflictValue(values) });
+      byBlock.set(blockId, choices);
+    }
+  }
+
+  const conflicts = [];
+  for (const [blockId, choices] of byBlock) {
+    const distinct = new Set(choices.map(({ value }) => JSON.stringify(value)));
+    if (choices.length > 1 && distinct.size > 1) conflicts.push({ blockId, choices });
+  }
+  return conflicts;
+}
+
+function feedbackView(session, round) {
+  const primary = readJSON(paths.feedback(session, round, { exactSession: true }), null);
+  const byParticipant = participantFeedbackEntries(session, round);
+  // 无 submittedBy 的旧反馈视为 owner；参与者兼容桥不重复算作 owner。
+  const ownerFeedback = primary && (!primary.submittedBy || primary.submittedBy.id === 'owner')
+    ? primary
+    : null;
+  const primaryParticipant = primary?.submittedBy?.id
+    ? byParticipant.find((entry) => entry.id === primary.submittedBy.id)?.feedback
+    : null;
+  const feedback = ownerFeedback || primaryParticipant || byParticipant[0]?.feedback || primary;
+  return {
+    feedback,
+    byParticipant,
+    conflicts: detectFeedbackConflicts(ownerFeedback, byParticipant),
+  };
+}
+
 /** 可选事件投递：任何失败都在此吞掉，调用方只需 fire-and-forget。 */
 export async function postWebhookEvent(webhookUrl, payload, {
   fetchImpl = fetch,
@@ -285,7 +402,7 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
 }
 
 // ---- request handler ----
-function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
+function handleRequest(req, res, expectedToken = '', eventWebhook = '', participantsFile = DEFAULT_PARTICIPANTS_FILE) {
   const method = req.method.toUpperCase();
   const rawUrl = req.url || '/';
   const requestUrl = new URL(rawUrl, 'http://localhost');
@@ -303,26 +420,35 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
   if (requiresPageToken(urlPath)) noReferrer(res);
 
   // 开启 token 后，API 可用 header/query；页面入口只接受 query，便于浏览器继续透传。
-  if (expectedToken) {
-    const isApi = urlPath.startsWith('/api/');
-    const isPageEntry = requiresPageToken(urlPath);
-    const isSessionAsset = urlPath.startsWith('/assets/');
-    if (isApi || isPageEntry || isSessionAsset) {
-      const queryToken = requestUrl.searchParams.get('token');
-      const headerToken = req.headers['x-workbench-token'];
-      const candidates = isApi ? [headerToken, queryToken] : [queryToken];
-      const allowed = candidates.some((candidate) => safeTokenEqual(candidate, expectedToken));
-      if (!allowed) {
-        if (isApi) json(res, 403, { ok: false, error: '访问被拒绝：令牌缺失或无效' });
-        else {
-          cors(res);
-          res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-          res.end('访问被拒绝：请在页面 URL 中提供有效令牌');
-        }
-        return;
-      }
+  const isApi = urlPath.startsWith('/api/');
+  const isPageEntry = requiresPageToken(urlPath);
+  const isSessionAsset = urlPath.startsWith('/assets/');
+  const protectedRequest = isApi || isPageEntry || isSessionAsset;
+  let auth;
+  try {
+    auth = resolveRequestIdentity(requestTokens(req, requestUrl, isApi), expectedToken, participantsFile);
+  } catch (error) {
+    console.error('[workbench:participants] 名册读取失败：', error.message);
+    if (isApi) json(res, 500, { ok: false, error: '参与者名册无法读取，请联系管理员' });
+    else {
+      cors(res);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('参与者名册无法读取，请联系管理员');
     }
+    return;
   }
+  if (expectedToken && protectedRequest && !auth) {
+    if (isApi) json(res, 403, { ok: false, error: '访问被拒绝：令牌缺失或无效' });
+    else {
+      cors(res);
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('访问被拒绝：请在页面 URL 中提供有效令牌');
+    }
+    return;
+  }
+  const identity = auth?.identity || OWNER_IDENTITY;
+  const requestToken = auth?.token || '';
+  req.identity = identity;
 
   // --- API routes ---
   if (urlPath === '/api/health') {
@@ -335,7 +461,62 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
     return;
   }
 
+  if (urlPath === '/api/participants' || urlPath.startsWith('/api/participants/')) {
+    // 本地无口令时虽然旧 API 继续开放，但参与者名册管理必须显式提供管理员口令。
+    if (!expectedToken || identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员可管理参与者' });
+      return;
+    }
+    if (urlPath === '/api/participants' && method === 'GET') {
+      try { json(res, 200, { ok: true, participants: listParticipants(participantsFile) }); }
+      catch (error) {
+        console.error('[workbench:participants] 列表读取失败：', error.message);
+        json(res, 500, { ok: false, error: '参与者名册无法读取' });
+      }
+      return;
+    }
+    if (urlPath === '/api/participants' && method === 'POST') {
+      readBody(req).then((body) => {
+        try {
+          const participant = addParticipant(body || {}, { filePath: participantsFile });
+          json(res, 201, {
+            ok: true,
+            participant: publicParticipant(participant),
+            url: participantInviteUrl(req, participant.token),
+          });
+        } catch (error) {
+          const damaged = /名册.*损坏/.test(error.message);
+          json(res, damaged ? 500 : 400, { ok: false, error: error.message });
+        }
+      }).catch((error) => json(res, 400, { ok: false, error: `无效 JSON：${error.message}` }));
+      return;
+    }
+    if (method === 'DELETE') {
+      let id;
+      try { id = decodeURIComponent(urlPath.slice('/api/participants/'.length)); }
+      catch { id = ''; }
+      try {
+        if (!revokeParticipant(id, { filePath: participantsFile })) {
+          json(res, 404, { ok: false, error: `参与者 ${id || '(空)'} 不存在` });
+          return;
+        }
+        json(res, 200, { ok: true, id });
+      } catch (error) {
+        console.error('[workbench:participants] 吊销失败：', error.message);
+        json(res, 500, { ok: false, error: '参与者名册无法更新' });
+      }
+      return;
+    }
+    json(res, 405, { ok: false, error: 'method not allowed' });
+    return;
+  }
+
   if (urlPath === '/api/rounds' && method === 'POST') {
+    // 出题权只属于管理员（owner）：参与者的职责是判断，不是发起新一轮
+    if (expectedToken && identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员可创建新一轮' });
+      return;
+    }
     readBody(req, ROUND_BODY_LIMIT).then((body) => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
         json(res, 400, { ok: false, error: '请求体必须是完整的 content JSON' });
@@ -422,17 +603,12 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
       json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
       return;
     }
-    const feedbackPath = paths.feedback(session, parsedRound, { exactSession: true });
-    if (!exists(feedbackPath)) {
+    const view = feedbackView(session, parsedRound);
+    if (!view.feedback) {
       json(res, 200, { ok: false, pending: true });
       return;
     }
-    const feedback = readJSON(feedbackPath, null);
-    if (!feedback) {
-      json(res, 500, { ok: false, error: 'feedback.json 无法读取或内容损坏' });
-      return;
-    }
-    json(res, 200, { ok: true, feedback });
+    json(res, 200, { ok: true, ...view });
     return;
   }
 
@@ -509,22 +685,43 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
         json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
         return;
       }
-      const st = readStatus(session);
-      if (st && st.state === 'claimed') {
+      const pathOptions = { exactSession: true };
+      const st = readStatus(session, pathOptions);
+      if (identity.role === 'owner' && st && st.state === 'claimed') {
         json(res, 409, { ok: false, error: 'claimed' });
         return;
       }
 
       const now = new Date().toISOString();
-      const saved = { ...fb, submittedAt: now };
-      writeJSON(paths.feedback(session, round), saved);
-      writeText(paths.feedbackMd(session, round), feedbackToMd(saved));
-      writeStatus(session, { state: 'submitted', round, error: null });
+      const submittedBy = { id: identity.id, name: identity.name };
+      // submittedBy 永远由服务端覆盖，不能信任客户端自报身份。
+      const saved = { ...fb, submittedAt: now, submittedBy };
+      const primaryPath = paths.feedback(session, round, pathOptions);
+      if (identity.role === 'participant') {
+        writeJSON(paths.participantFeedback(session, round, identity.id, pathOptions), saved);
+        const primary = readJSON(primaryPath, null);
+        const mayRefreshBridge = !primary || (
+          primary.submittedBy?.id === identity.id
+          && !TERMINAL_OR_PROCESSING_STATES.has(st?.state)
+        );
+        if (mayRefreshBridge) {
+          writeJSON(primaryPath, saved);
+          writeText(paths.feedbackMd(session, round, pathOptions), feedbackToMd(saved));
+        }
+        if (!TERMINAL_OR_PROCESSING_STATES.has(st?.state)) {
+          writeStatus(session, { state: 'submitted', round, error: null }, undefined, pathOptions);
+        }
+      } else {
+        writeJSON(primaryPath, saved);
+        writeText(paths.feedbackMd(session, round, pathOptions), feedbackToMd(saved));
+        writeStatus(session, { state: 'submitted', round, error: null }, undefined, pathOptions);
+      }
       json(res, 200, { ok: true, count: (fb.items || []).length });
       emitWebhook(eventWebhook, {
         event: 'feedback-submitted',
         session,
         round,
+        submittedBy,
         at: now,
       });
     }).catch((e) => {
@@ -560,7 +757,7 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
         const ct = fr.headers.get('content-type') || 'text/html; charset=utf-8';
         cors(res);
         if (/text\/html/i.test(ct)) {
-          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin, expectedToken);
+          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin, requestToken);
           noReferrer(res);
           res.writeHead(fr.status, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(html);
@@ -633,7 +830,7 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
     // Redirect / → /render/index.html
     if (urlPath === '/') {
       cors(res);
-      const tokenQuery = expectedToken ? `?token=${encodeURIComponent(expectedToken)}` : '';
+      const tokenQuery = requestToken ? `?token=${encodeURIComponent(requestToken)}` : '';
       res.writeHead(302, { Location: `/render/index.html${tokenQuery}` });
       res.end();
       return;
@@ -680,14 +877,14 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '') {
   json(res, 404, { ok: false, error: 'not found' });
 }
 
-export function startServer(port, host = '127.0.0.1') {
+export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {
   const listenHost = host || '127.0.0.1';
   const token = process.env.WORKBENCH_TOKEN || '';
   const eventWebhook = process.env.WORKBENCH_EVENT_WEBHOOK || '';
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
     throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   }
-  const server = http.createServer((req, res) => handleRequest(req, res, token, eventWebhook));
+  const server = http.createServer((req, res) => handleRequest(req, res, token, eventWebhook, participantsFile));
   const listenPort = port != null ? port : (parseInt(process.env.PORT, 10) || 8099);
   server.listen(listenPort, listenHost);
   return server;

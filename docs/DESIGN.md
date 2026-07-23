@@ -231,18 +231,24 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET `/` 及静态 | 托管 src/render/ |
 | POST `/api/rounds` | 校验并独占写入新轮次；2 MiB 上限；重复 round 返回 409 |
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
-| POST `/api/feedback` | 写 feedback.json/.md，status=submitted；断连前端降级导出 |
-| GET `/api/feedback?session=&round=` | feedback 存在则返回内容；否则 HTTP 200 + `pending:true` |
+| POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
+| GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；无反馈则 HTTP 200 + `pending:true` |
 | GET `/api/status?session=` | 返回 status.json + 心跳新鲜度 |
 | POST `/api/retry?session=&round=` | 重置该轮为 submitted（清 ack/error） |
 | GET `/api/sessions` | 列出 workspace 下会话（dev 用） |
+| GET/POST `/api/participants` | 管理员脱敏列表 / 新增参与者并返回完整邀请链接 |
+| DELETE `/api/participants/:id` | 管理员吊销参与者 magic-link |
 | GET `/api/health` | `{ok,ts}` |
 
 服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
 
-公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。启用后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；比较前先拒绝非字符串/空值，再做固定长度摘要与 `crypto.timingSafeEqual`。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
+公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
 
-远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，`wait` 每 3 秒轮询云端 feedback；轮次分配和持久化只发生在云端。未设置时继续走本地 `ensureServer + workspace` 文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
+参与者名册格式为 `[{id,name,token,createdAt}]`，写入采用同目录临时文件 + rename，token 为 16 个密码学随机字节的十六进制表示。CLI `participant add/list/revoke` 在本地直接维护名册；配置 `WORKBENCH_REMOTE_URL` 后复用管理 API。只有 add/API 创建响应包含一次性可分发的完整邀请链接，list 永不回显 token。
+
+逐人反馈：服务端覆盖客户端传入的 `submittedBy`，参与者反馈写 `feedback-<id>.json`；第一份同步写规范 `feedback.json`，让旧 listener 与 `wait` 保持“首份即唤醒”。owner 后交时覆盖规范文件，并成为 GET 的合并主视图；`byParticipant` 始终保留逐人提交。参与者可在 claimed 后补交自己的文件，但不得把 claimed/responded/error 状态倒退；owner 仍沿用 claimed 时 409。冲突只比较同 block 的 `type:'select'`，不同参与者值不一致时返回 `conflicts:[{blockId,choices}]`。
+
+远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，`wait` 每 3 秒轮询云端 feedback，`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
 
 事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘和 feedback 成功落盘后异步 POST 最小事件 JSON。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。
 
@@ -253,10 +259,11 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 ## 9. 视觉与交互设计语言
 
 - 克制、信息优先：浅色为主 + 暗色切换（复用 prd-studio CSS 变量）。强调色仅用于注意力分区（红=需定无预设、橙=需定有推荐/CHANGED、绿=NEW、蓝=已回复）。
-- 顶部固定状态条：左=会话/轮次 + diff 开关「只看变更」；右=AI 状态徽章 + 「提交」。
+- 顶部固定状态条：左=会话/轮次 + 会话列表 + 可选「设计资产」+ diff 开关「只看变更」；右=AI 状态徽章 + 「提交」。`content.meta.docsUrl` 为字符串时显示设计资产链接；同源链接才继承 token，外站不携口令。
 - 分区视觉：区 A/B 卡片带左色条 + 徽章；区 C 折叠。
 - 移动友好：单列、viewport-fit、控件触摸尺寸（为 phase 2 飞书/移动载体铺路）。
 - 草稿即时存 localStorage，防丢。
+- 每 3 秒只刷新块下的逐人只读意见，不重渲表单、草稿、焦点和 tab；select 分歧同时显示文字角标，不能只靠颜色。
 
 ---
 

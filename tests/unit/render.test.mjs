@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mdToHtml } from '../../src/render/md.mjs';
-import { blockHtml, renderEmbed, renderChecklist, renderPrototype } from '../../src/render/blocks.mjs';
+import {
+  blockHtml,
+  participantFeedbackHtml,
+  renderEmbed,
+  renderChecklist,
+  renderPrototype,
+} from '../../src/render/blocks.mjs';
 import { changeBadge, prevCompareHtml, diffToggleHtml } from '../../src/render/diff-view.mjs';
 import { renderZones } from '../../src/render/attention-view.mjs';
 
@@ -32,6 +38,41 @@ test('mdToHtml: list item -', () => {
   const out = mdToHtml('- 列表项');
   assert.ok(out.includes('<li>'), `expected <li> in: ${out}`);
   assert.ok(out.includes('列表项'), `expected text in: ${out}`);
+});
+
+test('participantFeedbackHtml：逐人意见只读展示、choice 显示标签并标注分歧', () => {
+  const block = {
+    id: 'decision-a',
+    type: 'choice',
+    options: [{ id: 'safe', label: '稳妥方案' }, { id: 'fast', label: '快速方案' }],
+  };
+  const html = participantFeedbackHtml(block, [{
+    id: 'alice',
+    name: '小艾',
+    submittedAt: '2026-07-23T00:00:00.000Z',
+    feedback: {
+      items: [{ blockId: 'decision-a', type: 'select', value: 'safe', comment: '可以回退' }],
+    },
+  }], [{ blockId: 'decision-a', choices: [] }]);
+
+  assert.match(html, /小艾 的意见/);
+  assert.match(html, /稳妥方案/);
+  assert.match(html, /可以回退/);
+  assert.match(html, /意见分歧/);
+  assert.doesNotMatch(html, /<textarea|<input|<button/);
+});
+
+test('participantFeedbackHtml：转义参与者与反馈文本，无该块意见时为空', () => {
+  const html = participantFeedbackHtml({ id: 'b-safe', type: 'freetext' }, [{
+    id: 'evil',
+    name: '<img src=x>',
+    feedback: { items: [{ blockId: 'b-safe', type: 'text', value: '<script>x</script>' }] },
+  }], []);
+
+  assert.doesNotMatch(html, /<img|<script/);
+  assert.match(html, /&lt;img src=x&gt;/);
+  assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/);
+  assert.equal(participantFeedbackHtml({ id: 'other', type: 'markdown' }, [], []), '');
 });
 
 test('mdToHtml: link [t](u)', () => {

@@ -2,6 +2,7 @@
 // 职责：读 URL → fetch 内容 → 渲染 → 草稿存 localStorage → 提交 → 轮询状态。
 // 纯 DOM 事件绑定放在这里，渲染器是纯函数导入。
 import { renderZones } from './attention-view.mjs';
+import { participantFeedbackHtml } from './blocks.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
 import { unansweredDecisions, confirmModel, countAnsweredDecisions, groupBySection, sectionPendingStats } from '../protocol/attention.mjs';
@@ -33,6 +34,8 @@ const $statusMount  = document.getElementById('status-badge-mount');
 const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
 const $sessionLabel = document.getElementById('session-label');
+const $sessionNav   = document.getElementById('session-nav');
+const $docsLink     = document.getElementById('docs-link');
 const $sessionComment = document.getElementById('session-comment-input');   // 会话级留言（P1）
 
 // CSS 选择器防守（id 含特殊字符时不失效）
@@ -42,6 +45,45 @@ function cssEsc(v) {
 
 // 会话级留言草稿键（与块草稿分开存，避免污染 answeredIds）
 function scKey() { return `wb:${SESSION}:${currentRound}:sc`; }
+
+function contentLink(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const target = new URL(raw, location.origin);
+    if (!['http:', 'https:'].includes(target.protocol)) return null;
+    // 仅同源设计资产继承 bearer token，外站绝不附带口令。
+    if (TOKEN && target.origin === location.origin) target.searchParams.set('token', TOKEN);
+    return target.href;
+  } catch { return null; }
+}
+
+function updateDocsLink(docsUrl) {
+  if (!$docsLink) return;
+  const href = contentLink(docsUrl);
+  $docsLink.hidden = !href;
+  if (href) $docsLink.href = href;
+  else $docsLink.removeAttribute('href');
+}
+
+async function loadSessions() {
+  if (!$sessionNav) return;
+  try {
+    const response = await fetch(apiUrl('/api/sessions'));
+    if (!response.ok) return;
+    const data = await response.json();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    $sessionNav.replaceChildren(new Option('会话列表', ''));
+    for (const session of sessions) $sessionNav.add(new Option(session, session, false, session === SESSION));
+  } catch { /* 导航失败不影响当前会话 */ }
+}
+
+$sessionNav?.addEventListener('change', () => {
+  if (!$sessionNav.value) return;
+  const target = new URL('/render/', location.origin);
+  target.searchParams.set('session', $sessionNav.value);
+  if (TOKEN) target.searchParams.set('token', TOKEN);
+  location.assign(target.href);
+});
 
 if ($sessionComment) {
   $sessionComment.addEventListener('input', () => {
@@ -200,6 +242,7 @@ async function loadAndRender() {
 
   _blocks = data.blocks ?? [];
   _sectionData = data.sections ?? null;
+  updateDocsLink(data.meta?.docsUrl);
   // template 中先给受保护资源补 token，再挂进 DOM，避免首次加载就被门禁拒绝。
   const rendered = document.createElement('template');
   rendered.innerHTML = renderZones(_blocks, { round: currentRound, sections: _sectionData });
@@ -240,6 +283,27 @@ async function loadAndRender() {
 
   // 绑定互动事件
   bindInteractions();
+  await loadParticipantFeedback();
+}
+
+async function loadParticipantFeedback() {
+  if (!SESSION || currentRound == null) return;
+  try {
+    const response = await fetch(apiUrl(`/api/feedback?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}`));
+    if (!response.ok) return;
+    const data = await response.json();
+    $zones.querySelectorAll('.participant-feedbacks').forEach((element) => element.remove());
+    if (!data.ok || !Array.isArray(data.byParticipant)) return;
+    for (const block of _blocks) {
+      const html = participantFeedbackHtml(block, data.byParticipant, data.conflicts || []);
+      if (!html) continue;
+      const host = $zones.querySelector(`[data-block-id="${cssEsc(block.id)}"]`);
+      if (!host) continue;
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      host.append(template.content);
+    }
+  } catch { /* 意见轮询失败不影响自己的填写流程 */ }
 }
 
 function escapeHtml(str) {
@@ -1247,6 +1311,7 @@ async function advanceToRound(newRound) {
 
 // 启动：URL 不带 round → 解析为最新一轮；否则用 URL 指定的轮。
 async function bootstrap() {
+  await loadSessions();
   if (currentRound == null) {
     currentRound = (await resolveLatestRound()) ?? 1;
     updateSessionLabel();
@@ -1307,8 +1372,11 @@ async function handleRetry(force = false) {
   await pollStatus();
 }
 
-// 每 3s 轮询
-setInterval(pollStatus, 3000);
+// 每 3s 同步状态和其他参与者意见；只替换只读意见区，不重渲当前草稿。
+setInterval(() => {
+  void pollStatus();
+  void loadParticipantFeedback();
+}, 3000);
 
 // 决策进度：委托监听 $zones（一次绑定，innerHTML 重渲后仍生效）——决策类交互后刷新「已填 m/X」
 ['change', 'input', 'click'].forEach((evt) => {

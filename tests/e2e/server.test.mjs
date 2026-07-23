@@ -413,7 +413,7 @@ test('GET /api/feedback pending 与命中均返回 HTTP 200', async () => {
   writeJSON(paths.feedback(s, 1), feedback);
   const hit = await fetch(url(`/api/feedback?session=${s}&round=1`));
   assert.equal(hit.status, 200);
-  assert.deepEqual(await hit.json(), { ok: true, feedback });
+  assert.deepEqual(await hit.json(), { ok: true, feedback, byParticipant: [], conflicts: [] });
 });
 
 test('GET /api/feedback 对非法 session/round 返回 400', async () => {
@@ -467,7 +467,7 @@ test('远程精确 session 的 status/content/feedback 读取不串到 legacySaf
   assert.equal(statusBody.status.state, 'rendered');
   assert.equal(contentBody.title, 'exact-content');
   assert.equal(contentBody.blocks[0].id, 'remote-note');
-  assert.deepEqual(feedbackBody, { ok: true, feedback: exactFeedback });
+  assert.deepEqual(feedbackBody, { ok: true, feedback: exactFeedback, byParticipant: [], conflicts: [] });
 });
 
 // ---- GET /api/status: claimed + fresh heartbeat → display=processing ----
@@ -922,6 +922,26 @@ async function withTokenServer(token, fn) {
   }
 }
 
+async function withIdentityServer({ ownerToken = 'owner-secret', participants = [] } = {}, fn) {
+  const previous = process.env.WORKBENCH_TOKEN;
+  if (ownerToken) process.env.WORKBENCH_TOKEN = ownerToken;
+  else delete process.env.WORKBENCH_TOKEN;
+  const rosterDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-roster-e2e-'));
+  const participantsFile = path.join(rosterDir, 'config', 'participants.json');
+  fs.mkdirSync(path.dirname(participantsFile), { recursive: true });
+  fs.writeFileSync(participantsFile, JSON.stringify(participants, null, 2));
+  const authServer = startServer(0, '127.0.0.1', { participantsFile });
+  await new Promise((resolve) => authServer.once('listening', resolve));
+  try {
+    await fn({ port: authServer.address().port, participantsFile });
+  } finally {
+    await new Promise((resolve) => authServer.close(resolve));
+    fs.rmSync(rosterDir, { recursive: true, force: true });
+    if (previous == null) delete process.env.WORKBENCH_TOKEN;
+    else process.env.WORKBENCH_TOKEN = previous;
+  }
+}
+
 test('safeTokenEqual：固定长度归一后比较 token', () => {
   assert.equal(typeof safeTokenEqual, 'function', 'server 应导出纯 token 比较函数');
   assert.equal(safeTokenEqual('alpha', 'alpha'), true);
@@ -1008,6 +1028,223 @@ test('WORKBENCH_TOKEN：页面 query、API query/header 放行，根路径重定
 
     const staticJs = await fetch(`${base}/render/app.mjs`);
     assert.equal(staticJs.status, 200, '页面加载所需静态 JS 可豁免 token');
+  });
+});
+
+test('参与者 token 放行页面/API，解析实名身份且根跳转不泄漏管理员口令', async () => {
+  const alice = {
+    id: 'alice', name: '小艾', token: 'alice-personal-token', createdAt: '2026-07-23T00:00:00.000Z',
+  };
+  await withIdentityServer({ participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const root = await fetch(`${base}/?token=${encodeURIComponent(alice.token)}`, { redirect: 'manual' });
+    assert.equal(root.status, 302);
+    const location = root.headers.get('location');
+    assert.equal(new URL(location, base).searchParams.get('token'), alice.token);
+    assert.equal(location.includes('owner-secret'), false);
+
+    assert.equal((await fetch(`${base}/render/?token=${alice.token}`)).status, 200);
+    assert.equal((await fetch(`${base}/api/health`, {
+      headers: { 'x-workbench-token': alice.token },
+    })).status, 200);
+    assert.equal((await fetch(`${base}/api/health?token=wrong`)).status, 403);
+
+    const sessionId = 'participant-identity';
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeStatus(sessionId, { state: 'rendered', round: 1 });
+    const posted = await fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': alice.token },
+      body: JSON.stringify({ session: sessionId, round: 1, items: [] }),
+    });
+    assert.equal(posted.status, 200);
+    const saved = readJSON(path.join(path.dirname(paths.feedback(sessionId, 1, { exactSession: true })), 'feedback-alice.json'));
+    assert.deepEqual(saved.submittedBy, { id: 'alice', name: '小艾' });
+  });
+});
+
+test('参与者 token 不能创建新一轮：POST /api/rounds 仅限管理员', async () => {
+  const alice = {
+    id: 'alice', name: '小艾', token: 'alice-personal-token', createdAt: '2026-07-23T00:00:00.000Z',
+  };
+  await withIdentityServer({ participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const denied = await fetch(`${base}/api/rounds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': alice.token },
+      body: JSON.stringify({ session: 'participant-no-rounds', title: 't', blocks: [] }),
+    });
+    assert.equal(denied.status, 403);
+    assert.match((await denied.json()).error, /管理员/);
+
+    const allowed = await fetch(`${base}/api/rounds`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': 'owner-secret' },
+      body: JSON.stringify({ session: 'owner-can-round', title: 't', blocks: [] }),
+    });
+    assert.equal(allowed.status, 200);
+  });
+});
+
+test('参与者管理 API：仅管理员可 add/list/delete，列表脱敏且吊销立即失效', async () => {
+  const alice = {
+    id: 'alice', name: '小艾', token: 'alice-existing-token', createdAt: '2026-07-23T00:00:00.000Z',
+  };
+  await withIdentityServer({ participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const ownerHeaders = { 'content-type': 'application/json', 'x-workbench-token': 'owner-secret' };
+    const createdRes = await fetch(`${base}/api/participants`, {
+      method: 'POST',
+      headers: ownerHeaders,
+      body: JSON.stringify({ id: 'bob', name: '小波' }),
+    });
+    assert.equal(createdRes.status, 201);
+    const created = await createdRes.json();
+    assert.equal(created.ok, true);
+    assert.deepEqual({ id: created.participant.id, name: created.participant.name }, { id: 'bob', name: '小波' });
+    assert.equal(Object.hasOwn(created.participant, 'token'), false);
+    const bobUrl = new URL(created.url);
+    assert.equal(bobUrl.origin, base);
+    assert.equal(bobUrl.pathname, '/render/');
+    const bobToken = bobUrl.searchParams.get('token');
+    assert.match(bobToken, /^[a-f0-9]{32}$/);
+
+    const listedRes = await fetch(`${base}/api/participants`, {
+      headers: { 'x-workbench-token': 'owner-secret' },
+    });
+    assert.equal(listedRes.status, 200);
+    const listed = await listedRes.json();
+    assert.deepEqual(listed.participants.map(({ id, name }) => ({ id, name })), [
+      { id: 'alice', name: '小艾' },
+      { id: 'bob', name: '小波' },
+    ]);
+    assert.equal(JSON.stringify(listed).includes(alice.token), false);
+    assert.equal(JSON.stringify(listed).includes(bobToken), false);
+
+    const denied = await fetch(`${base}/api/participants`, {
+      headers: { 'x-workbench-token': alice.token },
+    });
+    assert.equal(denied.status, 403);
+
+    const revoked = await fetch(`${base}/api/participants/bob`, {
+      method: 'DELETE',
+      headers: { 'x-workbench-token': 'owner-secret' },
+    });
+    assert.equal(revoked.status, 200);
+    assert.deepEqual(await revoked.json(), { ok: true, id: 'bob' });
+    assert.equal((await fetch(`${base}/api/health?token=${bobToken}`)).status, 403);
+  });
+
+  await withIdentityServer({ ownerToken: '', participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    assert.equal((await fetch(`${base}/api/participants?token=${alice.token}`)).status, 403);
+    assert.equal((await fetch(`${base}/api/participants`)).status, 403);
+  });
+});
+
+test('逐人反馈：独立落盘、首份兼容唤醒、owner 优先合并并检测 select 分歧', async () => {
+  const participants = [
+    { id: 'alice', name: '小艾', token: 'alice-feedback-token', createdAt: '2026-07-23T00:00:00.000Z' },
+    { id: 'bob', name: '小波', token: 'bob-feedback-token', createdAt: '2026-07-23T00:00:01.000Z' },
+  ];
+  await withIdentityServer({ participants }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const sessionId = 'multi-feedback';
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeStatus(sessionId, { state: 'rendered', round: 1 });
+    const submit = (token, value, comment = '') => fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': token },
+      body: JSON.stringify({
+        session: sessionId,
+        round: 1,
+        items: [{ blockId: 'decision-x', type: 'select', value, comment }],
+      }),
+    });
+
+    assert.equal((await submit(participants[0].token, 'safe', '稳妥')).status, 200);
+    const dir = path.dirname(paths.feedback(sessionId, 1, { exactSession: true }));
+    const aliceSaved = readJSON(path.join(dir, 'feedback-alice.json'));
+    assert.deepEqual(aliceSaved.submittedBy, { id: 'alice', name: '小艾' });
+    assert.deepEqual(readJSON(path.join(dir, 'feedback.json')).submittedBy, { id: 'alice', name: '小艾' });
+    assert.equal(readJSON(paths.status(sessionId)).state, 'submitted');
+
+    assert.equal((await submit(participants[1].token, 'fast', '更快')).status, 200);
+    const bobSaved = readJSON(path.join(dir, 'feedback-bob.json'));
+    assert.deepEqual(bobSaved.submittedBy, { id: 'bob', name: '小波' });
+
+    const participantView = await fetch(`${base}/api/feedback?session=${sessionId}&round=1`, {
+      headers: { 'x-workbench-token': participants[0].token },
+    }).then((res) => res.json());
+    assert.equal(participantView.feedback.submittedBy.id, 'alice');
+    assert.deepEqual(participantView.byParticipant.map((entry) => entry.id), ['alice', 'bob']);
+    assert.deepEqual(participantView.byParticipant.map((entry) => entry.name), ['小艾', '小波']);
+    assert.deepEqual(participantView.conflicts, [{
+      blockId: 'decision-x',
+      choices: [
+        { participant: '小艾', value: 'safe' },
+        { participant: '小波', value: 'fast' },
+      ],
+    }]);
+
+    const ownerFeedback = {
+      session: sessionId,
+      round: 1,
+      items: [{ blockId: 'decision-x', type: 'select', value: 'owner-final' }],
+    };
+    const ownerPost = await fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': 'owner-secret' },
+      body: JSON.stringify(ownerFeedback),
+    });
+    assert.equal(ownerPost.status, 200);
+    const ownerView = await fetch(`${base}/api/feedback?session=${sessionId}&round=1`, {
+      headers: { 'x-workbench-token': 'owner-secret' },
+    }).then((res) => res.json());
+    assert.deepEqual(ownerView.feedback.submittedBy, { id: 'owner', name: '管理员' });
+    assert.equal(ownerView.feedback.items[0].value, 'owner-final');
+    assert.deepEqual(ownerView.byParticipant.map((entry) => entry.id), ['alice', 'bob']);
+    assert.deepEqual(ownerView.conflicts[0].choices, [
+      { participant: '管理员', value: 'owner-final' },
+      { participant: '小艾', value: 'safe' },
+      { participant: '小波', value: 'fast' },
+    ]);
+  });
+});
+
+test('逐人反馈：相同 select/非 select 不报分歧，claimed 后参与者可补交且状态不倒退', async () => {
+  const participants = [
+    { id: 'alice', name: '小艾', token: 'alice-late-token', createdAt: '2026-07-23T00:00:00.000Z' },
+    { id: 'bob', name: '小波', token: 'bob-late-token', createdAt: '2026-07-23T00:00:01.000Z' },
+  ];
+  await withIdentityServer({ participants }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const sessionId = 'late-feedback';
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeStatus(sessionId, { state: 'rendered', round: 1 });
+    const post = (token, items) => fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': token },
+      body: JSON.stringify({ session: sessionId, round: 1, items }),
+    });
+
+    assert.equal((await post(participants[0].token, [
+      { blockId: 'same', type: 'select', value: 'a' },
+      { blockId: 'notes', type: 'text', value: '甲' },
+    ])).status, 200);
+    writeStatus(sessionId, { state: 'claimed', round: 1 });
+    assert.equal((await post(participants[1].token, [
+      { blockId: 'same', type: 'select', value: 'a' },
+      { blockId: 'notes', type: 'text', value: '乙' },
+    ])).status, 200);
+    assert.equal(readJSON(paths.status(sessionId)).state, 'claimed');
+
+    const ownerLate = await post('owner-secret', [{ blockId: 'same', type: 'select', value: 'a' }]);
+    assert.equal(ownerLate.status, 409, '旧 owner 单人流程的 claimed 防重入保持不变');
+    const view = await fetch(`${base}/api/feedback?session=${sessionId}&round=1`, {
+      headers: { 'x-workbench-token': 'owner-secret' },
+    }).then((res) => res.json());
+    assert.deepEqual(view.conflicts, []);
   });
 });
 

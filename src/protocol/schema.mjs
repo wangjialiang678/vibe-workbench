@@ -124,6 +124,12 @@ export function validateContent(content) {
   if (!content || typeof content !== 'object') return { ok: false, errors: ['content must be object'] };
   if (!content.session || typeof content.session !== 'string') errors.push('session required string');
   if (!Number.isSafeInteger(content.round) || content.round < 1) errors.push('round must be integer >=1');
+  if (content.meta != null) {
+    if (typeof content.meta !== 'object' || Array.isArray(content.meta)) errors.push('meta must be object');
+    else if (content.meta.docsUrl != null && typeof content.meta.docsUrl !== 'string') {
+      errors.push('meta.docsUrl must be string');
+    }
+  }
   if (!Array.isArray(content.blocks)) errors.push('blocks must be array');
   else {
     const ids = new Set();

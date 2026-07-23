@@ -91,6 +91,18 @@ lint 规则 `unexplained-jargon` 会揪出正文里出现、但 `background`/`wh
 
 渲染页常驻「💬 给 AI 留言」输入区，回传为 `feedback.sessionComment`。用户对整体、对工作台本身的话有地方说了——**别再让用户把全局反馈挂在不相干块的批注里**（病例 6）。
 
+## 9. 设计资产入口
+
+如果本轮有独立设计稿、原型或说明页，可在 content 顶层提供可选元数据，页头会出现「设计资产」：
+
+```json
+{
+  "meta": { "docsUrl": "https://example.com/design" }
+}
+```
+
+`meta` 必须是对象，`docsUrl` 必须是字符串。相对地址会按工作台同源解析并安全透传当前 token；外站只打开原 URL，不携带工作台口令。
+
 ---
 
 ## lint 规则速查

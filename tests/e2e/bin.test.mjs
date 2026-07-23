@@ -15,6 +15,9 @@ const ROOT = path.resolve(__dirname, '../..');
 
 let tmpDir;
 let cmdRender;
+let cmdParticipantAdd;
+let cmdParticipantList;
+let cmdParticipantRevoke;
 let paths;
 let readStatus;
 
@@ -27,11 +30,34 @@ before(async () => {
   // 注意：ESM 模块缓存 — 先设好环境变量再 import
   const bin = await import(BIN);
   cmdRender = bin.cmdRender;
+  cmdParticipantAdd = bin.cmdParticipantAdd;
+  cmdParticipantList = bin.cmdParticipantList;
+  cmdParticipantRevoke = bin.cmdParticipantRevoke;
 
   // 同时 import workspace 工具用于断言
   const ws = await import(`${ROOT}/src/workspace.mjs`);
   paths = ws.paths;
   readStatus = ws.readStatus;
+});
+
+describe('participant 本地管理', () => {
+  it('add/list/revoke 使用本地名册，列表不泄漏 token', async () => {
+    const participantsFile = path.join(tmpDir, 'config', 'participants.json');
+    const added = await cmdParticipantAdd('alice', '小艾', { participantsFile, baseUrl: 'https://workbench.example' });
+    assert.equal(added.participant.id, 'alice');
+    assert.equal(Object.hasOwn(added.participant, 'token'), false);
+    const invite = new URL(added.url);
+    assert.equal(invite.origin, 'https://workbench.example');
+    assert.equal(invite.pathname, '/render/');
+    assert.match(invite.searchParams.get('token'), /^[a-f0-9]{32}$/);
+
+    const listed = await cmdParticipantList({ participantsFile });
+    assert.deepEqual(listed.participants.map(({ id, name }) => ({ id, name })), [{ id: 'alice', name: '小艾' }]);
+    assert.equal(JSON.stringify(listed).includes(invite.searchParams.get('token')), false);
+
+    assert.deepEqual(await cmdParticipantRevoke('alice', { participantsFile }), { ok: true, id: 'alice' });
+    assert.deepEqual((await cmdParticipantList({ participantsFile })).participants, []);
+  });
 });
 
 after(async () => {
@@ -122,6 +148,7 @@ describe('CLI --help', () => {
     assert.ok(out.includes('serve'), '--help should mention serve');
     assert.ok(out.includes('watch'), '--help should mention watch');
     assert.ok(out.includes('up'), '--help should mention up');
+    assert.match(out, /participant\s+add/);
   });
 
   it('serve/up 帮助展示 --host 与默认监听地址', async () => {
