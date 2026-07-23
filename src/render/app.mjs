@@ -23,6 +23,12 @@ import {
   pendingDecisionBlocks,
   sectionPendingStats,
 } from '../protocol/attention.mjs';
+import {
+  submitButtonModel,
+  submitStateAfterEdit,
+  submitStateAfterFailure,
+  submitStateAfterSuccess,
+} from './submit-state.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -120,6 +126,7 @@ $sessionNav?.addEventListener('change', () => {
 if ($sessionComment) {
   $sessionComment.addEventListener('input', () => {
     try { localStorage.setItem(scKey(), $sessionComment.value); } catch { /* 忽略 */ }
+    markFeedbackDirty();
   });
 }
 
@@ -384,10 +391,25 @@ function loadDraft(round = currentRound) {
   catch { return {}; }
 }
 
+let _submitState = 'ready';
+
+function setSubmitState(state) {
+  _submitState = state;
+  if (!$submitBtn) return;
+  const model = submitButtonModel(state);
+  $submitBtn.disabled = model.disabled;
+  $submitBtn.textContent = model.label;
+}
+
+function markFeedbackDirty() {
+  setSubmitState(submitStateAfterEdit(_submitState));
+}
+
 function saveDraft(patch) {
   const draft = loadDraft();
   Object.assign(draft, patch);
   localStorage.setItem(draftKey(), JSON.stringify(draft));
+  markFeedbackDirty();
 }
 
 // ── 渲染 ─────────────────────────────────────────────────
@@ -1801,6 +1823,9 @@ async function doSubmit(draft, answeredIds, unanswered) {
     sessionComment: ($sessionComment?.value ?? '').trim() || null,  // 会话级留言（P1 · 病例 6）
   };
 
+  const previousSubmitState = _submitState;
+  setSubmitState('submitting');
+
   let resp;
   try {
     resp = await fetch(apiUrl('/api/feedback'), {
@@ -1809,16 +1834,19 @@ async function doSubmit(draft, answeredIds, unanswered) {
       body: JSON.stringify(payload),
     });
   } catch {
+    setSubmitState(submitStateAfterFailure(_submitState, previousSubmitState));
     downloadFallback(payload);
     return;
   }
 
   if (resp.status === 409) {
-    alert('该轮 AI 正在处理中，请等待或使用强制重试。');
+    setSubmitState(submitStateAfterFailure(_submitState, previousSubmitState));
+    alert('该轮 AI 正在读取上一版反馈。你的补充已保留，请稍后再点“再次提交”。');
     return;
   }
 
   if (!resp.ok) {
+    setSubmitState(submitStateAfterFailure(_submitState, previousSubmitState));
     if (confirm(`提交失败（HTTP ${resp.status}），是否下载为 JSON？`)) {
       downloadFallback(payload);
     }
@@ -1831,8 +1859,7 @@ async function doSubmit(draft, answeredIds, unanswered) {
     sessionStorage.setItem(toastKey, '1');
     showToast('提交成功！AI 正在处理，你可以关闭此页面，回复后会变蓝提醒。');
   }
-  $submitBtn.disabled = true;
-  $submitBtn.textContent = '已提交';
+  setSubmitState(submitStateAfterSuccess(_submitState));
 }
 
 function downloadFallback(payload) {
@@ -1875,8 +1902,7 @@ async function advanceToRound(newRound) {
   currentRound = newRound;
   _latestRound = Math.max(Number(_latestRound) || 0, newRound);
   _historyRoundsCacheKey = '';
-  $submitBtn.disabled = false;
-  $submitBtn.textContent = '提交';
+  setSubmitState('ready');
   updateSessionLabel();
   document.title = `第 ${newRound} 轮 — 振动编码工作台`;
   await loadAndRender();
