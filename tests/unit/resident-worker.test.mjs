@@ -1,0 +1,276 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import * as worker from '../../scripts/resident-worker.mjs';
+
+test('状态文件读写可重复执行且保持同一结果', () => {
+  assert.equal(typeof worker.readState, 'function');
+  assert.equal(typeof worker.writeState, 'function');
+
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-state-'));
+  try {
+    assert.deepEqual(worker.readState(workerHome), { perSession: {} });
+
+    const expected = {
+      perSession: {
+        'session-a': {
+          lastStreamId: 'stream-7',
+          lastFeedbackKey: '3',
+        },
+      },
+    };
+    worker.writeState(workerHome, expected);
+    const firstRaw = fs.readFileSync(path.join(workerHome, 'state.json'), 'utf8');
+    worker.writeState(workerHome, expected);
+
+    assert.deepEqual(worker.readState(workerHome), expected);
+    assert.equal(fs.readFileSync(path.join(workerHome, 'state.json'), 'utf8'), firstRaw);
+    assert.equal(fs.existsSync(path.join(workerHome, 'state.json.tmp')), false);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('状态文件可安全保存 JavaScript 原型同名 session', () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-state-key-'));
+  try {
+    const perSession = {};
+    Object.defineProperty(perSession, '__proto__', {
+      value: { lastStreamId: 'proto-stream', lastFeedbackKey: '1' },
+      enumerable: true,
+    });
+    Object.defineProperty(perSession, 'constructor', {
+      value: { lastStreamId: 'constructor-stream', lastFeedbackKey: '2' },
+      enumerable: true,
+    });
+
+    worker.writeState(workerHome, { perSession });
+    const loaded = worker.readState(workerHome);
+
+    assert.equal(Object.hasOwn(loaded.perSession, '__proto__'), true);
+    assert.equal(Object.hasOwn(loaded.perSession, 'constructor'), true);
+    assert.equal(loaded.perSession.__proto__.lastStreamId, 'proto-stream');
+    assert.equal(loaded.perSession.constructor.lastStreamId, 'constructor-stream');
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('空工作台单轮执行也会初始化状态文件', async () => {
+  assert.equal(typeof worker.runOnce, 'function');
+
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-once-'));
+  try {
+    const result = await worker.runOnce({
+      workbenchUrl: 'http://127.0.0.1:8099',
+      token: 'test-token',
+      model: 'gpt-test',
+      workerHome,
+      pollMs: 5000,
+    }, {
+      async fetchImpl() {
+        return new Response(JSON.stringify({ ok: true, sessions: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+
+    assert.deepEqual(result, { sessions: 0, queued: 0, processed: 0 });
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(workerHome, 'state.json'), 'utf8')),
+      { perSession: {} },
+    );
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('事件过滤只保留 owner 与 participant，忽略 AI 条目', () => {
+  assert.equal(typeof worker.filterHumanEntries, 'function');
+
+  const entries = [
+    {
+      id: 'owner-1',
+      author: { id: 'owner', name: '创始人', role: 'owner' },
+      kind: 'message',
+      text: '请检查线上状态。',
+    },
+    {
+      id: 'ai-1',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      kind: 'receipt',
+      text: '已处理完毕',
+    },
+    {
+      id: 'participant-1',
+      author: { id: 'alice', name: '小艾', role: 'participant' },
+      kind: 'message',
+      text: '按钮点了没有反应。',
+    },
+    {
+      id: 'ai-2',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      kind: 'progress',
+      text: '处理中',
+    },
+  ];
+
+  assert.deepEqual(
+    worker.filterHumanEntries(entries).map((entry) => entry.id),
+    ['owner-1', 'participant-1'],
+  );
+});
+
+test('任务简报包含事件原文、会话与轮次', () => {
+  assert.equal(typeof worker.buildTaskBrief, 'function');
+
+  const brief = worker.buildTaskBrief({
+    session: 'founder-review',
+    round: 4,
+    events: [{
+      type: 'message',
+      entry: {
+        id: 'message-9',
+        at: '2026-07-23T10:00:00.000Z',
+        author: { id: 'owner', name: '创始人', role: 'owner' },
+        kind: 'message',
+        text: '请修复支付回调里的重复入账，并把验证结果写回来。',
+      },
+    }],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/home/ubuntu/cloud-codex-now',
+  });
+
+  assert.match(brief, /founder-review/);
+  assert.match(brief, /第 4 轮/);
+  assert.match(brief, /请修复支付回调里的重复入账，并把验证结果写回来。/);
+});
+
+test('Codex 超时后终止子进程', async () => {
+  assert.equal(typeof worker.runCodex, 'function');
+
+  class StubChild extends EventEmitter {
+    constructor() {
+      super();
+      this.pid = 43210;
+      this.stdout = new EventEmitter();
+      this.stderr = new EventEmitter();
+      this.killedWith = [];
+    }
+
+    kill(signal) {
+      this.killedWith.push(signal);
+      queueMicrotask(() => this.emit('close', null, signal));
+      return true;
+    }
+  }
+
+  const child = new StubChild();
+  const calls = [];
+  const groupKills = [];
+  const result = await worker.runCodex('测试简报', {
+    model: 'gpt-test',
+    workerHome: '/tmp/resident-worker-test',
+    timeoutMs: 5,
+    spawnImpl(command, args, options) {
+      calls.push({ command, args, options });
+      return child;
+    },
+    killImpl(pid, signal) {
+      groupKills.push([pid, signal]);
+      queueMicrotask(() => child.emit('close', null, signal));
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'codex');
+  assert.deepEqual(calls[0].args.slice(0, 6), [
+    'exec',
+    '--model',
+    'gpt-test',
+    '--sandbox',
+    'danger-full-access',
+    '-C',
+  ]);
+  assert.equal(calls[0].args.includes('--skip-git-repo-check'), true);
+  assert.equal(calls[0].args.includes('model_reasoning_effort="xhigh"'), true);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(result.timedOut, true);
+  assert.deepEqual(groupKills, [[-43210, 'SIGTERM']]);
+  assert.deepEqual(child.killedWith, []);
+});
+
+test('Codex 失败回执不会泄露环境变量中的口令', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-redact-'));
+  const streamEvents = [];
+  try {
+    const result = await worker.runOnce({
+      workbenchUrl: 'http://127.0.0.1:8099',
+      token: 'super-secret-token',
+      model: 'gpt-test',
+      workerHome,
+      pollMs: 5000,
+    }, {
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['session-a'] };
+        } else if (url.pathname === '/api/messages') {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'message-1',
+              author: { id: 'owner', name: '创始人', role: 'owner' },
+              kind: 'message',
+              text: '执行测试任务',
+            }],
+          };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/stream-events') {
+          streamEvents.push(JSON.parse(options.body));
+          payload = { ok: true };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl() {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => {
+          child.stderr.emit('data', '请求失败：super-secret-token');
+          child.emit('close', 1, null);
+        });
+        return child;
+      },
+      logger: { log() {} },
+    });
+
+    assert.equal(result.processed, 1);
+    const receipt = streamEvents.find((event) => event.kind === 'receipt');
+    assert.match(receipt.text, /^处理失败：/);
+    assert.doesNotMatch(receipt.text, /super-secret-token/);
+    assert.match(receipt.text, /已脱敏/);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('systemd 先只终止 worker 主进程，让当前 Codex 有时间完成', () => {
+  const service = fs.readFileSync(
+    new URL('../../scripts/resident-worker.service', import.meta.url),
+    'utf8',
+  );
+  assert.match(service, /^KillMode=mixed$/m);
+  assert.match(service, /^KillSignal=SIGTERM$/m);
+  assert.match(service, /^TimeoutStopSec=31min$/m);
+});

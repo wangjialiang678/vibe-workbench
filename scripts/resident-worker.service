@@ -1,0 +1,32 @@
+# 安装后把本文件复制到 /etc/systemd/system/resident-worker.service。
+[Unit]
+Description=Cloud Codex resident worker for Vibecoding Workbench
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/cloud-codex-now
+Environment=WORKBENCH_URL=http://127.0.0.1:8099
+Environment=CODEX_MODEL=gpt-5.6-sol
+Environment=WORKER_HOME=/home/ubuntu/cloud-codex-now
+Environment=POLL_MS=5000
+# 此文件至少包含 WORKBENCH_TOKEN=...，权限应设为 0600。
+EnvironmentFile=/etc/cloud-codex-now.env
+ExecStart=/usr/bin/env node /home/ubuntu/apps/vibecoding-workbench/scripts/resident-worker.mjs
+Restart=always
+RestartSec=5
+# SIGTERM 先只给主进程；超时后 systemd 再清理整个 cgroup。
+KillMode=mixed
+KillSignal=SIGTERM
+# worker 最多等待当前 30 分钟任务结束，再给 systemd 留 1 分钟收尾。
+TimeoutStopSec=31min
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=resident-worker
+
+[Install]
+WantedBy=multi-user.target
