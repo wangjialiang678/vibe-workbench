@@ -116,3 +116,14 @@ lint 规则 `unexplained-jargon` 会揪出正文里出现、但 `background`/`wh
 | `editable-for-confirm` | 确认场景用了 `editable` | 5 |
 | `multi-question` | 一个 freetext 塞多问 | 4 |
 | `unexplained-jargon` | 正文有术语但 background/why 里没解释 | 3 |
+
+## 体验类内容必须可视化（2026-07-23 创始人拍板，默认规则）
+
+凡涉及**界面布局、交互流程、视觉方案**等体验类决策：
+
+1. 每个候选方案配**低保真线框**（`prototype` 块 `mode:"wireframe"`，或渲染成图的 `mode:"image"`）；
+2. 推荐方案再配**高保真稿**（HTML mockup 截图或 `mode:"iframe"`；手机场景加 `frame:"phone"`）；
+3. 图上开放 pin 批注；正式表态用相邻 verdict/choice 块承接（必答校验走块，图上批注是可选补充）；
+4. **严禁 ASCII/框线字符画**（lint 规则 `ascii-art` 会警告）：网页是比例字体，框线必然散架；流程示意用 mermaid `diagram` 块。
+
+创始人原话："低保真、高保真的图都应该让我确认这些体验类的内容。之后能不能默认有这种类型的交互和体验？不需要我提醒。""不要用 ascii 字符，你已经是在 html 里了。"

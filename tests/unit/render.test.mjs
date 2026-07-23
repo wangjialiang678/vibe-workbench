@@ -881,3 +881,16 @@ test('renderPrototype(iframe): 同源相对 src 直连（不绕代理）；外�
   const remote = blockHtml({ id: 'b-ui-x', type: 'prototype', mode: 'iframe', src: 'http://example.com/a.html', _change: 'new' });
   assert.ok(remote.includes('/api/proxy?url='), '外站绝对 URL 仍走代理（绕过 X-Frame-Options）');
 });
+
+test('mdToHtml 围栏代码块渲染为等宽 pre 且内容转义、不做行内转换', () => {
+  const html = mdToHtml('前文\n```\n<b>**不该加粗**</b>\n```\n后文');
+  assert.match(html, /<pre class="md-fence"><code>/);
+  assert.match(html, /&lt;b&gt;/);
+  assert.equal(html.includes('<strong>'), false, '围栏内不做行内转换');
+  assert.equal(html.includes('```'), false, '反引号不外露');
+});
+
+test('mdToHtml 未闭合围栏不吞掉后续内容为不可见', () => {
+  const html = mdToHtml('```\n孤行围栏');
+  assert.equal(html.includes('孤行围栏') || html.includes('md-fence'), true);
+});

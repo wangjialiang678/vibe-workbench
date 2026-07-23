@@ -1,5 +1,5 @@
 // 极简 markdown → HTML 转换器。浏览器安全，无 node 依赖，纯函数。
-// 支持：# ## 标题、**粗体**、`代码`、- 列表、[t](u) 链接、段落/换行。
+// 支持：# ## 标题、**粗体**、`代码`、```围栏代码块、- 列表、[t](u) 链接、段落/换行。
 // 先转义 < > &，再处理 md 语法，保证 XSS 安全。
 
 function escapeHtml(str) {
@@ -25,10 +25,26 @@ export function mdToHtml(src) {
   const lines = src.split('\n');
   const out = [];
   let inList = false;
+  let inFence = false;
+  let fenceBuf = [];
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
     const esc = escapeHtml(raw);
+
+    // 围栏代码块 ```：整块原样等宽展示，不做任何行内转换
+    if (/^```/.test(raw.trim())) {
+      if (!inFence) {
+        if (inList) { out.push('</ul>'); inList = false; }
+        inFence = true;
+        fenceBuf = [];
+      } else {
+        out.push(`<pre class="md-fence"><code>${fenceBuf.join('\n')}</code></pre>`);
+        inFence = false;
+      }
+      continue;
+    }
+    if (inFence) { fenceBuf.push(esc); continue; }
 
     // 标题
     const h2 = esc.match(/^## (.+)/);
@@ -63,6 +79,10 @@ export function mdToHtml(src) {
     out.push(`<p>${inlineConvert(esc)}</p>`);
   }
 
+  if (inFence && fenceBuf.length) {
+    // 未闭合的围栏：按已开的代码块兜底输出，内容绝不丢失
+    out.push(`<pre class="md-fence"><code>${fenceBuf.join('\n')}</code></pre>`);
+  }
   if (inList) out.push('</ul>');
   return out.join('\n');
 }

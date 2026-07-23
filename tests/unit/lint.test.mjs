@@ -128,3 +128,16 @@ test('决策完整性：needsDecision:false 不产生缺失项', () => {
 
   assert.deepEqual(issues, []);
 });
+
+test('ascii-art：正文含 3 个以上框线字符触发警告', () => {
+  const block = {
+    id: 'b-art', type: 'markdown',
+    body: '布局示意：\n┌───┬───┐\n│流 │卡片│\n└───┴───┘',
+  };
+  assert.equal(rules(block).includes('ascii-art'), true);
+});
+
+test('ascii-art：普通中文与少量特殊字符不误报', () => {
+  const block = { id: 'b-ok', type: 'markdown', body: '正常段落——含破折号、引号"和"箭头→，不是字符画' };
+  assert.equal(rules(block).includes('ascii-art'), false);
+});

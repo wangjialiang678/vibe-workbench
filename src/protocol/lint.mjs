@@ -88,6 +88,15 @@ export function lintBlock(block) {
       push('missing-proscons', `${incomplete.length}/${opts.length} 个选项缺非空 pros/cons：选项只讲机制不讲后果，用户无法判断"选了会发生什么、能不能反悔"（病例 1）`);
     }
   }
+  // —— ASCII 字符画检测（创始人 2026-07-23 实证反馈：框线在比例字体下必然散架）——
+  // 命中 3 个以上制表/框线字符（U+2500–U+257F）即判定为字符画
+  const artSource = [block.body, block.value, ...(Array.isArray(block.options) ? block.options.map((o) => o?.desc) : [])]
+    .filter((s) => typeof s === 'string').join('\n');
+  const boxChars = (artSource.match(/[─-╿]/g) || []).length;
+  if (boxChars >= 3) {
+    push('ascii-art', `检测到 ${boxChars} 个框线字符：ASCII/框线示意在网页比例字体下会散架，界面布局请用 prototype 线框/图片，流程请用 mermaid diagram 块`);
+  }
+
   if (isDecision && block.hasRecommendation === true && !isNonEmptyString(block.recommendReason)) {
     push('missing-recommend-reason', '有 recommendation 却缺 recommendReason：用户不知道你为什么推荐它');
   }
