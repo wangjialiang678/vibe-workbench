@@ -63,7 +63,7 @@ resident-worker.service（当前每 5 秒轮询、全局串行）
 - Codex CLI：生产当前为 0.145.0；使用 ChatGPT 登录态运行 `codex exec`。
 - 机密只从受限环境文件和进程环境读取，不得写入仓库、文档、日志或对话。
 
-版本会变化，排障时以第 6 节命令的实时输出为准。
+版本会变化，排障时以第 7 节命令的实时输出为准。
 
 ## 3. 当前消息与进程语义
 
@@ -178,7 +178,98 @@ Codex CLI 已提供非交互 `codex exec`。官方也提供实验性的 `codex a
 - 最近一次备份过旧或恢复校验失败；
 - 5xx、任务失败率、重复回执率异常。
 
-## 6. 安全排障清单
+## 6. 日志、审计与保留策略
+
+### 6.1 当前实际情况（2026-07-23）
+
+当前有三类容易被统称为“日志”的数据，必须分开治理：
+
+1. **业务事实**：`workspace/<session>/stream.jsonl`、轮次、反馈、文档和附件。它们是产品数据和恢复源，不是可随手轮转的运行日志。
+2. **进程日志**：工作台与 worker 的 stdout/stderr 进入 systemd journal；本机又把 journal 转发给 rsyslog，因此一部分内容同时出现在 `/var/log/syslog`。
+3. **代码与交付记录**：Git commit 保存代码变更，但不覆盖被 Git 忽略的 `workspace/`。
+
+现场快照：
+
+- 整台主机的 journal 当前占用约 2.3 GiB；这是全机数据，不全属于工作台。
+- journald 没有显式配置 `SystemMaxUse` 或 `MaxRetentionSec`，当前主要依赖发行版默认的磁盘比例上限。
+- rsyslog 的 `/var/log/syslog` 当前按周轮转、保留 4 份；与 journal 存在重复存储。
+- worker 每 5 秒打印一条空轮询结果。当前服务启动后的约 5 小时内产生了 3,334 条完全相同的空闲日志，而真正启动的任务只有 4 个。这类心跳应改成指标，不应逐条写日志。
+- 仓库主分支已合入“本机事件推送 + 60 秒兜底轮询”，但当前已安装并正在运行的 systemd unit 仍设置 `POLL_MS=5000`，工作台 unit 也尚未配置事件 webhook。也就是说代码已具备新路径，生产配置还未完成切换；应在当前任务结束后做受控部署和健康验证。
+- worker 的任务日志目前只有 session、事件数、退出码、signal 和超时标记；缺少稳定的 `job_id`、attempt、排队时长、执行耗时和结果引用，无法可靠串起一次任务。
+- 工作台没有统一 HTTP 访问日志，也没有 request ID、路由模板、状态码和延迟记录；现有 `/api/health` 只是存活检查，不是依赖就绪检查。
+- Codex stdout/stderr 只在 worker 内存里保留最后约 32 KiB。失败时，stderr 尾部最多 300 字会成为用户可见回执；这不适合作为诊断日志，也扩大了意外泄露内部信息的风险。
+- 完整任务简报目前作为 `codex exec` 命令行参数传递。它虽然没有被 worker 主动写入 journal，但会暂时出现在进程参数中；后续应改为 stdin 或仅当前用户可读的临时文件。
+- `workspace/` 当前约 2.3 MiB、目标 session 的 `stream.jsonl` 约 25 KiB，容量暂时很小，但没有生命周期、异地备份或恢复校验。当前也未发现工作台 workspace 的专门备份任务。
+- 根分区当前使用率约 79%，inode 使用率约 20%。容量还未耗尽，但已经应该进入预警区。
+
+### 6.2 推荐的数据分层与默认保留期
+
+以下是当前规模下的起始默认值；若未来出现合同、隐私或合规要求，应以更严格的要求覆盖：
+
+| 数据层 | 应保存的内容 | 默认保留 |
+|---|---|---|
+| 业务事实源 | 对话、反馈、文档、附件、最终回答、job 最终状态与结果引用 | workspace 生命周期内长期保存；删除后保留 30 天可恢复副本 |
+| 安全与变更审计 | 管理员动作、权限拒绝、部署/回滚、配置版本、备份/恢复、登录就绪状态变化 | 365 天 |
+| 任务执行摘要 | job 创建/领取/开始/完成/重试/dead-letter、attempt、队列等待、耗时、模型、退出分类 | 90 天 |
+| HTTP 元数据 | 时间、路由模板、方法、状态码、延迟、请求/响应字节数、request ID、身份角色 | 30 天；安全拒绝类提升到 90 天 |
+| 调试与失败诊断 | 脱敏后的 stack、失败子进程尾部、临时 debug 事件 | 7 天；debug 必须有自动关闭时间 |
+| 指标 | 队列深度、最老任务、成功率、延迟、重启、磁盘、备份新鲜度 | 原始粒度 30 天；日聚合 13 个月 |
+
+业务事实应通过版本化、加密、异地备份保护，而不是复制进日志系统。建议备份保留为每日 30 份、每周 12 份、每月 12 份，并至少每季度做一次隔离恢复演练。
+
+### 6.3 统一结构化事件
+
+应用日志应改成单行 JSON；每条至少有：
+
+```json
+{
+  "ts": "ISO-8601",
+  "severity": "info",
+  "event": "job.completed",
+  "service.name": "resident-worker",
+  "service.version": "git-sha",
+  "service.instance.id": "opaque-instance-id",
+  "environment": "production",
+  "request_id": "opaque-id",
+  "job_id": "immutable-id",
+  "event_id": "source-event-id",
+  "session_ref": "pseudonymous-ref",
+  "attempt": 1,
+  "status": "success",
+  "duration_ms": 1234
+}
+```
+
+关键事件包括：
+
+- `message.accepted`、`job.created`、`job.claimed`、`job.started`、`job.completed`、`job.retry_scheduled`、`job.dead_lettered`；
+- `answer.persisted`、`commit.created`、`deploy.started`、`deploy.succeeded`、`deploy.rolled_back`；
+- `auth.readiness_changed`、`backup.completed`、`backup.failed`、`restore.verified`；
+- `service.started`、`service.stopping`、`service.crashed`。
+
+heartbeat、空轮询和正常 readiness 探测只更新 metrics；仅在状态变化或持续异常时记日志。日志、指标和未来 trace 使用同一 request/job ID 关联，但日志本身不保存消息正文。
+
+### 6.4 明确禁止进入运行日志的内容
+
+- 访问令牌、Cookie、设备码、密码、密钥、认证缓存和环境文件内容；
+- HTTP query 中的 token、完整请求/响应 body、完整任务简报、对话正文和附件正文；
+- 模型隐式推理过程；最终回答已经存在对话事实源中，无需再复制；
+- 未脱敏的 stderr、Git remote 凭据、内部连接串；
+- 原始 IP、文件路径或个人身份信息，除非诊断确有必要且已有访问控制；通常应截断、哈希或用稳定的匿名引用替代。
+
+用户可见回执只给稳定错误码、可理解原因和下一步；详细错误写入受限诊断日志，并通过 `job_id` 关联。所有外部输入在进入单行日志前都要清理换行和分隔符，防止日志注入。
+
+### 6.5 落地顺序
+
+1. **立即降噪与限额**：取消每 5 秒空轮询日志；明确 journal 为唯一主机日志源，避免工作台日志再复制到 syslog；给 journal 设置大小与时间双限额。以当前 59 GiB 根盘为起点，可评估 `SystemMaxUse=512M`、`SystemKeepFree=8G`、`MaxRetentionSec=30day`，实施前需确认不会影响同机其他服务。
+2. **补结构化任务日志**：先随 durable job 引入 `job_id`、attempt 和状态机，再记录队列时长、执行时长、退出分类和结果引用。
+3. **补 readiness 与 metrics**：区分 live/ready；监控 pending、dead-letter、auth、磁盘、备份和重复回执，不用日志模拟指标。
+4. **集中告警而非先上重平台**：当前规模可继续用 journald + 轻量指标采集；达到多机 Runner 后，再接 OpenTelemetry Collector 和集中日志/指标后端。
+5. **落实访问与删除制度**：生产日志只允许受限运维身份读取；导出、查询和删除日志本身也要有审计记录。
+
+建议阈值：根盘使用率 75% warning、85% critical；最老 pending 超过 2 分钟 warning、10 分钟 critical；auth readiness 一次状态变化即告警；dead-letter 非零、备份超过 26 小时或恢复校验失败立即告警。
+
+## 7. 安全排障清单
 
 以下命令不需要输出任何口令：
 
@@ -220,7 +311,7 @@ codex login --device-auth
 
 不要让修复 Agent 把认证缓存、环境文件或设备码内容写进日志、工单、文档或 Git。
 
-## 7. 备份与恢复范围
+## 8. 备份与恢复范围
 
 代码仓库镜像只覆盖 Git 已跟踪内容。至少还要备份：
 
@@ -237,18 +328,18 @@ codex login --device-auth
 - 定期在隔离目录做恢复演练；
 - 恢复顺序为：停写 → 恢复数据 → 校验权限与结构 → 启动工作台 → 启动 Runner → 对账 pending jobs。
 
-## 8. 建议实施顺序
+## 9. 建议实施顺序
 
 1. **P0：任务可靠性**——把“游标前移”改成持久 job + lease + ack；修复同轮重复提交对 worker 不可见的问题。
 2. **P0：数据保护**——为 `workspace/` 建立加密异地备份并做一次恢复演练。
-3. **P1：低延迟**——新事件成功提交后 push `/wake`，60 秒对账保留为兜底。
+3. **P1：低延迟**——代码已合入本机事件推送和 60 秒对账兜底；补齐生产 unit 配置、受控重启并验证“推送成功 + 轮询兜底”后才算完成。
 4. **P1：可观察性**——增加 live/ready、队列指标、auth readiness 和外部告警。
 5. **P2：多 Runner**——先同机验证竞争与幂等，再部署跨主机备用。
 6. **P2：受限诊断 Agent**——基于本文和 allowlist 自动诊断、重启、验证；代码修复走候选 commit 与健康门槛。
 
 这套顺序先消除“消息已经收到了但任务永远消失”的风险，再追求零延迟和多实例。事件推送、独立 Agent API 与自动修复都可以保留，但必须建立在持久任务和幂等执行之上。
 
-## 9. 相关源码与官方依据
+## 10. 相关源码与官方依据
 
 - 当前 worker：`scripts/resident-worker.mjs`
 - systemd 模板：`scripts/resident-worker.service`
@@ -258,3 +349,6 @@ codex login --device-auth
 - 当前测试：`tests/unit/resident-worker.test.mjs`
 - Codex CLI 非交互命令：[Codex developer commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli#cli-codex-exec)
 - Codex 登录、缓存与 headless 设备登录：[Codex authentication](https://learn.chatgpt.com/docs/auth)
+- journal 大小与时间保留配置：[systemd journald.conf](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
+- 日志关联与服务实例字段：[OpenTelemetry Logs](https://opentelemetry.io/docs/specs/otel/logs/) · [Service attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/)
+- 敏感数据排除、日志注入防护与访问控制：[OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)
