@@ -10,12 +10,14 @@
 - [backend] content API 注入 diff、feedback 落盘+状态机、status 联合判定、retry 重置
 - [backend] rounds 远程写入（鉴权/2 MiB/lint/409）、feedback GET 轮询、事件 webhook
 - [backend] 参与者 magic-link 身份、owner-only 管理 API、逐人反馈/owner 优先合并/select 分歧、首份兼容唤醒
+- [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events、受保护附件上传
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
 - [templates] think-discuss / dev-review 产出合协议、决策块元数据正确
 - [CLI] workbench render 写入 + status=rendered；--help
 - [CLI] WORKBENCH_REMOTE_URL 下 present/wait 只读写云端；未设置时本地路径零回归
 - [CLI] participant add/list/revoke 本地与远程一致，list 不泄漏 token
+- [CLI] wait --events 本地/远程消息唤醒；stream-migrate 历史留言幂等
 - [frontend] 逐块只读意见/分歧角标、会话列表、meta.docsUrl 设计资产入口
 
 ## P1-E2E 场景（[scenario]）
@@ -31,6 +33,9 @@
 | FR-3/8 API | tests/e2e/server.test.mjs | content/feedback/status/retry | [backend] |
 | 远程会话服务 | tests/e2e/server.test.mjs | rounds 写入/冲突/限流/lint、feedback 轮询、webhook | [backend] |
 | 远程 CLI | tests/e2e/present.test.mjs | 远程 present/wait、token URL、错误中文化 | [CLI] |
+| 会话流数据层 | tests/unit/stream.test.mjs | append/read since/最近100/精确路径/迁移幂等 | [backend] |
+| 会话流与附件 API | tests/e2e/session-stream.test.mjs | 消息实名/长度/回执/管理员事件/webhook/附件类型大小清洗鉴权 | [backend] |
+| 事件化 CLI | tests/e2e/stream-cli.test.mjs | wait --events 本地/远程唤醒、默认兼容、stream-migrate | [CLI] |
 | D5 个人链接 | tests/unit/participants.test.mjs、tests/e2e/server.test.mjs | 名册原子写/脱敏/吊销、参与者 token、管理 API 鉴权 | [backend] |
 | D6 逐人反馈 | tests/e2e/server.test.mjs、tests/unit/render.test.mjs | 独立落盘、兼容桥、owner 优先、select 分歧、只读转义渲染 | [backend]/[frontend] |
 | participant CLI | tests/e2e/bin.test.mjs、tests/e2e/present.test.mjs | 本地/远程 add/list/revoke | [CLI] |

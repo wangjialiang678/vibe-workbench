@@ -32,6 +32,11 @@ const {
   revokeParticipant,
 } = await import(`${ROOT}/src/participants.mjs`);
 
+const {
+  migrateSessionComments,
+  readStreamEntries,
+} = await import(`${ROOT}/src/stream.mjs`);
+
 // ─── cmdRender ───────────────────────────────────────────────────────────────
 /**
  * 渲染一轮内容到 workspace 文件。
@@ -80,6 +85,7 @@ async function requestRemoteJson(base, relativePath, {
   query,
   body,
   timeoutMs = 30000,
+  signal: externalSignal,
 } = {}) {
   const target = remoteUrl(base, relativePath, query);
   const headers = {};
@@ -92,12 +98,15 @@ async function requestRemoteJson(base, relativePath, {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   timer.unref?.();
+  const signal = externalSignal
+    ? AbortSignal.any([controller.signal, externalSignal])
+    : controller.signal;
   try {
     response = await fetch(target, {
       method,
       headers,
       body: body == null ? undefined : JSON.stringify(body),
-      signal: controller.signal,
+      signal,
       // 共享口令绝不跟随 30x 发往另一个 origin；重定向由调用者改正 REMOTE_URL 后重试。
       redirect: 'manual',
     });
@@ -129,6 +138,31 @@ async function requestRemoteJson(base, relativePath, {
     throw new Error(`远程工作台返回 ${response.status}：${payload?.error || '请求失败'}`);
   }
   return payload;
+}
+
+function remoteFeedbackEvent(response, session, round) {
+  if (response.ok && response.feedback) {
+    if (typeof response.feedback !== 'object'
+      || response.feedback.session !== session
+      || response.feedback.round !== round) {
+      throw new Error('远程工作台返回格式无效：feedback 与请求的 session/round 不一致');
+    }
+    return { ok: true, event: 'feedback', session, round, feedback: response.feedback };
+  }
+  if (!response.pending) throw new Error('远程工作台返回了无法识别的反馈状态');
+  return null;
+}
+
+function remoteMessageEntries(response) {
+  if (!response || response.ok !== true || !Array.isArray(response.entries)) {
+    throw new Error('远程工作台返回格式无效：messages 缺少 entries');
+  }
+  for (const entry of response.entries) {
+    if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || !entry.id) {
+      throw new Error('远程工作台返回格式无效：message 条目无效');
+    }
+  }
+  return response.entries;
 }
 
 function localInviteBase(baseUrl) {
@@ -270,36 +304,119 @@ export async function cmdWait(session, round, {
   intervalMs,
   nowFn = Date.now,
   sleepFn = sleep,
+  events = false,
 } = {}) {
   const remote = remoteBaseUrl();
   const pollInterval = intervalMs ?? (remote ? 3000 : 2000);
   const fbPath = remote ? null : paths.feedback(session, round);
   const deadline = nowFn() + timeoutMs;
+
+  // 默认分支保持旧行为；只有 --events 才读取会话流。
+  if (!events) {
+    while (nowFn() < deadline) {
+      if (remote) {
+        let response;
+        try {
+          response = await requestRemoteJson(remote, '/api/feedback', {
+            query: { session, round },
+            timeoutMs: Math.max(1, deadline - nowFn()),
+          });
+        } catch (error) {
+          if (error?.code === 'REMOTE_TIMEOUT' && nowFn() >= deadline) {
+            return { ok: false, event: 'timeout', session, round };
+          }
+          throw error;
+        }
+        const event = remoteFeedbackEvent(response, session, round);
+        if (event) return event;
+      } else if (exists(fbPath)) {
+        return { ok: true, event: 'feedback', session, round, feedback: readJSON(fbPath) };
+      }
+      const remaining = deadline - nowFn();
+      if (remaining <= 0) break;
+      await sleepFn(Math.min(pollInterval, remaining));
+    }
+    return { ok: false, event: 'timeout', session, round };
+  }
+
+  let streamCursor = null;
+  if (remote) {
+    try {
+      const baseline = remoteMessageEntries(await requestRemoteJson(remote, '/api/messages', {
+        query: { session },
+        timeoutMs: Math.max(1, deadline - nowFn()),
+      }));
+      streamCursor = baseline.at(-1)?.id || null;
+    } catch (error) {
+      if (error?.code === 'REMOTE_TIMEOUT' && nowFn() >= deadline) {
+        return { ok: false, event: 'timeout', session, round };
+      }
+      throw error;
+    }
+  } else {
+    streamCursor = readStreamEntries(session, { limit: 1, exactSession: true }).at(-1)?.id || null;
+  }
+
   while (nowFn() < deadline) {
     if (remote) {
-      let response;
-      try {
-        response = await requestRemoteJson(remote, '/api/feedback', {
-          query: { session, round },
-          timeoutMs: Math.max(1, deadline - nowFn()),
-        });
-      } catch (error) {
+      const controller = new AbortController();
+      const requestTimeout = Math.max(1, deadline - nowFn());
+      const feedbackCheck = requestRemoteJson(remote, '/api/feedback', {
+        query: { session, round },
+        timeoutMs: requestTimeout,
+        signal: controller.signal,
+      }).then((response) => ({ source: 'feedback', event: remoteFeedbackEvent(response, session, round) }))
+        .catch((error) => ({ source: 'feedback', error }));
+      const messageCheck = requestRemoteJson(remote, '/api/messages', {
+        query: { session, ...(streamCursor ? { since: streamCursor } : {}) },
+        timeoutMs: requestTimeout,
+        signal: controller.signal,
+      }).then((response) => {
+        const entries = remoteMessageEntries(response);
+        if (entries.length) streamCursor = entries.at(-1).id;
+        return {
+          source: 'message',
+          event: entries.length
+            ? { ok: true, event: 'message', session, round, message: entries[0] }
+            : null,
+        };
+      }).catch((error) => ({ source: 'message', error }));
+
+      const pending = new Map([
+        ['feedback', feedbackCheck],
+        ['message', messageCheck],
+      ]);
+      const first = await Promise.race(pending.values());
+      pending.delete(first.source);
+      if (first.event) {
+        controller.abort();
+        await Promise.allSettled(pending.values());
+        return first.event;
+      }
+      const second = await pending.values().next().value;
+      if (second.event) {
+        controller.abort();
+        return second.event;
+      }
+      const error = first.error || second.error;
+      if (error) {
         if (error?.code === 'REMOTE_TIMEOUT' && nowFn() >= deadline) {
           return { ok: false, event: 'timeout', session, round };
         }
         throw error;
       }
-      if (response.ok && response.feedback) {
-        if (typeof response.feedback !== 'object'
-          || response.feedback.session !== session
-          || response.feedback.round !== round) {
-          throw new Error('远程工作台返回格式无效：feedback 与请求的 session/round 不一致');
-        }
-        return { ok: true, event: 'feedback', session, round, feedback: response.feedback };
+    } else {
+      if (exists(fbPath)) {
+        return { ok: true, event: 'feedback', session, round, feedback: readJSON(fbPath) };
       }
-      if (!response.pending) throw new Error('远程工作台返回了无法识别的反馈状态');
-    } else if (exists(fbPath)) {
-      return { ok: true, event: 'feedback', session, round, feedback: readJSON(fbPath) };
+      const entries = readStreamEntries(session, {
+        ...(streamCursor ? { since: streamCursor } : {}),
+        exactSession: true,
+      });
+      if (entries.length) {
+        streamCursor = entries.at(-1).id;
+        return { ok: true, event: 'message', session, round, message: entries[0] };
+      }
     }
     const remaining = deadline - nowFn();
     if (remaining <= 0) break;
@@ -328,7 +445,8 @@ vibecoding workbench — CLI 编排
 
 用法：
   workbench present <session> [content.json|-] [--allow-incomplete-decisions]  校验并渲染一轮（推荐给 skill 用）
-  workbench wait <session> <round> [--timeout 秒]  监听该轮提交，出现反馈即返回其内容（后台运行）
+  workbench wait <session> <round> [--timeout 秒] [--events]  监听反馈；events 模式也监听新消息
+  workbench stream-migrate <session>            把历史 feedback.sessionComment 幂等迁入会话流
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
   workbench participant add <id> <name>         新增参与者并输出个人邀请链接
   workbench participant list                    列出参与者（不显示 token）
@@ -342,6 +460,7 @@ vibecoding workbench — CLI 编排
   --port N                         指定端口号
   --host HOST                      指定监听地址（默认 127.0.0.1；非本机地址须设置 WORKBENCH_TOKEN）
   --allow-incomplete-decisions     present 临时跳过决策完整性硬校验（仍输出 lint）
+  --events                         wait 同时监听 feedback 与会话流新事件
 
 示例：
   workbench render ses_001 content.json
@@ -471,12 +590,20 @@ async function main() {
     case 'wait': {
       const session = rest[0];
       const round = parseInt(rest[1], 10);
-      if (!session || !Number.isInteger(round)) { console.error('用法: workbench wait <session> <round> [--timeout 秒]'); process.exit(1); }
+      if (!session || !Number.isInteger(round)) { console.error('用法: workbench wait <session> <round> [--timeout 秒] [--events]'); process.exit(1); }
       const tIdx = rest.indexOf('--timeout');
       const timeoutMs = tIdx >= 0 ? parseInt(rest[tIdx + 1], 10) * 1000 : 3600000;
-      const r = await cmdWait(session, round, { timeoutMs });
+      const events = rest.includes('--events');
+      const r = await cmdWait(session, round, { timeoutMs, events });
       console.log(JSON.stringify(r));
       if (!r.ok) process.exit(2);
+      break;
+    }
+
+    case 'stream-migrate': {
+      const session = rest[0];
+      if (!session) { console.error('用法: workbench stream-migrate <session>'); process.exit(1); }
+      console.log(JSON.stringify(migrateSessionComments(session)));
       break;
     }
 

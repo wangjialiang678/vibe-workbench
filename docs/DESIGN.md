@@ -230,6 +230,9 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 |---|---|
 | GET `/` 及静态 | 托管 src/render/ |
 | POST `/api/rounds` | 校验并独占写入新轮次；2 MiB 上限；重复 round 返回 409 |
+| GET/POST `/api/messages` | 读取会话流（支持 ID/时间 `since`）/ 以请求身份追加实名消息 |
+| POST `/api/stream-events` | 仅管理员以 AI 身份追加 `progress` / `receipt` |
+| POST `/api/attachments?session=` | 上传 ≤5 MiB PNG/JPEG/WebP/GIF/PDF 到该会话 `assets/uploads/` |
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
 | POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
 | GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；无反馈则 HTTP 200 + `pending:true` |
@@ -248,9 +251,11 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 逐人反馈：服务端覆盖客户端传入的 `submittedBy`，参与者反馈写 `feedback-<id>.json`；第一份同步写规范 `feedback.json`，让旧 listener 与 `wait` 保持“首份即唤醒”。owner 后交时覆盖规范文件，并成为 GET 的合并主视图；`byParticipant` 始终保留逐人提交。参与者可在 claimed 后补交自己的文件，但不得把 claimed/responded/error 状态倒退；owner 仍沿用 claimed 时 409。冲突只比较同 block 的 `type:'select'`，不同参与者值不一致时返回 `conflicts:[{blockId,choices}]`。
 
-远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，`wait` 每 3 秒轮询云端 feedback，`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
+会话流：`workspace/<session>/stream.jsonl` 是 append-only 消息档案，每行包含 `id/at/author/kind/text/refs?`。普通消息作者取认证身份，AI 回执/进度作者固定为 `ai`；rounds 与 feedback 成功后分别自动写“已出第 N 轮”和“某人已提交第 N 轮反馈”。历史规范 `feedback.json` 的非空 `sessionComment` 可用 `stream-migrate` 幂等迁入。
 
-事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘和 feedback 成功落盘后异步 POST 最小事件 JSON。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。
+远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，默认 `wait` 每 3 秒轮询云端 feedback；显式 `wait --events` 同时增量轮询 messages，任一新事件即返回。`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
+
+事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘、feedback 成功落盘和 message 成功落流后异步 POST 最小事件 JSON。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。
 
 远程写入的 session 限 80 字符且必须匹配 `/^[A-Za-z0-9._-]+$/`（另拒绝 `.` / `..`）。服务端对点号 session 使用精确目录，避免与下划线名称碰撞；本地默认路径仍兼容旧版“点号转下划线”的既有 workspace，精确目录一旦存在则自动跟随。
 

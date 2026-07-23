@@ -37,12 +37,23 @@ import {
   prepareRound,
   writeRound,
 } from '../workspace.mjs';
+import { appendStreamEntry, readStreamEntries } from '../stream.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
 const SRC_ROOT = path.resolve(__dirname, '..');
 const ROUND_BODY_LIMIT = 2 * 1024 * 1024;
+const MESSAGE_BODY_LIMIT = 32 * 1024;
+const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 const WEBHOOK_TIMEOUT_MS = 5000;
+const AI_IDENTITY = Object.freeze({ id: 'ai', name: 'AI', role: 'ai' });
+const ATTACHMENT_TYPES = new Map([
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['image/webp', '.webp'],
+  ['image/gif', '.gif'],
+  ['application/pdf', '.pdf'],
+]);
 
 // ---- MIME ----
 const MIME = {
@@ -54,6 +65,11 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.pdf': 'application/pdf',
 };
 
 const PUBLIC_STATIC_EXTENSIONS = new Set([
@@ -73,7 +89,7 @@ export function requiresPageToken(urlPath) {
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Workbench-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Workbench-Token, X-File-Name');
 }
 
 function noReferrer(res) {
@@ -95,6 +111,43 @@ function readRawBody(req) {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function readRawBodyLimited(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const contentLength = Number(req.headers['content-length']);
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      const error = new Error('请求体超过大小上限');
+      error.code = 'BODY_TOO_LARGE';
+      req.resume();
+      reject(error);
+      return;
+    }
+
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > maxBytes) {
+        settled = true;
+        const error = new Error('请求体超过大小上限');
+        error.code = 'BODY_TOO_LARGE';
+        req.resume();
+        reject(error);
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(Buffer.concat(chunks, size));
+    });
     req.on('error', reject);
   });
 }
@@ -153,6 +206,42 @@ function validRoundQuery(value) {
   if (!/^[1-9]\d*$/.test(String(value || ''))) return null;
   const round = Number(value);
   return Number.isSafeInteger(round) ? round : null;
+}
+
+function validStreamText(value, maxLength = 4000) {
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && Array.from(value).length <= maxLength;
+}
+
+function safeUploadStem(value) {
+  const raw = typeof value === 'string' ? value : 'file';
+  const basename = path.posix.basename(raw.replaceAll('\\', '/'));
+  const extension = path.posix.extname(basename);
+  const stem = basename.slice(0, Math.max(0, basename.length - extension.length));
+  return stem
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'file';
+}
+
+function writeAttachment(session, originalName, extension, body) {
+  const uploadsDir = path.resolve(workspaceDir(), session, 'assets', 'uploads');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  const stem = safeUploadStem(originalName);
+  let timestamp = Date.now();
+  for (;;) {
+    const filename = `${stem}-${timestamp}${extension}`;
+    const target = path.join(uploadsDir, filename);
+    try {
+      fs.writeFileSync(target, body, { flag: 'wx' });
+      return filename;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      timestamp += 1;
+    }
+  }
 }
 
 function requestOrigin(req) {
@@ -456,6 +545,146 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
     return;
   }
 
+  if (urlPath === '/api/messages' && method === 'GET') {
+    const { session, since } = parseQuery(rawUrl);
+    if (!isValidSessionName(session)) {
+      json(res, 400, { ok: false, error: 'session 参数无效' });
+      return;
+    }
+    try {
+      const entries = readStreamEntries(session, {
+        ...(since ? { since } : {}),
+        exactSession: true,
+      });
+      json(res, 200, { ok: true, entries });
+    } catch (error) {
+      console.error('[workbench:messages] 读取失败：', error.message);
+      json(res, 500, { ok: false, error: '会话消息读取失败' });
+    }
+    return;
+  }
+
+  // D8 拍板语义：参与者与管理员随时可发消息（不受轮次状态限制，'提交不再是终局'）
+  if (urlPath === '/api/messages' && method === 'POST') {
+    readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: '请求体必须是消息对象' });
+        return;
+      }
+      if (!isValidSessionName(body.session)) {
+        json(res, 400, { ok: false, error: 'session 参数无效' });
+        return;
+      }
+      if (!validStreamText(body.text)) {
+        json(res, 400, { ok: false, error: 'text 必须非空且不超过 4000 字' });
+        return;
+      }
+      try {
+        const entry = appendStreamEntry(body.session, {
+          author: identity,
+          kind: 'message',
+          text: body.text,
+        }, { exactSession: true });
+        json(res, 200, { ok: true, entry });
+        emitWebhook(eventWebhook, {
+          event: 'message-posted',
+          session: body.session,
+          id: entry.id,
+          author: entry.author,
+          at: entry.at,
+        });
+      } catch (error) {
+        console.error('[workbench:messages] 写入失败：', error.message);
+        json(res, 500, { ok: false, error: '会话消息写入失败' });
+      }
+    }).catch((error) => {
+      if (error?.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { ok: false, error: '消息请求体过大' });
+        return;
+      }
+      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+    });
+    return;
+  }
+
+  if (urlPath === '/api/stream-events' && method === 'POST') {
+    if (identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员可写入 AI 流事件' });
+      return;
+    }
+    readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
+      if (!body || typeof body !== 'object' || Array.isArray(body)
+        || !isValidSessionName(body.session)) {
+        json(res, 400, { ok: false, error: 'session 或请求体无效' });
+        return;
+      }
+      if (!['progress', 'receipt'].includes(body.kind)) {
+        json(res, 400, { ok: false, error: 'kind 只允许 progress 或 receipt' });
+        return;
+      }
+      if (!validStreamText(body.text)) {
+        json(res, 400, { ok: false, error: 'text 必须非空且不超过 4000 字' });
+        return;
+      }
+      try {
+        const entry = appendStreamEntry(body.session, {
+          author: AI_IDENTITY,
+          kind: body.kind,
+          text: body.text,
+          ...(body.refs != null ? { refs: body.refs } : {}),
+        }, { exactSession: true });
+        json(res, 200, { ok: true, entry });
+      } catch (error) {
+        json(res, 400, { ok: false, error: error.message });
+      }
+    }).catch((error) => {
+      if (error?.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { ok: false, error: '事件请求体过大' });
+        return;
+      }
+      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+    });
+    return;
+  }
+
+  if (urlPath === '/api/attachments' && method === 'POST') {
+    const { session } = parseQuery(rawUrl);
+    if (!isValidSessionName(session)) {
+      json(res, 400, { ok: false, error: 'session 参数无效' });
+      req.resume();
+      return;
+    }
+    const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const extension = ATTACHMENT_TYPES.get(contentType);
+    if (!extension) {
+      json(res, 415, { ok: false, error: '附件类型不支持：仅允许 PNG/JPEG/WebP/GIF/PDF' });
+      req.resume();
+      return;
+    }
+    const originalName = req.headers['x-file-name'];
+    if (typeof originalName !== 'string' || !originalName.trim()) {
+      json(res, 400, { ok: false, error: '缺少 x-file-name 文件名' });
+      req.resume();
+      return;
+    }
+    readRawBodyLimited(req, ATTACHMENT_BODY_LIMIT).then((body) => {
+      try {
+        const filename = writeAttachment(session, originalName, extension, body);
+        json(res, 200, { ok: true, url: `/assets/${session}/uploads/${filename}` });
+      } catch (error) {
+        console.error('[workbench:attachments] 写入失败：', error.message);
+        json(res, 500, { ok: false, error: '附件写入失败' });
+      }
+    }).catch((error) => {
+      if (error?.code === 'BODY_TOO_LARGE') {
+        json(res, 413, { ok: false, error: '附件过大：单文件上限为 5 MB' });
+        return;
+      }
+      json(res, 400, { ok: false, error: `附件读取失败：${error.message}` });
+    });
+    return;
+  }
+
   if (urlPath === '/api/sessions' && method === 'GET') {
     json(res, 200, { ok: true, sessions: listSessions() });
     return;
@@ -558,6 +787,12 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
 
       try {
         const saved = writeRound(content.session, content, { allowOverwrite: false, exactSession: true });
+        appendStreamEntry(saved.session, {
+          author: AI_IDENTITY,
+          kind: 'receipt',
+          text: `已出第 ${saved.round} 轮：${content.title || '未命名轮次'}`,
+          refs: { round: saved.round },
+        }, { exactSession: true });
         const response = {
           ok: true,
           session: saved.session,
@@ -716,6 +951,12 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
         writeText(paths.feedbackMd(session, round, pathOptions), feedbackToMd(saved));
         writeStatus(session, { state: 'submitted', round, error: null }, undefined, pathOptions);
       }
+      appendStreamEntry(session, {
+        author: AI_IDENTITY,
+        kind: 'receipt',
+        text: `${submittedBy.name} 已提交第 ${round} 轮反馈`,
+        refs: { round },
+      }, pathOptions);
       json(res, 200, { ok: true, count: (fb.items || []).length });
       emitWebhook(eventWebhook, {
         event: 'feedback-submitted',
@@ -814,8 +1055,11 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
       const ext = path.extname(abs).toLowerCase();
       cors(res);
       if (ext === '.html') noReferrer(res);
+      // 防存储型 XSS：禁止 MIME 嗅探；PDF 等可执行脚本的文档强制下载而非内嵌打开
       res.writeHead(200, {
         'Content-Type': MIME[ext] || 'application/octet-stream',
+        'X-Content-Type-Options': 'nosniff',
+        ...(ext === '.pdf' ? { 'Content-Disposition': 'attachment' } : {}),
         'Cache-Control': 'no-store',
       });
       res.end(buf);

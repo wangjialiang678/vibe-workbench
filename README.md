@@ -54,7 +54,7 @@ workbench participant revoke alice          # 立即吊销该链接
 
 ### 让本地 CLI 使用云端 workspace
 
-设置 `WORKBENCH_REMOTE_URL` 后，`present` / `wait` 与 `participant add/list/revoke` 切到远程 API；`render`、`serve`、`watch`、`up` 不变。云端因此成为该会话和参与者名册的唯一事实源，本地不会再写一份副本。
+设置 `WORKBENCH_REMOTE_URL` 后，`present` / `wait` 与 `participant add/list/revoke` 切到远程 API；`render`、`serve`、`watch`、`up` 不变。云端因此成为该会话和参与者名册的唯一事实源，本地不会再写一份副本。`wait --events` 会同时监听反馈和启动后新增的会话流事件；不加该参数时行为与原版完全一致。
 
 ```bash
 export WORKBENCH_REMOTE_URL='https://workbench.example.com'
@@ -62,9 +62,13 @@ export WORKBENCH_TOKEN='与云端一致的共享口令'
 
 node bin/workbench.mjs present <session> content.json
 node bin/workbench.mjs wait <session> <round>
+node bin/workbench.mjs wait <session> <round> --events
+node bin/workbench.mjs stream-migrate <session>   # 历史 sessionComment 幂等迁移
 ```
 
-可选设置 `WORKBENCH_EVENT_WEBHOOK`。服务端在新轮次成功落盘、反馈成功提交后，分别异步 POST `round-presented` / `feedback-submitted` 事件；单次投递 5 秒超时，失败只记日志，不改变主请求结果。
+每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 写 `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
+
+可选设置 `WORKBENCH_EVENT_WEBHOOK`。服务端在新轮次成功落盘、反馈成功提交或新消息落流后，分别异步 POST `round-presented` / `feedback-submitted` / `message-posted` 事件；单次投递 5 秒超时，失败只记日志，不改变主请求结果。
 
 ## Hybrid 驱动与 SDK 托底标注
 
@@ -88,12 +92,13 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 |---|---|
 | `src/protocol/` | 内容协议：constants / schema / **diff**（轮次差异）/ **attention**（注意力路由）/ **status**（状态联合判定） |
 | `src/participants.mjs` | 私密参与者名册：magic-link token、脱敏列表、即时吊销 |
+| `src/stream.mjs` | append-only 会话流：消息/回执/进度、增量读取、历史留言迁移 |
 | `src/workspace.mjs` | 文件契约与共享轮次写入（content/feedback/ack/response/error/status） |
-| `src/server/` | 零依赖 HTTP + API（rounds / content / feedback / status / retry / webhook） |
+| `src/server/` | 零依赖 HTTP + API（rounds / feedback / messages / stream-events / attachments / webhook） |
 | `src/loop/` | 异步唤醒 listener（对账幂等 + 独立心跳 + 容错）/ claude-exec / session-store |
 | `src/render/` | 前端：纯函数 HTML 渲染 + 四区注意力 + diff 徽章 + 状态/重试 |
 | `templates/` | think-discuss（思考共创/文档审阅）/ dev-review（PRD 审核·研发评审）/ design-review（UI·交互设计评审）—— 模板 = block 组合工厂 |
-| `bin/workbench.mjs` | CLI：render / present / wait / participant / serve / watch / up（含远程模式） |
+| `bin/workbench.mjs` | CLI：render / present / wait --events / stream-migrate / participant / serve / watch / up |
 
 ## 文档
 - [docs/项目与技能说明.md](docs/项目与技能说明.md) · [网页版](docs/项目与技能说明.html) — **项目 + 技能总览（先看这个）**
@@ -104,7 +109,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 - [docs/test-plan.md](docs/test-plan.md) · [docs/delivery-report.md](docs/delivery-report.md) · [docs/feedback-log.md](docs/feedback-log.md) · [docs/dev-log.md](docs/dev-log.md)
 
 ## 状态
-**348 项自动化测试全绿**。已落地：公网绑定防呆 + 管理员/个人专属链接口令门、逐人反馈与分歧标注、远程会话服务与事件 webhook、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
+**378 项自动化测试全绿**。已落地：append-only 会话流后端、事件化 wait、受保护附件上传、历史留言迁移、公网绑定防呆 + 管理员/个人专属链接口令门、逐人反馈与分歧标注、远程会话服务与事件 webhook、hybrid CLI 驱动与 SDK 托底明示、§13 UX 自审（批次 6）、tab 六面分面导航（批次 7）、**user-vibeloop 实战反馈全量转化（批次 8 · DESIGN §16）**——
 决策块结构化（背景/为什么/选项利弊/推荐理由 + 作者 lint）、会话级留言、live 实时系统标识、受众分层折叠、editable 一键确认、embed 代理支持 POST（实证 bug 修复）、prd-studio 高保真 UI 一键导入（手机壳呈现）。
 
 **作者必读**：[docs/authoring-guide.md](docs/authoring-guide.md) —— 决策块不写背景/利弊，用户会盲选，产出伪决策。`present` 会硬校验决策块四段完整性；仅在明确使用 `--allow-incomplete-decisions` 时临时退回 lint 警告。
