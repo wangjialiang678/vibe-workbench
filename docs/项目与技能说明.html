@@ -128,6 +128,7 @@
 node "$WB/bin/workbench.mjs" present &lt;session&gt; /path/to/content.json
 # 3) 后台等提交（提交即唤醒）
 node "$WB/bin/workbench.mjs" wait &lt;session&gt; &lt;round&gt;</code></pre>
+    <p>云端常驻 worker 默认监听本机 <code>127.0.0.1:8097</code>。在工作台 server 进程环境中把 <code>WORKBENCH_EVENT_WEBHOOK</code> 指向 <code>http://127.0.0.1:8097/events</code> 后，轮次、反馈或消息会立即触发指定 session 检查；60 秒轮询只作兜底。worker 每 30 秒上报在线心跳，超过 90 秒才显示离线。</p>
     <p class="card">完整命令、协议、模板签名见 <code>~/.claude/skills/workbench/SKILL.md</code> 与本仓库 <code>docs/DESIGN.md</code>。</p>
   </section>
 
@@ -151,7 +152,7 @@ node "$WB/bin/workbench.mjs" wait &lt;session&gt; &lt;round&gt;</code></pre>
 
   <section>
     <h2><span class="n">07</span> 现状与质量</h2>
-    <p><span class="pill">● 234 自动化测试全绿</span>（单元 + 端到端集成）。</p>
+    <p><span class="pill">● 433 自动化测试全绿</span>（单元 + 端到端集成）。</p>
     <p><strong>§13 UX 自审已落地</strong>（2026-07-03 批次 6）：提交确认改真·模态（可展开/跳转补填）、进度「已填 m/X」、议题重组横幅、diff 徽章、折叠标题修复——此前这些只在文档、代码没跟上，现已补齐并加测试护栏。</p>
     <p>详见 <code>docs/DESIGN.md</code>（§13 落地标注）、<code>docs/dev-log.md</code>（批次 6）、<code>docs/research/2026-07-02-hci-clarification-community-and-project-review.md</code>（社区调研 + 独立评审）。</p>
   </section>

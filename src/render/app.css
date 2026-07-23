@@ -1003,6 +1003,12 @@ body {
   background: var(--color-surface);
 }
 
+.status-worker-online {
+  color: var(--color-status-ok);
+  border-color: var(--color-status-ok);
+  background: color-mix(in srgb, var(--color-status-ok) 8%, var(--color-surface));
+}
+
 .retry-btn {
   margin-left: 8px;
   padding: 3px 10px;

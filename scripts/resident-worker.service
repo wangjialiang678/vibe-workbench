@@ -12,7 +12,10 @@ WorkingDirectory=/home/ubuntu/cloud-codex-now
 Environment=WORKBENCH_URL=http://127.0.0.1:8099
 Environment=CODEX_MODEL=gpt-5.6-sol
 Environment=WORKER_HOME=/home/ubuntu/cloud-codex-now
-Environment=POLL_MS=5000
+Environment=POLL_MS=60000
+Environment=WORKER_EVENT_PORT=8097
+# 另在工作台 server 的服务环境设置：
+# WORKBENCH_EVENT_WEBHOOK=http://127.0.0.1:8097/events
 # 此文件至少包含 WORKBENCH_TOKEN=...，权限应设为 0600。
 EnvironmentFile=/etc/cloud-codex-now.env
 ExecStart=/usr/bin/env node /home/ubuntu/apps/vibecoding-workbench/scripts/resident-worker.mjs

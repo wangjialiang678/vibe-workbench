@@ -486,6 +486,8 @@ test('GET /api/status with claimed + fresh heartbeat → display=processing', as
   assert.equal(body.ok, true);
   assert.ok(body.status, 'status field should be present');
   assert.equal(body.display, 'processing', `expected processing, got ${body.display}`);
+  assert.equal(body.workerOnline, false);
+  assert.equal(body.workerLabel, null);
 });
 
 // ---- GET /api/status: no session → ok:true, status:null, display:unknown ----
@@ -496,6 +498,82 @@ test('GET /api/status with unknown session → status:null, display:unknown', as
   assert.equal(body.ok, true);
   assert.equal(body.status, null);
   assert.equal(body.display, 'unknown');
+  assert.equal(body.workerOnline, false);
+  assert.equal(body.workerLabel, null);
+});
+
+test('POST /api/worker-heartbeat 只允许口令门内管理员，90 秒后 status 如实离线', async () => {
+  const localDenied = await fetch(url('/api/worker-heartbeat'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ at: new Date().toISOString(), label: '不应写入' }),
+  });
+  assert.equal(localDenied.status, 403, '未开启口令门时也不得写 worker 心跳');
+
+  const alice = {
+    id: 'alice',
+    name: '小艾',
+    token: 'alice-worker-token',
+    createdAt: '2026-07-23T00:00:00.000Z',
+  };
+  await withIdentityServer({ ownerToken: 'owner-worker-token', participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const endpoint = `${base}/api/worker-heartbeat`;
+    const missing = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ at: new Date().toISOString() }),
+    });
+    assert.equal(missing.status, 403);
+
+    const participant = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-workbench-token': alice.token,
+      },
+      body: JSON.stringify({ at: new Date().toISOString(), label: '参与者伪造 worker' }),
+    });
+    assert.equal(participant.status, 403);
+
+    const expiredHeartbeat = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-workbench-token': 'owner-worker-token',
+      },
+      body: JSON.stringify({
+        at: new Date(Date.now() - 91_000).toISOString(),
+        label: '云端 Codex · sol xhigh',
+      }),
+    });
+    assert.equal(expiredHeartbeat.status, 200);
+
+    const expiredStatus = await fetch(`${base}/api/status?session=missing-session`, {
+      headers: { 'x-workbench-token': 'owner-worker-token' },
+    }).then((response) => response.json());
+    assert.equal(expiredStatus.workerOnline, false);
+    assert.equal(expiredStatus.workerLabel, '云端 Codex · sol xhigh');
+
+    const freshHeartbeat = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-workbench-token': 'owner-worker-token',
+      },
+      body: JSON.stringify({
+        at: new Date().toISOString(),
+        label: '云端 Codex · sol xhigh',
+      }),
+    });
+    assert.equal(freshHeartbeat.status, 200);
+
+    const freshStatus = await fetch(`${base}/api/status?session=missing-session`, {
+      headers: { 'x-workbench-token': 'owner-worker-token' },
+    }).then((response) => response.json());
+    assert.equal(freshStatus.workerOnline, true);
+    assert.equal(freshStatus.workerLabel, '云端 Codex · sol xhigh');
+  });
 });
 
 test('GET /api/status error 态合并该轮 error.json 到嵌套 status.error', async () => {

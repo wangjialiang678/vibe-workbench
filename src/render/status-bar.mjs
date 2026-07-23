@@ -19,12 +19,19 @@ export function statusBadgeHtml(statusResp, now) {
     && Object.hasOwn(statusResp, 'status');
   const status = hasNestedStatus ? statusResp.status : statusResp;
   const error = status?.error ?? statusResp?.error;
-  const displ = displayState(status, nowMs);
-  const badge = badgeFor(displ, {
-    elapsedSec: status?.claimedAt
-      ? Math.floor((nowMs - Date.parse(status.claimedAt)) / 1000)
-      : undefined,
-  });
+  const workerOnline = hasNestedStatus && statusResp.workerOnline === true;
+  const displ = workerOnline ? 'worker-online' : displayState(status, nowMs);
+  const badge = workerOnline
+    ? {
+        icon: '',
+        text: '● 云端 AI 在线（消息与提交自动处理）',
+        retry: false,
+      }
+    : badgeFor(displ, {
+        elapsedSec: status?.claimedAt
+          ? Math.floor((nowMs - Date.parse(status.claimedAt)) / 1000)
+          : undefined,
+      });
 
   const driverSourceNote = status?.driverSource === 'sdk-fallback'
     ? `<span class="driver-source-note">${escHtml(SDK_FALLBACK_NOTICE)}</span>`

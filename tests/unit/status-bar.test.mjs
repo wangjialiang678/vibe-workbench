@@ -64,3 +64,37 @@ test('statusBadgeHtml 将 API 的 status:null 视为 unknown', () => {
 
   assert.ok(html.includes('data-state="unknown"'));
 });
+
+test('statusBadgeHtml 在云端 worker 在线时优先显示绿色在线横幅并保留 SDK 标注', () => {
+  const html = statusBadgeHtml({
+    ok: true,
+    workerOnline: true,
+    workerLabel: '云端 Codex · sol xhigh',
+    status: {
+      state: 'claimed',
+      heartbeatAt: '2026-07-23T00:00:00.000Z',
+      driverSource: 'sdk-fallback',
+    },
+  }, Date.parse('2026-07-23T01:00:00.000Z'));
+
+  assert.ok(html.includes('data-state="worker-online"'));
+  assert.ok(html.includes('status-worker-online'));
+  assert.ok(html.includes('● 云端 AI 在线（消息与提交自动处理）'));
+  assert.ok(html.includes(SDK_NOTICE));
+  assert.equal(html.includes('AI 离线'), false);
+});
+
+test('statusBadgeHtml 在云端 worker 离线时维持旧本地心跳判定和离线文案', () => {
+  const html = statusBadgeHtml({
+    ok: true,
+    workerOnline: false,
+    workerLabel: '云端 Codex · sol xhigh',
+    status: {
+      state: 'claimed',
+      heartbeatAt: '2026-07-23T00:00:00.000Z',
+    },
+  }, Date.parse('2026-07-23T01:00:00.000Z'));
+
+  assert.ok(html.includes('data-state="offline"'));
+  assert.ok(html.includes('AI 离线（提交已保存，恢复后自动处理）'));
+});

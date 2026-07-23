@@ -1,18 +1,24 @@
 #!/usr/bin/env node
-// 云端常驻 Codex worker：轮询工作台事件，串行交给 codex exec 处理。
+// 云端常驻 Codex worker：接收本机推送并以低频轮询兜底，串行交给 codex exec 处理。
 
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_WORKBENCH_URL = 'http://127.0.0.1:8099';
 const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
-const DEFAULT_POLL_MS = 5000;
+const DEFAULT_POLL_MS = 60 * 1000;
+const DEFAULT_EVENT_PORT = 8097;
+const DEFAULT_WORKER_LABEL = '云端 Codex · sol xhigh';
+const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 const CODEX_TIMEOUT_MS = 30 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 const KILL_GRACE_MS = 5000;
+const EVENT_BODY_LIMIT = 64 * 1024;
 const HUMAN_ROLES = new Set(['owner', 'participant']);
+const SESSION_NAME_RE = /^[A-Za-z0-9._-]{1,80}$/;
 
 function emptyState() {
   return { perSession: {} };
@@ -101,6 +107,12 @@ function positiveInteger(value, fallback, name) {
   return parsed;
 }
 
+function portNumber(value, fallback, name) {
+  const port = positiveInteger(value, fallback, name);
+  if (port > 65535) throw new Error(`${name} 必须小于或等于 65535`);
+  return port;
+}
+
 export function loadConfig(env = process.env) {
   const token = env.WORKBENCH_TOKEN;
   if (typeof token !== 'string' || !token) {
@@ -128,6 +140,8 @@ export function loadConfig(env = process.env) {
     model: env.CODEX_MODEL?.trim() || DEFAULT_CODEX_MODEL,
     workerHome: path.resolve(env.WORKER_HOME.trim()),
     pollMs: positiveInteger(env.POLL_MS, DEFAULT_POLL_MS, 'POLL_MS'),
+    eventPort: portNumber(env.WORKER_EVENT_PORT, DEFAULT_EVENT_PORT, 'WORKER_EVENT_PORT'),
+    workerLabel: env.WORKER_LABEL?.trim() || DEFAULT_WORKER_LABEL,
   };
 }
 
@@ -423,20 +437,24 @@ async function discoverSession(session, sessionState, config, fetchImpl) {
   const events = filterHumanEntries(messagesPayload.entries)
     .map((entry) => ({ type: 'message', entry }));
   const round = latestRound(statusPayload);
-  const feedbackKey = round == null ? null : String(round);
-  if (statusPayload?.status?.state === 'submitted'
-    && feedbackKey !== sessionState.lastFeedbackKey) {
+  if (statusPayload?.status?.state === 'submitted' && round != null) {
     const feedbackPayload = await requestJson(config, '/api/feedback', {
       query: { session, round },
       fetchImpl,
     });
     if (feedbackPayload.feedback) {
-      events.push({
-        type: 'feedback',
-        round,
-        feedback: feedbackPayload,
-      });
-      nextState.lastFeedbackKey = feedbackKey;
+      const submittedAt = typeof feedbackPayload.feedback.submittedAt === 'string'
+        ? feedbackPayload.feedback.submittedAt
+        : '';
+      const feedbackKey = `${round}@${submittedAt}`;
+      if (feedbackKey !== sessionState.lastFeedbackKey) {
+        events.push({
+          type: 'feedback',
+          round,
+          feedback: feedbackPayload,
+        });
+        nextState.lastFeedbackKey = feedbackKey;
+      }
     }
   }
 
@@ -625,16 +643,24 @@ export async function runOnce(config = loadConfig(), {
   logger = console,
   shouldStop = () => false,
   timeoutMs = CODEX_TIMEOUT_MS,
+  sessions,
 } = {}) {
   const stateFile = path.join(config.workerHome, 'state.json');
   const stateFileExists = fs.existsSync(stateFile);
   const state = readState(config.workerHome);
-  const sessionsPayload = await requestJson(config, '/api/sessions', { fetchImpl });
-  if (!Array.isArray(sessionsPayload.sessions)) {
-    throw new Error('/api/sessions 缺少 sessions 数组');
+  let sessionNames;
+  if (sessions == null) {
+    const sessionsPayload = await requestJson(config, '/api/sessions', { fetchImpl });
+    if (!Array.isArray(sessionsPayload.sessions)) {
+      throw new Error('/api/sessions 缺少 sessions 数组');
+    }
+    sessionNames = sessionsPayload.sessions;
+  } else {
+    if (!Array.isArray(sessions)) throw new Error('sessions 必须是数组');
+    sessionNames = [...new Set(sessions)];
   }
 
-  const discovered = await Promise.all(sessionsPayload.sessions.map(async (session) => {
+  const discovered = await Promise.all(sessionNames.map(async (session) => {
     try {
       const sessionState = sessionStateFor(state.perSession, session);
       return await discoverSession(session, sessionState, config, fetchImpl);
@@ -674,17 +700,175 @@ export async function runOnce(config = loadConfig(), {
     });
     processed += 1;
   }
-  return { sessions: sessionsPayload.sessions.length, queued: tasks.length, processed };
+  return { sessions: sessionNames.length, queued: tasks.length, processed };
 }
 
-function waitForNextPoll(ms, stopping) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    stopping.onStop(() => {
-      clearTimeout(timer);
-      resolve();
+function eventJson(res, status, payload) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
+
+/**
+ * 接收工作台 webhook。固定绑定回环地址，不暴露到公网，因此无需第二套鉴权。
+ */
+export function startWorkerEventServer({
+  port = DEFAULT_EVENT_PORT,
+  onSession,
+  logger = console,
+} = {}) {
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) {
+    throw new Error('worker 事件端口必须是 0—65535 的整数');
+  }
+  if (typeof onSession !== 'function') throw new Error('onSession 必须是函数');
+
+  const server = http.createServer((req, res) => {
+    if (req.method !== 'POST') {
+      eventJson(res, 405, { ok: false, error: 'method not allowed' });
+      req.resume();
+      return;
+    }
+
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > EVENT_BODY_LIMIT) {
+        settled = true;
+        eventJson(res, 413, { ok: false, error: '事件请求体过大' });
+        req.resume();
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      let body;
+      try {
+        body = JSON.parse(Buffer.concat(chunks, size).toString('utf8') || 'null');
+      } catch (error) {
+        eventJson(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+        return;
+      }
+      if (!SESSION_NAME_RE.test(body?.session || '')) {
+        eventJson(res, 400, { ok: false, error: 'session 参数无效' });
+        return;
+      }
+      try {
+        logger.log(`[resident-worker] 收到推送：session=${body.session}`);
+        const scheduled = onSession(body.session);
+        Promise.resolve(scheduled).catch((error) => {
+          logger.log(`[resident-worker] 推送调度失败：${error.message}`);
+        });
+        eventJson(res, 202, { ok: true, session: body.session });
+      } catch (error) {
+        logger.log(`[resident-worker] 推送调度失败：${error.message}`);
+        eventJson(res, 500, { ok: false, error: '推送调度失败' });
+      }
+    });
+    req.on('error', (error) => {
+      if (!settled) eventJson(res, 400, { ok: false, error: '事件读取失败' });
+      logger.log(`[resident-worker] 推送读取失败：${error.message}`);
     });
   });
+  server.listen(port, '127.0.0.1');
+  return server;
+}
+
+/** 把短时间内连续到达的 session 去重，并唤醒串行处理循环。 */
+export function createSessionScheduler() {
+  const pending = new Set();
+  let waiter = null;
+  let timer = null;
+  let closed = false;
+
+  function takePending() {
+    const sessions = [...pending];
+    pending.clear();
+    return sessions;
+  }
+
+  function settle(sessions) {
+    if (!waiter) return;
+    const resolve = waiter;
+    waiter = null;
+    clearTimeout(timer);
+    timer = null;
+    resolve(sessions);
+  }
+
+  return {
+    push(session) {
+      if (closed) return;
+      pending.add(session);
+      if (waiter) settle(takePending());
+    },
+    wait(ms) {
+      if (pending.size) return Promise.resolve(takePending());
+      if (closed) return Promise.resolve([]);
+      return new Promise((resolve) => {
+        waiter = resolve;
+        timer = setTimeout(() => settle([]), Math.max(0, ms));
+      });
+    },
+    close() {
+      closed = true;
+      pending.clear();
+      settle([]);
+    },
+  };
+}
+
+/** 心跳上报失败只影响在线提示，不应阻断实际接单。 */
+export async function sendWorkerHeartbeat(config, {
+  fetchImpl = fetch,
+  logger = console,
+  now = Date.now,
+} = {}) {
+  try {
+    await requestJson(config, '/api/worker-heartbeat', {
+      method: 'POST',
+      body: {
+        at: new Date(now()).toISOString(),
+        label: config.workerLabel || DEFAULT_WORKER_LABEL,
+      },
+      fetchImpl,
+    });
+    return true;
+  } catch (error) {
+    logger.log(`[resident-worker] 心跳上报失败：${error.message}`);
+    return false;
+  }
+}
+
+function startWorkerHeartbeat(config, {
+  fetchImpl,
+  logger,
+  now,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
+} = {}) {
+  let stopped = false;
+  let inFlight = Promise.resolve();
+  const tick = () => {
+    if (stopped) return inFlight;
+    inFlight = inFlight.then(() => sendWorkerHeartbeat(config, {
+      fetchImpl,
+      logger,
+      now,
+    }));
+    return inFlight;
+  };
+  void tick();
+  const timer = setIntervalImpl(tick, HEARTBEAT_INTERVAL_MS);
+  return async () => {
+    stopped = true;
+    clearIntervalImpl(timer);
+    await inFlight;
+  };
 }
 
 function stopState(logger) {
@@ -706,6 +890,66 @@ function stopState(logger) {
   };
 }
 
+/** 推送和兜底轮询共用同一条串行处理链，避免重复领取事件。 */
+export async function runWorkerLoop(config, {
+  fetchImpl = fetch,
+  spawnImpl = spawn,
+  logger = console,
+  stopping = { requested: () => false },
+  scheduler = createSessionScheduler(),
+  now = Date.now,
+  runOnceImpl = runOnce,
+  timeoutMs = CODEX_TIMEOUT_MS,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
+} = {}) {
+  const stopHeartbeat = startWorkerHeartbeat(config, {
+    fetchImpl,
+    logger,
+    now,
+    setIntervalImpl,
+    clearIntervalImpl,
+  });
+
+  async function execute(sessions) {
+    try {
+      const result = await runOnceImpl(config, {
+        fetchImpl,
+        spawnImpl,
+        logger,
+        shouldStop: stopping.requested,
+        timeoutMs,
+        ...(sessions == null ? {} : { sessions }),
+      });
+      logger.log(
+        `[resident-worker] 本轮完成：sessions=${result.sessions} `
+        + `queued=${result.queued} processed=${result.processed}`,
+      );
+    } catch (error) {
+      logger.log(`[resident-worker] 本轮失败：${error.stack || error.message}`);
+    }
+  }
+
+  try {
+    await execute();
+    let lastPollAt = now();
+    while (!stopping.requested()) {
+      const elapsed = Math.max(0, now() - lastPollAt);
+      const pushedSessions = await scheduler.wait(Math.max(0, config.pollMs - elapsed));
+      if (stopping.requested()) break;
+
+      if ((now() - lastPollAt) >= config.pollMs) {
+        await execute();
+        lastPollAt = now();
+      } else if (pushedSessions.length) {
+        await execute(pushedSessions);
+      }
+    }
+  } finally {
+    await stopHeartbeat();
+  }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const config = loadConfig();
   const once = argv.includes('--once');
@@ -715,22 +959,41 @@ export async function main(argv = process.argv.slice(2)) {
 
   console.log(
     `[resident-worker] 启动：url=${config.workbenchUrl} model=${config.model} `
-    + `home=${config.workerHome} poll=${config.pollMs}ms once=${once}`,
+    + `home=${config.workerHome} poll=${config.pollMs}ms event=127.0.0.1:${config.eventPort} `
+    + `once=${once}`,
   );
-  do {
-    try {
-      const result = await runOnce(config, { shouldStop: stopping.requested });
-      console.log(
-        `[resident-worker] 本轮完成：sessions=${result.sessions} `
-        + `queued=${result.queued} processed=${result.processed}`,
-      );
-    } catch (error) {
-      console.log(`[resident-worker] 本轮失败：${error.stack || error.message}`);
-      if (once) throw error;
-    }
-    if (once || stopping.requested()) break;
-    await waitForNextPoll(config.pollMs, stopping);
-  } while (!stopping.requested());
+
+  if (once) {
+    await sendWorkerHeartbeat(config);
+    const result = await runOnce(config, { shouldStop: stopping.requested });
+    console.log(
+      `[resident-worker] 本轮完成：sessions=${result.sessions} `
+      + `queued=${result.queued} processed=${result.processed}`,
+    );
+    console.log('[resident-worker] 已退出');
+    return;
+  }
+
+  const scheduler = createSessionScheduler();
+  stopping.onStop(() => scheduler.close());
+  const eventServer = startWorkerEventServer({
+    port: config.eventPort,
+    onSession: (session) => scheduler.push(session),
+    logger: console,
+  });
+  await new Promise((resolve, reject) => {
+    eventServer.once('listening', resolve);
+    eventServer.once('error', reject);
+  });
+  try {
+    await runWorkerLoop(config, {
+      stopping,
+      scheduler,
+    });
+  } finally {
+    scheduler.close();
+    await new Promise((resolve) => eventServer.close(resolve));
+  }
   console.log('[resident-worker] 已退出');
 }
 
