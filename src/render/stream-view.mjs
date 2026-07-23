@@ -37,8 +37,11 @@ export function streamEntryHtml(entry, { viewerId = '' } = {}) {
   if (kind === 'receipt') {
     const round = Number(entry.refs?.round);
     const roundAttr = Number.isInteger(round) && round > 0 ? ` data-round="${round}"` : '';
+    const notice = roundAttr
+      ? `<button class="stream-system-pill" type="button"${roundAttr}>${escapeHtml(entry.text)}</button>`
+      : `<div class="stream-system-pill">${escapeHtml(entry.text)}</div>`;
     return `<article class="stream-entry stream-entry--system stream-entry--receipt" data-entry-id="${id}"${roundAttr}>
-  <button class="stream-system-pill" type="button"${roundAttr}>${escapeHtml(entry.text)}</button>
+  ${notice}
 </article>`;
   }
 

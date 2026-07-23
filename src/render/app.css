@@ -259,17 +259,23 @@ body {
 }
 
 .stream-system-pill {
+  width: fit-content;
   max-width: 92%;
-  padding: 6px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--color-zone-cr);
-  border-radius: 999px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--color-zone-cr) 9%, var(--color-surface));
   color: var(--color-text);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  line-height: 1.55;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: default;
 }
 
+.stream-system-pill[data-round] { cursor: pointer; }
+.stream-system-pill[data-round]:hover { border-color: var(--color-focus); }
 .stream-system-pill p { display: inline; }
 .stream-entry--progress {
   margin-block: 17px;

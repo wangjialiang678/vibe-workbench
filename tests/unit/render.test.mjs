@@ -46,6 +46,15 @@ test('render 页面包含桌面分栏、右区双切换与手机底部三标签'
   assert.match(renderIndex, /id="decision-unread-badge"/);
 });
 
+test('对话区使用一致的中英文名称，不再向用户显示“会话流”', () => {
+  assert.match(renderIndex, /aria-label="对话"/);
+  assert.match(renderIndex, />CONVERSATION</);
+  assert.match(renderIndex, /<h2>对话<\/h2>/);
+  assert.match(renderIndex, /aria-label="调整对话宽度"/);
+  assert.doesNotMatch(renderIndex, />会话流</);
+  assert.doesNotMatch(renderIndex, />SESSION STREAM</);
+});
+
 test('streamEntryHtml：AI 左侧、自己右侧、他人左侧并显示名字', () => {
   const ai = streamEntryHtml({
     id: 'm-ai',
@@ -91,8 +100,29 @@ test('streamEntryHtml：receipt 与 progress 使用各自醒目的居中样式�
 
   assert.match(receipt, /stream-entry--receipt/);
   assert.match(receipt, /data-round="3"/);
+  assert.match(receipt, /<button class="stream-system-pill"/);
   assert.match(progress, /stream-entry--progress/);
   assert.match(progress, /SDK 托底：正在执行/);
+});
+
+test('streamEntryHtml：无轮次回执是非交互通知，长文案使用卡片排版而非胶囊', () => {
+  const receipt = streamEntryHtml({
+    id: 'r-long',
+    kind: 'receipt',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: '这是一段较长的系统通知，会自然换行。',
+  });
+
+  assert.match(receipt, /<div class="stream-system-pill"/);
+  assert.doesNotMatch(receipt, /<button/);
+  assert.match(
+    renderCss,
+    /\.stream-system-pill\s*\{[\s\S]*?border-radius:\s*10px;[\s\S]*?text-align:\s*left;/,
+  );
+  assert.doesNotMatch(
+    renderCss.match(/\.stream-system-pill\s*\{[\s\S]*?\}/)?.[0] || '',
+    /border-radius:\s*999px/,
+  );
 });
 
 test('decisionChipHtml：仅最新轮 receipt 且有待确认决策时生成芯片', () => {

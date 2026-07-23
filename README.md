@@ -113,6 +113,7 @@ Claude CLI 的 stderr 写入错误状态前会脱敏 `ANTHROPIC_API_KEY=...` 和
 
 ## 文档
 - [docs/项目与技能说明.md](docs/项目与技能说明.md) · [网页版](docs/项目与技能说明.html) — **项目 + 技能总览（先看这个）**
+- [docs/operations/resident-codex-runbook.md](docs/operations/resident-codex-runbook.md) — 常驻 Codex 当前拓扑、故障语义、高可用目标与安全恢复清单
 - [docs/PRD.md](docs/PRD.md) — 需求与决策（D1-D8 / FR-1~FR-8）
 - [docs/DESIGN.md](docs/DESIGN.md) — 完整设计（§13 为 UX 自审修订，含批次 6 落地标注）
 - [docs/design/scenarios.md](docs/design/scenarios.md) — 用户场景
