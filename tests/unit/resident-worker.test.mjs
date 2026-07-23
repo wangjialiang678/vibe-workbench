@@ -149,6 +149,8 @@ test('任务简报包含事件原文、会话与轮次', () => {
   assert.match(brief, /founder-review/);
   assert.match(brief, /第 4 轮/);
   assert.match(brief, /请修复支付回调里的重复入账，并把验证结果写回来。/);
+  assert.match(brief, /stdout 不会被任何人看到/);
+  assert.match(brief, /"kind":"message"/);
 });
 
 test('Codex 超时后终止子进程', async () => {
@@ -203,6 +205,204 @@ test('Codex 超时后终止子进程', async () => {
   assert.equal(result.timedOut, true);
   assert.deepEqual(groupKills, [[-43210, 'SIGTERM']]);
   assert.deepEqual(child.killedWith, []);
+});
+
+test('解析 Codex stdout：提取最终回答并剥离启动信息与 token 统计', () => {
+  assert.equal(typeof worker.parseCodexFinalMessage, 'function');
+
+  const stdout = [
+    'OpenAI Codex v0.144.1',
+    '--------',
+    'workdir: /home/ubuntu/cloud-codex-now',
+    'model: gpt-5.6-sol',
+    'reasoning effort: xhigh',
+    '--------',
+    'user',
+    '请修复问题',
+    'codex',
+    '\u001b[32m已完成修复，并验证了关键路径。\u001b[0m',
+    '- 测试：12 项全部通过',
+    'tokens used',
+    '12,345',
+  ].join('\n');
+
+  assert.equal(
+    worker.parseCodexFinalMessage(stdout),
+    '已完成修复，并验证了关键路径。\n- 测试：12 项全部通过',
+  );
+  assert.equal(
+    worker.parseCodexFinalMessage('这是纯文本最终回答\nToken usage: 1,024'),
+    '这是纯文本最终回答',
+  );
+});
+
+test('stdout 长回答按流接口上限拆分，每条都保留 Codex 前缀', () => {
+  assert.equal(typeof worker.codexMessageChunks, 'function');
+
+  const chunks = worker.codexMessageChunks('答'.repeat(4500));
+
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks.every((chunk) => Array.from(chunk).length <= 4000), true);
+  assert.equal(chunks.every((chunk) => chunk.startsWith('Codex：')), true);
+  assert.equal(
+    chunks
+      .map((chunk, index) => chunk.replace(index === 0 ? /^Codex：/ : /^Codex：（续）/, ''))
+      .join(''),
+    '答'.repeat(4500),
+  );
+});
+
+test('Codex 未自行写流时，把 stdout 最终回答作为 AI message 补写', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-stdout-fallback-'));
+  const streamEvents = [];
+  try {
+    const result = await worker.runOnce({
+      workbenchUrl: 'http://127.0.0.1:8099',
+      token: 'test-token',
+      model: 'gpt-test',
+      workerHome,
+      pollMs: 5000,
+    }, {
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['session-a'] };
+        } else if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'message-1',
+              author: { id: 'owner', name: '创始人', role: 'owner' },
+              kind: 'message',
+              text: '请给出可见回答',
+            }],
+          };
+        } else if (url.pathname === '/api/messages') {
+          assert.equal(url.searchParams.get('since'), 'progress-1');
+          payload = { ok: true, entries: [] };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          streamEvents.push(event);
+          payload = {
+            ok: true,
+            entry: {
+              id: event.kind === 'progress' ? 'progress-1' : `event-${streamEvents.length}`,
+              at: '2026-07-23T10:00:00.000Z',
+              author: { id: 'ai', name: 'AI', role: 'ai' },
+              ...event,
+            },
+          };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl(command, args, options) {
+        assert.equal(options.env.WORKBENCH_SESSION, 'session-a');
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => {
+          child.stdout.emit('data', [
+            'codex',
+            '修复已经完成。',
+            '全量测试通过。',
+            'tokens used',
+            '2,048',
+          ].join('\n'));
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+      logger: { log() {} },
+    });
+
+    assert.equal(result.processed, 1);
+    assert.deepEqual(streamEvents.map(({ kind }) => kind), ['progress', 'message']);
+    assert.equal(streamEvents[1].text, 'Codex：修复已经完成。\n全量测试通过。');
+    assert.equal(streamEvents.some(({ text }) => text === '已处理完毕'), false);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('Codex 已自行写入实质 AI 条目时不重复转发 stdout', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-existing-reply-'));
+  const streamEvents = [];
+  try {
+    await worker.runOnce({
+      workbenchUrl: 'http://127.0.0.1:8099',
+      token: 'test-token',
+      model: 'gpt-test',
+      workerHome,
+      pollMs: 5000,
+    }, {
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['session-a'] };
+        } else if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'message-1',
+              author: { id: 'owner', name: '创始人', role: 'owner' },
+              kind: 'message',
+              text: '处理后请回复',
+            }],
+          };
+        } else if (url.pathname === '/api/messages') {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'codex-reply-1',
+              author: { id: 'ai', name: 'AI', role: 'ai' },
+              kind: 'receipt',
+              text: 'Codex：已自行通过 API 写入处理结果。',
+            }],
+          };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          streamEvents.push(event);
+          payload = {
+            ok: true,
+            entry: {
+              id: 'progress-1',
+              at: '2026-07-23T10:00:00.000Z',
+              author: { id: 'ai', name: 'AI', role: 'ai' },
+              ...event,
+            },
+          };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl() {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => {
+          child.stdout.emit('data', 'codex\n这段 stdout 不应重复写流\ntokens used\n99');
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+      logger: { log() {} },
+    });
+
+    assert.deepEqual(streamEvents.map(({ kind }) => kind), ['progress']);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
 });
 
 test('Codex 失败回执不会泄露环境变量中的口令', async () => {
@@ -273,4 +473,17 @@ test('systemd 先只终止 worker 主进程，让当前 Codex 有时间完成', 
   assert.match(service, /^KillMode=mixed$/m);
   assert.match(service, /^KillSignal=SIGTERM$/m);
   assert.match(service, /^TimeoutStopSec=31min$/m);
+});
+
+test('常驻 AGENTS 在开头强调 stdout 不可见，并提供 message curl 示例', () => {
+  const agents = fs.readFileSync(
+    new URL('../../scripts/resident-AGENTS.md', import.meta.url),
+    'utf8',
+  );
+  assert.match(agents.slice(0, 500), /所有回应必须通过工作台 API 写入对话流/);
+  assert.match(agents.slice(0, 500), /stdout 不会被任何人看到/);
+  assert.match(agents, /curl --fail-with-body/);
+  assert.match(agents, /\$WORKBENCH_URL\/api\/stream-events/);
+  assert.match(agents, /x-workbench-token: \$WORKBENCH_TOKEN/);
+  assert.match(agents, /"kind":"message"/);
 });

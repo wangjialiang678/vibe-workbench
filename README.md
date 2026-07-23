@@ -66,7 +66,7 @@ node bin/workbench.mjs wait <session> <round> --events
 node bin/workbench.mjs stream-migrate <session>   # 历史 sessionComment 幂等迁移
 ```
 
-每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 写 `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
+每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 以 AI 身份写 `message` / `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
 
 会话文档保存在 `workspace/<session>/documents/<category>/<slug>.md`，分类限于「需求 / PRD / 架构 / UI 设计 / 交互设计 / 测试 / 其他」，正文上限 256 KiB（按 UTF-8 字节）。管理员可用 `POST /api/documents` 发布或更新；`GET /api/documents?session=...` 返回列表，增加 `slug=...` 返回单篇正文，跨分类出现同名 slug 时可再传 `category=...` 消歧。CLI 会优先采用源文件 frontmatter 的 `title`，否则用文件名，也可显式覆盖：
 

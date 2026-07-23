@@ -10,7 +10,7 @@
 - [backend] content API 注入 diff、feedback 落盘+状态机、status 联合判定、retry 重置
 - [backend] rounds 远程写入（鉴权/2 MiB/lint/409）、feedback GET 轮询、事件 webhook
 - [backend] 参与者 magic-link 身份、owner-only 管理 API、逐人反馈/owner 优先合并/select 分歧、首份兼容唤醒
-- [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events、受保护附件上传
+- [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events（message/progress/receipt）、受保护附件上传
 - [backend] 云端文档库分类存储、管理员发布/更新、列表/单篇读取、校验与更新回执
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试

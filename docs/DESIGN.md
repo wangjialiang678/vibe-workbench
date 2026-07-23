@@ -231,7 +231,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET `/` 及静态 | 托管 src/render/ |
 | POST `/api/rounds` | 校验并独占写入新轮次；2 MiB 上限；重复 round 返回 409 |
 | GET/POST `/api/messages` | 读取会话流（支持 ID/时间 `since`）/ 以请求身份追加实名消息 |
-| POST `/api/stream-events` | 仅管理员以 AI 身份追加 `progress` / `receipt` |
+| POST `/api/stream-events` | 仅管理员以 AI 身份追加 `message` / `progress` / `receipt` |
 | POST `/api/attachments?session=` | 上传 ≤5 MiB PNG/JPEG/WebP/GIF/PDF 到该会话 `assets/uploads/` |
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
 | POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |

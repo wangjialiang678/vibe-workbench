@@ -752,8 +752,8 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
         json(res, 400, { ok: false, error: 'session 或请求体无效' });
         return;
       }
-      if (!['progress', 'receipt'].includes(body.kind)) {
-        json(res, 400, { ok: false, error: 'kind 只允许 progress 或 receipt' });
+      if (!['message', 'progress', 'receipt'].includes(body.kind)) {
+        json(res, 400, { ok: false, error: 'kind 只允许 message、progress 或 receipt' });
         return;
       }
       if (!validStreamText(body.text)) {

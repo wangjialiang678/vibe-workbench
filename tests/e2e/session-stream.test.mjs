@@ -302,7 +302,7 @@ test('POST /api/feedback 成功后按服务端实名追加精确文案的 AI rec
   assert.equal(receipt.author.role, 'ai');
 });
 
-test('POST /api/stream-events 拒绝参与者，owner 可写 progress/receipt 且作者固定为 AI', async () => {
+test('POST /api/stream-events 拒绝参与者，owner 可写 message/progress/receipt 且作者固定为 AI', async () => {
   const session = 'owner-stream-events';
   const denied = await postJson('/api/stream-events', {
     session,
@@ -313,6 +313,7 @@ test('POST /api/stream-events 拒绝参与者，owner 可写 progress/receipt �
   assert.equal((await denied.json()).ok, false);
 
   for (const [kind, text] of [
+    ['message', '这是 AI 的实质回答'],
     ['progress', '正在分析反馈'],
     ['receipt', '分析已完成'],
   ]) {
@@ -333,6 +334,7 @@ test('POST /api/stream-events 拒绝参与者，owner 可写 progress/receipt �
 
   const entries = await getMessages(session);
   assert.deepEqual(entries.map(({ kind, text, author }) => ({ kind, text, author: author.id })), [
+    { kind: 'message', text: '这是 AI 的实质回答', author: 'ai' },
     { kind: 'progress', text: '正在分析反馈', author: 'ai' },
     { kind: 'receipt', text: '分析已完成', author: 'ai' },
   ]);
