@@ -1997,7 +1997,7 @@ async function advanceToRound(newRound) {
   _historyRoundsCacheKey = '';
   setSubmitState('ready');
   updateSessionLabel();
-  document.title = `第 ${newRound} 轮 — 振动编码工作台`;
+  document.title = `第 ${newRound} 轮 — Vibe Workbench`;
   await loadAndRender();
   await refreshLatestDecisionState();
   await loadHistoryRounds();
@@ -2071,7 +2071,7 @@ async function pollStatus() {
     // document.title 角标（已回复 / 处理中）
     const state = status.state;
     if (state === 'responded' && _prevState !== 'responded') {
-      document.title = '🔵 已回复 — 振动编码工作台';
+      document.title = '🔵 已回复 — Vibe Workbench';
       if (_notifGranted) {
         new Notification('AI 已回复', { body: '新一轮内容已生成，请查看。' });
       }
