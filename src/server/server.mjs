@@ -294,7 +294,7 @@ function normalizeAssetSubpath(value) {
 }
 
 function readValidContentForVisibility(session, round) {
-  const content = readJSON(paths.content(session, round), null);
+  const content = readJSON(paths.content(session, round, { exactSession: true }), null);
   return validateContent(content).ok
     && content.session === session
     && content.round === round
@@ -302,53 +302,149 @@ function readValidContentForVisibility(session, round) {
     : null;
 }
 
-const ASSET_LINK_RE = /\/assets\/([^/\s"'<>]+)\/([A-Za-z0-9._~!$&'()*+,;=:@%/-]+)/g;
+const ASSET_VISIBILITY_CACHE_LIMIT = 512;
+const ASSET_INVENTORY_CACHE_LIMIT = 128;
+const assetVisibilityCache = new Map();
+const assetInventoryCache = new Map();
 
-function collectAssetPaths(value, session, target) {
+function fileVersion(target) {
+  try {
+    const stat = fs.lstatSync(target, { bigint: true });
+    return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.mode].join(':');
+  } catch (error) {
+    return 'missing:' + (error?.code || 'unknown');
+  }
+}
+
+function cachePut(cache, key, value, limit) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) cache.delete(cache.keys().next().value);
+  return value;
+}
+
+function assetInventoryCacheValid(cached) {
+  return cached?.directories?.every(([directory, version]) => fileVersion(directory) === version)
+    && cached?.fileVersions?.every(([relativePath, version]) => (
+      fileVersion(path.join(cached.root, relativePath)) === version
+    ));
+}
+
+function trimAssetCandidate(value) {
+  let candidate = value;
+  while (candidate && /[).,\]}]+$/.test(candidate)) candidate = candidate.slice(0, -1);
+  return candidate;
+}
+
+// 只把完整的 http(s) URL 或字面量 /assets/ 绝对路径交给 URL 解析器。
+// 这样外站 URL 中的 /assets/ 不会再被截成“本地引用”；相对路径和未知形式默认拒绝。
+function assetUrlCandidates(value) {
+  const candidates = [];
+  for (let index = 0; index < value.length;) {
+    const lower = value.slice(index, index + 8).toLowerCase();
+    const isHttpUrl = lower.startsWith('http://') || lower.startsWith('https://');
+    const isLocalPath = value.startsWith('/assets/', index);
+    if (!isHttpUrl && !isLocalPath) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < value.length && !' \t\r\n"\'<>'.includes(value[end])) end += 1;
+    const candidate = trimAssetCandidate(value.slice(index, end));
+    if (candidate) candidates.push(candidate);
+    index = Math.max(end, index + 1);
+  }
+  return candidates;
+}
+
+function assetPathFromCandidate(candidate, session, serviceOrigin) {
+  const lower = candidate.slice(0, 8).toLowerCase();
+  if (!candidate.startsWith('/assets/')
+    && !lower.startsWith('http://')
+    && !lower.startsWith('https://')) return null;
+  try {
+    const parsed = new URL(candidate, serviceOrigin);
+    if (parsed.origin !== new URL(serviceOrigin).origin) return null;
+    // Encoded /%61ssets 不是本服务的 /assets 路由，保持默认拒绝。
+    if (!parsed.pathname.startsWith('/assets/')) return null;
+    const rel = decodeURIComponent(parsed.pathname.slice('/assets/'.length));
+    const slash = rel.indexOf('/');
+    if (slash <= 0) return null;
+    if (rel.slice(0, slash) !== session) return null;
+    return normalizeAssetSubpath(rel.slice(slash + 1));
+  } catch {
+    return null;
+  }
+}
+
+function collectAssetPaths(value, session, target, serviceOrigin) {
   if (typeof value === 'string') {
-    for (const match of value.matchAll(ASSET_LINK_RE)) {
-      const rawPath = match[2].replace(/[).,\]}]+$/, '');
-      try {
-        if (decodeURIComponent(match[1]) !== session) continue;
-        const decodedPath = rawPath.split('/').map((part) => decodeURIComponent(part)).join('/');
-        const normalized = normalizeAssetSubpath(decodedPath);
-        if (normalized) target.add(normalized);
-      } catch {
-        // 无法验证的资产引用不授权任何文件。
-      }
+    for (const candidate of assetUrlCandidates(value)) {
+      const normalized = assetPathFromCandidate(candidate, session, serviceOrigin);
+      if (normalized) target.add(normalized);
     }
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((item) => collectAssetPaths(item, session, target));
+    value.forEach((item) => collectAssetPaths(item, session, target, serviceOrigin));
     return;
   }
   if (value && typeof value === 'object') {
-    Object.values(value).forEach((item) => collectAssetPaths(item, session, target));
+    Object.values(value).forEach((item) => collectAssetPaths(item, session, target, serviceOrigin));
   }
 }
 
-function visibleAssetPathsForIdentity(session, identity) {
+function selectedAssetRound(session, requestedRound) {
+  if (requestedRound != null) return requestedRound;
+  const rounds = listRounds(session, { exactSession: true });
+  return rounds.length ? rounds[rounds.length - 1] : 0;
+}
+
+function visibleAssetPathsForIdentity(session, identity, requestedRound = null, serviceOrigin = 'http://localhost') {
   if (identity?.role !== 'participant') return null;
 
+  const round = selectedAssetRound(session, requestedRound);
+  if (!round) return new Set();
+  const contentPath = paths.content(session, round, { exactSession: true });
+  const version = fileVersion(contentPath);
+  let origin;
+  try { origin = new URL(serviceOrigin).origin; }
+  catch { return new Set(); }
+  const cacheKey = [session, identity.id || '', round, origin].join('\0');
+  const cached = assetVisibilityCache.get(cacheKey);
+  if (cached?.version === version) return cached.paths;
+
   const allowed = new Set();
-  // 采用“公共可见”规则：同一资产只要被任一当前身份可见的块引用，便整体放行；
-  // 公共块对所有参与者可见，因此公共块与私有块共同引用时不会被私有引用误伤。
-  for (const round of listRounds(session)) {
-    const content = readValidContentForVisibility(session, round);
-    if (!Array.isArray(content?.blocks)) continue;
+  const content = readValidContentForVisibility(session, round);
+  if (Array.isArray(content?.blocks)) {
+    // 资产没有 round 字段；默认只绑定最新轮，显式 round 则只绑定被请求的那一轮，
+    // 不把历史轮次并集当成当前文件的永久读取权，避免路径复用后的陈旧授权。
     for (const block of visibleBlocksForIdentity(content.blocks, identity)) {
-      collectAssetPaths(block, session, allowed);
+      collectAssetPaths(block, session, allowed, origin);
     }
   }
-  return allowed;
+  return cachePut(
+    assetVisibilityCache,
+    cacheKey,
+    { version, paths: allowed },
+    ASSET_VISIBILITY_CACHE_LIMIT,
+  ).paths;
 }
 
 function listSessionAssets(session, allowedPaths = null) {
   const root = path.resolve(workspaceDir(), session, 'assets');
+  const version = fileVersion(root);
+  const cached = assetInventoryCache.get(root);
+  if (cached?.version === version && assetInventoryCacheValid(cached)) {
+    return allowedPaths
+      ? cached.files.filter((file) => allowedPaths.has(file.path))
+      : cached.files;
+  }
   const files = [];
+  const directories = new Map();
 
   function walk(directory, relativeDirectory = '') {
+    directories.set(directory, fileVersion(directory));
     const entries = fs.readdirSync(directory, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     for (const entry of entries) {
@@ -361,23 +457,109 @@ function listSessionAssets(session, allowedPaths = null) {
       if (entry.isDirectory()) {
         walk(absolutePath, relativePath);
       } else if (entry.isFile()) {
-        if (allowedPaths && !allowedPaths.has(relativePath)) continue;
+        const stat = fs.lstatSync(absolutePath);
+        if (!stat.isFile()) continue;
         files.push({
           path: relativePath,
           url: assetUrl(session, relativePath),
-          size: fs.statSync(absolutePath).size,
+          size: stat.size,
         });
       }
     }
   }
 
   try {
+    const rootStat = fs.lstatSync(root);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return [];
     walk(root);
   } catch (error) {
     if (error?.code === 'ENOENT') return [];
     throw error;
   }
-  return files;
+  const cachedFiles = cachePut(
+    assetInventoryCache,
+    root,
+    {
+      root,
+      version,
+      files,
+      directories: [...directories.entries()],
+      fileVersions: files.map((file) => [
+        file.path,
+        fileVersion(path.join(root, file.path)),
+      ]),
+    },
+    ASSET_INVENTORY_CACHE_LIMIT,
+  ).files;
+  return allowedPaths ? cachedFiles.filter((file) => allowedPaths.has(file.path)) : cachedFiles;
+}
+
+function assertNoSymlinkComponents(root, relativePath) {
+  const workspaceRoot = path.resolve(workspaceDir());
+  const rootRelative = path.relative(workspaceRoot, root);
+  let current = workspaceRoot;
+  for (const component of rootRelative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      const error = new Error('asset path contains a symbolic link');
+      error.code = 'ASSET_FORBIDDEN';
+      throw error;
+    }
+    if (!stat.isDirectory()) {
+      const error = new Error('asset path component is not a directory');
+      error.code = 'ENOTDIR';
+      throw error;
+    }
+  }
+  const parts = relativePath.split('/');
+  for (const [index, component] of parts.entries()) {
+    current = path.join(current, component);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      const error = new Error('asset path contains a symbolic link');
+      error.code = 'ASSET_FORBIDDEN';
+      throw error;
+    }
+    if (index < parts.length - 1 && !stat.isDirectory()) {
+      const error = new Error('asset path component is not a directory');
+      error.code = 'ENOTDIR';
+      throw error;
+    }
+  }
+}
+
+function readAssetFile(root, normalizedSub) {
+  const workspaceRoot = fs.realpathSync(workspaceDir());
+  const realRoot = fs.realpathSync(root);
+  if (!realRoot.startsWith(workspaceRoot + path.sep)) {
+    const error = new Error('asset root outside workspace');
+    error.code = 'ASSET_FORBIDDEN';
+    throw error;
+  }
+  assertNoSymlinkComponents(root, normalizedSub);
+
+  const abs = path.resolve(root, normalizedSub);
+  const noFollow = fs.constants.O_NOFOLLOW || 0;
+  let fd;
+  try {
+    // lstat 逐个组件拒绝中间 symlink，O_NOFOLLOW 再拒绝最终组件；校验和读取都基于同一 fd。
+    fd = fs.openSync(abs, fs.constants.O_RDONLY | noFollow);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      const error = new Error('asset is not a regular file');
+      error.code = 'ASSET_NOT_FILE';
+      throw error;
+    }
+    return fs.readFileSync(fd);
+  } catch (error) {
+    if (error?.code === 'ELOOP') error.code = 'ASSET_FORBIDDEN';
+    throw error;
+  } finally {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
 }
 
 function requestOrigin(req) {
@@ -388,6 +570,15 @@ function requestOrigin(req) {
   const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
   const host = forwardedHost || req.headers.host || '127.0.0.1';
   return `${protocol}://${host}`;
+}
+
+function assetServiceOrigin(req) {
+  const protocol = req.socket.encrypted ? 'https' : 'http';
+  const address = req.socket.localAddress || '127.0.0.1';
+  const host = address.includes(':') && !address.startsWith('[')
+    ? '[' + address + ']'
+    : address;
+  return protocol + '://' + host + (req.socket.localPort ? ':' + req.socket.localPort : '');
 }
 
 function renderUrl(req, session) {
@@ -477,6 +668,7 @@ function filterStreamEntriesForIdentity(session, entries, allEntries, identity) 
     if (entry.kind === 'ask' && hiddenAskIds.has(entry.ask?.id)) return [];
     if (entry.kind === 'answer' && hiddenAskIds.has(entry.answerTo)) return [];
     if (!entry.refs?.blockId || streamBlockRefVisible(session, entry.refs, identity)) return [entry];
+    if (['message', 'progress', 'receipt'].includes(entry.kind)) return [];
     return [stripHiddenStreamBlockRef(entry)];
   });
 }
@@ -1278,15 +1470,23 @@ function handleRequest(
   }
 
   if (urlPath === '/api/assets' && method === 'GET') {
-    const { session } = parseQuery(rawUrl);
+    const { session, round } = parseQuery(rawUrl);
     if (!isValidSessionName(session)) {
       json(res, 400, { ok: false, error: 'session 参数无效' });
+      return;
+    }
+    const requestedRound = round == null ? null : validRoundQuery(round);
+    if (round != null && requestedRound == null) {
+      json(res, 400, { ok: false, error: 'round 参数无效' });
       return;
     }
     try {
       json(res, 200, {
         ok: true,
-        files: listSessionAssets(session, visibleAssetPathsForIdentity(session, identity)),
+        files: listSessionAssets(
+          session,
+          visibleAssetPathsForIdentity(session, identity, requestedRound, assetServiceOrigin(req)),
+        ),
       });
     } catch (error) {
       console.error('[workbench:assets] 索引失败：', error.message);
@@ -1757,7 +1957,13 @@ function handleRequest(
   // 用途：session 自带的静态资源（如高保真 UI 设计稿 HTML），让工作台自托管，
   // 不再依赖外部服务（此前 prd-studio 的 :8088 必须开着才能看 UI 面）。
   if (method === 'GET' && urlPath.startsWith('/assets/')) {
-    const rel = decodeURIComponent(urlPath.slice('/assets/'.length));
+    let rel;
+    try {
+      rel = decodeURIComponent(urlPath.slice('/assets/'.length));
+    } catch {
+      json(res, 400, { ok: false, error: 'asset path encoding invalid' });
+      return;
+    }
     const slash = rel.indexOf('/');
     const session = slash === -1 ? rel : rel.slice(0, slash);
     const sub = slash === -1 ? '' : rel.slice(slash + 1);
@@ -1772,7 +1978,18 @@ function handleRequest(
       json(res, 403, { ok: false, error: 'forbidden' });
       return;
     }
-    const allowedAssetPaths = visibleAssetPathsForIdentity(session, identity);
+    const { round } = parseQuery(rawUrl);
+    const requestedRound = round == null ? null : validRoundQuery(round);
+    if (round != null && requestedRound == null) {
+      json(res, 400, { ok: false, error: 'round 参数无效' });
+      return;
+    }
+    const allowedAssetPaths = visibleAssetPathsForIdentity(
+      session,
+      identity,
+      requestedRound,
+      assetServiceOrigin(req),
+    );
     if (allowedAssetPaths && !allowedAssetPaths.has(normalizedSub)) {
       json(res, 403, { ok: false, error: 'asset forbidden' });
       return;
@@ -1783,20 +2000,8 @@ function handleRequest(
       return;
     }
     try {
-      const workspaceRoot = fs.realpathSync(workspaceDir());
-      const realRoot = fs.realpathSync(root);
-      const realAbs = fs.realpathSync(abs);
-      if (!realRoot.startsWith(workspaceRoot + path.sep)
-        || (realAbs !== realRoot && !realAbs.startsWith(realRoot + path.sep))) {
-        json(res, 403, { ok: false, error: 'forbidden' });
-        return;
-      }
-      if (!fs.statSync(realAbs).isFile()) {
-        json(res, 404, { ok: false, error: 'asset not found' });
-        return;
-      }
-      const buf = fs.readFileSync(realAbs);
-      const ext = path.extname(realAbs).toLowerCase();
+      const buf = readAssetFile(root, normalizedSub);
+      const ext = path.extname(normalizedSub).toLowerCase();
       cors(res);
       if (ext === '.html') noReferrer(res);
       // 防存储型 XSS：禁止 MIME 嗅探；PDF 等可执行脚本的文档强制下载而非内嵌打开
@@ -1807,7 +2012,11 @@ function handleRequest(
         'Cache-Control': 'no-store',
       });
       res.end(buf);
-    } catch {
+    } catch (error) {
+      if (error?.code === 'ASSET_FORBIDDEN') {
+        json(res, 403, { ok: false, error: 'forbidden' });
+        return;
+      }
       json(res, 404, { ok: false, error: 'asset not found' });
     }
     return;
@@ -1825,7 +2034,13 @@ function handleRequest(
     }
 
     // Resolve path within SRC_ROOT; prevent directory traversal
-    const rel = decodeURIComponent(urlPath);
+    let rel;
+    try {
+      rel = decodeURIComponent(urlPath);
+    } catch {
+      json(res, 400, { ok: false, error: 'path encoding invalid' });
+      return;
+    }
     const abs = path.resolve(SRC_ROOT, '.' + rel);
     if (!abs.startsWith(SRC_ROOT + path.sep) && abs !== SRC_ROOT) {
       json(res, 403, { ok: false, error: 'forbidden' });

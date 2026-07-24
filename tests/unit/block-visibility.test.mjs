@@ -1,8 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import { validateBlock } from '../../src/protocol/schema.mjs';
 import { paths, readJSON, writeJSON, writeStatus } from '../../src/workspace.mjs';
@@ -329,6 +331,206 @@ test('参与者资产清单和直读只允许可见 block 可达资产，公共�
   }
 });
 
+test('资产引用只接受同源或本地绝对路径，覆盖外部 URL 子串、编码、Markdown、HTML、CSS 和 srcdoc', async () => {
+  const session = 'asset-reference-boundary';
+  const publicPaths = [
+    'public/plain.txt',
+    'public/encoded.name.txt',
+    'public/markdown.png',
+    'public/html-double.html',
+    'public/html-single.html',
+    'public/css.png',
+    'public/srcdoc.png',
+    'public/same-origin.txt',
+  ];
+  const deniedPaths = [
+    'private/external-collision.txt',
+    'private/relative.txt',
+    'private/encoded-prefix.txt',
+  ];
+  for (const relativePath of [...publicPaths, ...deniedPaths]) {
+    const target = path.join(workspace, session, 'assets', relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, `asset-${relativePath}`);
+  }
+
+  const asset = (relativePath) => `/assets/${session}/${relativePath}`;
+  const sameOriginAsset = `${baseUrl}${asset('public/same-origin.txt')}`;
+  contentFor(session, [{
+    id: 'public-references',
+    type: 'markdown',
+    body: [
+      `外部碰撞：https://cdn.example${asset('private/external-collision.txt')}`,
+      `相对路径：assets/${session}/private/relative.txt`,
+      `普通本地路径：${asset('public/plain.txt')}`,
+      `编码路径：${asset('public/encoded%2Ename.txt')}`,
+      `Markdown：![预览](${asset('public/markdown.png')})`,
+      `<img src="${asset('public/html-double.html')}">`,
+      `<img src='${asset('public/html-single.html')}'>`,
+      `<style>.hero { background: url('${asset('public/css.png')}'); }</style>`,
+      `<iframe srcdoc="<img src='${asset('public/srcdoc.png')}'>"></iframe>`,
+      `同源完整 URL：${sameOriginAsset}`,
+      `编码前缀：/%61ssets/${session}/private/encoded-prefix.txt`,
+    ].join('\n'),
+  }]);
+
+  const inventory = await fetch(`${baseUrl}/api/assets?session=${session}`, {
+    headers: { 'x-workbench-token': 'alice-visibility-token' },
+  });
+  assert.equal(inventory.status, 200);
+  const inventoryBody = await inventory.json();
+  const expectedPaths = [...publicPaths].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  assert.deepEqual(inventoryBody.files.map((file) => file.path), expectedPaths);
+
+  for (const relativePath of publicPaths) {
+    const response = await fetch(`${baseUrl}${asset(relativePath)}?token=alice-visibility-token`);
+    assert.equal(response.status, 200, relativePath);
+  }
+  for (const relativePath of deniedPaths) {
+    const response = await fetch(`${baseUrl}${asset(relativePath)}?token=alice-visibility-token`);
+    assert.equal(response.status, 403, relativePath);
+  }
+
+  // 真实 HTTP 请求验证 manifest 和递归清单缓存会在内容/资产版本变化后失效。
+  const latePath = 'public/added-after-cache.txt';
+  const lateTarget = path.join(workspace, session, 'assets', latePath);
+  fs.writeFileSync(lateTarget, 'asset-added-after-cache');
+  contentFor(session, [{
+    id: 'public-references',
+    type: 'markdown',
+    body: sameOriginAsset + ' /assets/' + session + '/' + latePath,
+  }]);
+  const refreshed = await fetch(baseUrl + '/api/assets?session=' + session, {
+    headers: { 'x-workbench-token': 'alice-visibility-token' },
+  });
+  assert.equal(refreshed.status, 200);
+  assert.deepEqual((await refreshed.json()).files.map((file) => file.path), [
+    'public/added-after-cache.txt',
+    'public/same-origin.txt',
+  ]);
+  const lateRead = await fetch(baseUrl + asset(latePath) + '?token=alice-visibility-token');
+  assert.equal(lateRead.status, 200);
+});
+
+test('资产目录拒绝会话内 symlink、外部 symlink 和中间组件 symlink', async () => {
+  const session = 'asset-symlink-boundary';
+  const assetRoot = path.join(workspace, session, 'assets');
+  const privateDir = path.join(assetRoot, 'private');
+  const publicDir = path.join(assetRoot, 'public');
+  fs.mkdirSync(privateDir, { recursive: true });
+  fs.mkdirSync(publicDir, { recursive: true });
+  fs.writeFileSync(path.join(privateDir, 'secret.txt'), 'SYMLINK-PRIVATE-SECRET');
+  const outside = path.join(workspace, 'outside-symlink-secret.txt');
+  fs.writeFileSync(outside, 'SYMLINK-OUTSIDE-SECRET');
+  fs.symlinkSync('../private/secret.txt', path.join(publicDir, 'link-private.txt'));
+  fs.symlinkSync(outside, path.join(publicDir, 'link-outside.txt'));
+  fs.symlinkSync('../private', path.join(publicDir, 'link-dir'));
+
+  contentFor(session, [{
+    id: 'public-links',
+    type: 'markdown',
+    body: [
+      `/assets/${session}/public/link-private.txt`,
+      `/assets/${session}/public/link-outside.txt`,
+      `/assets/${session}/public/link-dir/secret.txt`,
+    ].join(' '),
+  }]);
+
+  for (const relativePath of [
+    'public/link-private.txt',
+    'public/link-outside.txt',
+    'public/link-dir/secret.txt',
+  ]) {
+    const response = await fetch(`${baseUrl}/assets/${session}/${relativePath}?token=alice-visibility-token`);
+    assert.notEqual(response.status, 200, relativePath);
+    assert.doesNotMatch(await response.text(), /SYMLINK-(?:PRIVATE|OUTSIDE)-SECRET/);
+  }
+});
+
+test('资产授权只取当前轮，显式请求旧轮时只取该轮；内容改写会使缓存授权失效', async () => {
+  const session = 'asset-round-boundary';
+  const assetRoot = path.join(workspace, session, 'assets');
+  fs.mkdirSync(path.join(assetRoot, 'ui'), { recursive: true });
+  fs.writeFileSync(path.join(assetRoot, 'ui', 'old-only.html'), 'OLD-ROUND-PUBLIC');
+  fs.writeFileSync(path.join(assetRoot, 'ui', 'same.html'), 'PUBLIC-V1');
+
+  contentFor(session, [{
+    id: 'round-one-public',
+    type: 'markdown',
+    body: `/assets/${session}/ui/old-only.html /assets/${session}/ui/same.html`,
+  }], 1, 0);
+  contentFor(session, [{
+    id: 'round-two-private',
+    type: 'markdown',
+    body: `/assets/${session}/ui/same.html`,
+    assignee: 'bob',
+  }], 2, 1);
+  fs.writeFileSync(path.join(assetRoot, 'ui', 'same.html'), 'SECRET-V2-WRITTEN-AFTER-REASSIGN');
+
+  const current = await fetch(`${baseUrl}/api/assets?session=${session}`, {
+    headers: { 'x-workbench-token': 'alice-visibility-token' },
+  });
+  assert.equal(current.status, 200);
+  assert.deepEqual((await current.json()).files, []);
+
+  const currentRead = await fetch(`${baseUrl}/assets/${session}/ui/same.html?token=alice-visibility-token`);
+  assert.equal(currentRead.status, 403);
+
+  const oldRound = await fetch(`${baseUrl}/api/assets?session=${session}&round=1`, {
+    headers: { 'x-workbench-token': 'alice-visibility-token' },
+  });
+  assert.equal(oldRound.status, 200);
+  assert.deepEqual((await oldRound.json()).files.map((file) => file.path), [
+    'ui/old-only.html',
+    'ui/same.html',
+  ]);
+  const oldOnlyRead = await fetch(`${baseUrl}/assets/${session}/ui/old-only.html?token=alice-visibility-token&round=1`);
+  assert.equal(oldOnlyRead.status, 200);
+  assert.equal(await oldOnlyRead.text(), 'OLD-ROUND-PUBLIC');
+});
+
+test('畸形百分号路径只返回 4xx，资产和静态路由都不让 HTTP server 退出', async () => {
+  const serverModule = new URL('../../src/server/server.mjs', import.meta.url).href;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', [
+    `import { startServer } from ${JSON.stringify(serverModule)};`,
+    "const server = startServer(0, '127.0.0.1');",
+    "server.once('listening', () => process.stdout.write(String(server.address().port) + '\\n'));",
+  ].join('\n')], {
+    env: { ...process.env, WB_WORKSPACE: workspace, WORKBENCH_TOKEN: OWNER_TOKEN },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let output = '';
+  const port = await new Promise((resolve, reject) => {
+    const onData = (chunk) => {
+      output += chunk.toString();
+      const line = output.split('\n')[0].trim();
+      if (line) resolve(Number(line));
+    };
+    child.stdout.on('data', onData);
+    child.once('error', reject);
+    child.once('exit', (code, signal) => reject(new Error(`probe server exited: ${code}/${signal}`)));
+  });
+  const probeBase = `http://127.0.0.1:${port}`;
+  try {
+    for (const pathname of [
+      '/assets/no-session/%ZZ',
+      '/assets/no-session/%',
+      '/assets/no-session/%E0%A4%A',
+      `/assets/no-session/${'a'.repeat(8000)}`,
+      '/render/%ZZ',
+    ]) {
+      const response = await fetch(`${probeBase}${pathname}?token=${OWNER_TOKEN}`);
+      assert.ok(response.status >= 400 && response.status < 500, `${pathname}: ${response.status}`);
+      const health = await fetch(`${probeBase}/api/health?token=${OWNER_TOKEN}`);
+      assert.equal(health.status, 200, `${pathname} 后 server 应存活`);
+      assert.equal((await health.json()).ok, true);
+    }
+  } finally {
+    child.kill('SIGTERM');
+    if (child.exitCode == null && child.signalCode == null) await once(child, 'exit');
+  }
+});
+
 test('参与者读取 stream 会过滤隐藏/未知 block ref，隐藏 ask 及其 answer 均不可访问', async () => {
   const session = 'stream-block-visibility';
   contentFor(session, [
@@ -349,10 +551,20 @@ test('参与者读取 stream 会过滤隐藏/未知 block ref，隐藏 ask 及�
     ],
     multi: false,
   };
+  const hiddenSecrets = {
+    message: 'UNIQUE-HIDDEN-STREAM-MESSAGE-SECRET',
+    progress: 'UNIQUE-HIDDEN-STREAM-PROGRESS-SECRET',
+    receipt: 'UNIQUE-HIDDEN-STREAM-RECEIPT-SECRET',
+  };
+  const unknownSecret = 'UNIQUE-UNKNOWN-STREAM-MESSAGE-SECRET';
   for (const body of [
     { kind: 'message', text: '公共引用', refs: { round: 1, blockId: 'public' } },
-    { kind: 'message', text: '隐藏引用', refs: { round: 1, blockId: 'bob-only' } },
-    { kind: 'message', text: '未知引用', refs: { round: 1, blockId: 'missing-block' } },
+    ...Object.entries(hiddenSecrets).map(([kind, text]) => ({
+      kind,
+      text,
+      refs: { round: 1, blockId: 'bob-only' },
+    })),
+    { kind: 'message', text: unknownSecret, refs: { round: 1, blockId: 'missing-block' } },
   ]) {
     const response = await postStreamEvent(body);
     assert.equal(response.status, 200);
@@ -367,11 +579,11 @@ test('参与者读取 stream 会过滤隐藏/未知 block ref，隐藏 ask 及�
   const entries = (await messages.json()).entries;
   assert.equal(entries.some((entry) => entry.kind === 'ask' && entry.ask?.id === 'hidden-ask'), false);
   assert.equal(entries.some((entry) => entry.text === '公共引用' && entry.refs?.blockId === 'public'), true);
-  for (const text of ['隐藏引用', '未知引用']) {
-    const entry = entries.find((candidate) => candidate.text === text);
-    assert.ok(entry);
-    assert.equal(entry.refs?.blockId, undefined, text);
+  for (const secret of Object.values(hiddenSecrets)) {
+    assert.equal(entries.some((entry) => entry.text === secret), false);
   }
+  assert.equal(entries.some((entry) => entry.text === unknownSecret), false);
+  assert.doesNotMatch(JSON.stringify(entries), /UNIQUE-(?:HIDDEN|UNKNOWN)-STREAM-(?:MESSAGE|PROGRESS|RECEIPT)-SECRET/);
 
   const answer = await fetch(`${baseUrl}/api/messages`, {
     method: 'POST',

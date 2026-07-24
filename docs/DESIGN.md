@@ -236,7 +236,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET/POST `/api/messages` | 读取会话流（支持 ID/时间 `since`）/ 以请求身份追加实名消息 |
 | POST `/api/stream-events` | 仅管理员以 AI 身份追加 `message` / `progress` / `receipt` |
 | POST `/api/attachments?session=` | 上传 ≤5 MiB PNG/JPEG/WebP/GIF/PDF 到该会话 `assets/uploads/` |
-| GET `/api/assets?session=` | 列出会话资产；参与者只得到当前身份可见 block 可达的文件 |
+| GET `/api/assets?session=&round=` | 列出会话资产；参与者默认只得到最新轮（指定 `round` 时为该轮）当前身份可见 block 可达的文件 |
 | GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入）；参与者的 `removed` 与上一轮响应标记重新按身份校验 |
 | POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
 | GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；参与者只看到已授权 block；无反馈则 HTTP 200 + `pending:true` |
@@ -250,7 +250,7 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
 
-公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。会话资产下载还校验 block 可见性、路径 realpath 不得越出 workspace；同一资产被公共块和私有块共同引用时按公共可见放行。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
+公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。会话资产下载还校验 block 可见性、资产引用只接受本服务实际监听 origin 的 URL 或字面量 `/assets/` 绝对路径、路径逐组件拒绝 symlink，并使用同一 fd 完成 `fstat` 与读取；同一资产被公共块和私有块共同引用时按公共可见放行。参与者资产授权只计算最新轮，显式 `round` 只计算被请求轮次，不聚合历史并集；授权 manifest 按 content 版本缓存，资产清单按目录/文件版本失效。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
 
 参与者名册格式为 `[{id,name,token,createdAt}]`，写入采用同目录临时文件 + rename，token 为 16 个密码学随机字节的十六进制表示。CLI `participant add/list/revoke` 在本地直接维护名册；配置 `WORKBENCH_REMOTE_URL` 后复用管理 API。只有 add/API 创建响应包含一次性可分发的完整邀请链接，list 永不回显 token。
 
@@ -456,6 +456,8 @@ restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全
 
 - **新路由** `GET /assets/<session>/<path>` → `workspace/<session>/assets/<path>`。
   - session 名白名单 `^[A-Za-z0-9._-]+$`；子路径 `path.resolve` 后必须仍在 `assets/` 内（防穿越）；`Cache-Control: no-store`。
+  - 参与者只按最新轮可见 block 的严格本地引用授权；`/api/assets` 与直读支持可选 `round` 选择旧轮。外站 URL、相对路径、编码路由前缀和无法解析的形式默认不授权。
+  - 资产目录及路径中间组件拒绝 symlink；直读用 `O_NOFOLLOW` 打开并在同一 fd 上 `fstat`、读取，避免 realpath 校验与路径读取之间的竞态。
   - 语义：**资产属于 session 内容**（runtime 数据，gitignore），不污染工具仓库。
 - **import 默认自托管**：`convertUI` 把 `public/ui/*.html` **拷进** `workspace/<session>/assets/ui/`，块的 `src` 写成 `/assets/<session>/ui/<file>`。传 `--ui-base http://…` 才改为引用外部 URL。
 - **renderPrototype(iframe)**：`src` 为**同源相对路径 → 直连**（不绕 `/api/proxy`，更快，且 iframe 同源便于后续文字锚定批注）；外站**绝对 URL 仍走代理**（绕过 X-Frame-Options）。
