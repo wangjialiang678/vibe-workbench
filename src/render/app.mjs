@@ -6,6 +6,7 @@ import { participantFeedbackHtml } from './blocks.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
 import { documentsPanelHtml, historyRoundsHtml } from './documents-view.mjs';
+import { projectCatalogHtml } from './projects-view.mjs';
 import {
   attachmentMessageMarkdown,
   clampStreamPanelWidth,
@@ -75,6 +76,11 @@ const $documentsMount = document.getElementById('documents-mount');
 const $historyRoundsMount = document.getElementById('history-rounds-mount');
 const $streamUnreadBadge = document.getElementById('stream-unread-badge');
 const $decisionUnreadBadge = document.getElementById('decision-unread-badge');
+const $mobileTabs = document.querySelector('.mobile-tabs');
+const $contentSwitch = document.querySelector('.content-switch');
+const $sessionCommentSection = document.getElementById('session-comment');
+const $historyRoundsSection = document.querySelector('.history-rounds');
+let _projectCatalog = null;
 
 // CSS 选择器防守（id 含特殊字符时不失效）
 function cssEsc(v) {
@@ -106,19 +112,35 @@ function updateDocsLink(docsUrl) {
 async function loadSessions() {
   if (!$sessionNav) return;
   try {
-    const response = await fetch(apiUrl('/api/sessions'));
-    if (!response.ok) return;
+    const response = await fetch(apiUrl('/api/projects'));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    _projectCatalog = data;
     const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-    $sessionNav.replaceChildren(new Option('会话列表', ''));
-    for (const session of sessions) $sessionNav.add(new Option(session, session, false, session === SESSION));
+    const byId = new Map(sessions.map((session) => [session.id, session]));
+    $sessionNav.replaceChildren(new Option('项目首页', ''));
+    for (const project of data.projects || []) {
+      if (project.status !== 'active') continue;
+      const group = document.createElement('optgroup');
+      group.label = project.displayName;
+      for (const sessionId of project.sessions || []) {
+        const session = byId.get(sessionId);
+        if (!session || session.status === 'archived' || session.status === 'unclassified') continue;
+        group.append(new Option(session.title, session.id, false, session.id === SESSION));
+      }
+      if (group.children.length) $sessionNav.append(group);
+    }
+    // 从旧链接进入待归类/归档会话时仍保留当前入口，但不把它们塞回默认导航。
+    const current = byId.get(SESSION);
+    if (SESSION && current && !Array.from($sessionNav.options).some((option) => option.value === SESSION)) {
+      $sessionNav.add(new Option(`档案 · ${current.title}`, SESSION, false, true));
+    }
   } catch { /* 导航失败不影响当前会话 */ }
 }
 
 $sessionNav?.addEventListener('change', () => {
-  if (!$sessionNav.value) return;
   const target = new URL('/render/', location.origin);
-  target.searchParams.set('session', $sessionNav.value);
+  if ($sessionNav.value) target.searchParams.set('session', $sessionNav.value);
   if (TOKEN) target.searchParams.set('token', TOKEN);
   location.assign(target.href);
 });
@@ -381,9 +403,22 @@ const $confirmDialog = document.getElementById('confirm-dialog');
 function updateSessionLabel() {
   $sessionLabel.textContent = SESSION
     ? `会话 ${SESSION}  ·  轮 ${currentRound ?? '…'}`
-    : '（无会话）';
+    : '项目首页';
 }
 updateSessionLabel();
+
+function showProjectHome() {
+  document.body.classList.add('project-home');
+  if ($workspaceShell) $workspaceShell.dataset.mode = 'projects';
+  if ($contentSwitch) $contentSwitch.hidden = true;
+  if ($sessionCommentSection) $sessionCommentSection.hidden = true;
+  if ($historyRoundsSection) $historyRoundsSection.hidden = true;
+  if ($mobileTabs) $mobileTabs.hidden = true;
+  if ($submitBtn) $submitBtn.hidden = true;
+  if ($zones) {
+    $zones.innerHTML = projectCatalogHtml(_projectCatalog, { token: TOKEN });
+  }
+}
 
 // ── 草稿 ─────────────────────────────────────────────────
 function loadDraft(round = currentRound) {
@@ -1914,6 +1949,10 @@ async function advanceToRound(newRound) {
 // 启动：URL 不带 round → 解析为最新一轮；否则用 URL 指定的轮。
 async function bootstrap() {
   await loadSessions();
+  if (!SESSION) {
+    showProjectHome();
+    return;
+  }
   const resolvedLatest = await resolveLatestRound();
   if (resolvedLatest != null) _latestRound = resolvedLatest;
   if (currentRound == null) {

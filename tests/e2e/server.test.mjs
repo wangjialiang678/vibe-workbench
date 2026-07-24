@@ -109,6 +109,71 @@ test('GET /api/sessions returns ok:true with sessions array', async () => {
   assert.ok(Array.isArray(body.sessions));
 });
 
+test('GET /api/projects 返回项目目录并隐藏服务器仓库路径', async () => {
+  const projects = await import('../../src/projects.mjs');
+  projects.writeProjectRegistry({
+    version: 1,
+    projects: [{
+      id: 'server-project',
+      displayName: '服务端项目',
+      repoPath: '/srv/private/project',
+      primarySession: 'server-project-main',
+      previewMode: 'live',
+    }],
+  });
+  writeJSON(paths.content('server-project-main', 1, { exactSession: true }), {
+    session: 'server-project-main',
+    round: 1,
+    title: '产品主线',
+    blocks: [],
+  });
+  projects.updateSessionMetadata('server-project-main', {
+    title: '服务端产品主线',
+    projectId: 'server-project',
+    status: 'active',
+  });
+
+  const res = await fetch(url('/api/projects'));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.projects[0].id, 'server-project');
+  assert.equal(body.sessions.find((item) => item.id === 'server-project-main').projectId, 'server-project');
+  assert.doesNotMatch(JSON.stringify(body), /\/srv\/private/);
+});
+
+test('GET /api/session-context 只向管理员 worker 返回注册仓库路径', async () => {
+  assert.equal((await fetch(url('/api/session-context?session=server-project-main'))).status, 403);
+  const alice = {
+    id: 'alice-projects',
+    name: '小艾',
+    token: 'alice-project-token',
+    createdAt: '2026-07-23T00:00:00.000Z',
+  };
+  await withIdentityServer(
+    { ownerToken: 'owner-project-token', participants: [alice] },
+    async ({ port: authPort }) => {
+      const endpoint = `http://127.0.0.1:${authPort}/api/session-context?session=server-project-main`;
+      assert.equal((await fetch(endpoint)).status, 403);
+      assert.equal((await fetch(endpoint, {
+        headers: { 'x-workbench-token': alice.token },
+      })).status, 403);
+      assert.equal((await fetch(
+        `http://127.0.0.1:${authPort}/api/session-context?session=missing-project-session`,
+        { headers: { 'x-workbench-token': 'owner-project-token' } },
+      )).status, 404);
+
+      const response = await fetch(endpoint, {
+        headers: { 'x-workbench-token': 'owner-project-token' },
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.context.primaryProject.id, 'server-project');
+      assert.equal(body.context.primaryProject.repoPath, '/srv/private/project');
+    },
+  );
+});
+
 // ---- content with diff: round 1 (no prev) ----
 test('GET /api/content?round=1 — all blocks _change===new when no prev', async () => {
   const s = session;

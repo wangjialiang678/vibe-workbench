@@ -274,13 +274,13 @@ test('CLI 远程 participant add/list/revoke：走管理 API 且列表脱敏', a
   assert.deepEqual(JSON.parse(revoked.stdout), { ok: true, id: 'remote-alice' });
 });
 
-test('渲染页头部提供会话列表和设计资产入口，前端消费 sessions/meta.docsUrl', () => {
+test('渲染页头部提供项目化会话列表和设计资产入口，前端消费 projects/meta.docsUrl', () => {
   const html = fs.readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
   const source = fs.readFileSync(APP, 'utf8');
   assert.match(html, /id=["']session-nav["']/);
   assert.match(html, /会话列表/);
   assert.match(html, /id=["']docs-link["']/);
-  assert.match(source, /\/api\/sessions/);
+  assert.match(source, /\/api\/projects/);
   assert.match(source, /meta\?\.docsUrl|meta\.docsUrl/);
   assert.match(source, /docs-link/);
 });
