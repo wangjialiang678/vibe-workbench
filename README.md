@@ -4,11 +4,16 @@
 
 > 设计哲学：**编排注意力 > 渲染内容**。需你决策的上浮、无预设的最先、已设默认的下沉；多轮清楚标出"新增/改了什么"；AI 侧崩了网页也能自救。
 
+> 🚀 **第一次用？看 [QUICKSTART.md](QUICKSTART.md)** —— 五分钟从 clone 到跑通第一轮（含 Claude Code / Codex / WorkBuddy 三选一的接入）。
+
 ## 快速开始
 
 ```bash
+# 0. 让你的 AI 学会用工作台（Claude Code / Codex / WorkBuddy 自动探测）
+bash integrations/install.sh
+
 # 1. 跑测试（零依赖，Node ≥20）
-npm test                         # 433 项单元/集成测试
+npm test                         # 单元/集成测试
 
 # 2. 起服务（HTTP + 异步唤醒 listener）
 node bin/workbench.mjs up --port 8099     # 默认只监听 127.0.0.1，serve + watch
@@ -22,7 +27,7 @@ node bin/workbench.mjs render <session> path/to/content.json
 open "http://127.0.0.1:8099/render/?session=<session>&round=1"
 ```
 
-提交反馈后，`watch` 的 listener 会自动认领并用 `claude -p --resume` 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。
+提交反馈后，`watch` 的 listener 会自动认领并唤醒你的 AI 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。用哪个 AI 由 `WORKBENCH_AGENT` 决定（`claude` / `workbuddy` / `codex`），不设则自动探测——详见 [integrations/README.md](integrations/README.md)。
 
 ## 公网部署与共享口令
 
