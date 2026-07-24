@@ -39,9 +39,6 @@ const DEMO_JS_PATH =
 // 输出：vibecoding 工作台 workspace
 const SESSION = 'imported-demo';
 const ROUND = 1;
-const OUT_DIR = resolve(ROOT, 'workspace', SESSION, `round-${ROUND}`);
-const OUT_FILE = resolve(OUT_DIR, 'content.json');
-
 // ── 从 demo.js 提取 PROJECT_DATA ─────────────────────────────────────────
 
 function extractProjectData(filePath) {
@@ -395,7 +392,7 @@ function sectionFor(id) {
   return hit ? hit[1] : undefined;
 }
 
-function convert(projectData, opts = {}) {
+export function convertProjectData(projectData, opts = {}) {
   const blocks = [];
 
   convertPrd(projectData.prd, blocks);
@@ -430,26 +427,30 @@ function argOf(flag, fallback) {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const projectData = extractProjectData(DEMO_JS_PATH);
-const session = argOf('--session', projectData.id ? `prd-${projectData.id}` : SESSION);
-const uiBase = argOf('--ui-base', null);                       // 不传 = 自托管（拷贝到 session assets）
-const srcRoot = resolve(dirname(DEMO_JS_PATH), '..');          // prd-studio 的 public/（ui/*.html 相对于它）
+if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
+  const projectData = extractProjectData(DEMO_JS_PATH);
+  const session = argOf('--session', projectData.id ? `prd-${projectData.id}` : SESSION);
+  const uiBase = argOf('--ui-base', null);                     // 不传 = 自托管（拷贝到 session assets）
+  const srcRoot = resolve(dirname(DEMO_JS_PATH), '..');        // prd-studio 的 public/（ui/*.html 相对于它）
+  const content = convertProjectData(projectData, { session, uiBase, srcRoot });
 
-const content = convert(projectData, { session, uiBase, srcRoot });
+  const outDir = resolve(ROOT, 'workspace', session, `round-${ROUND}`);
+  const outFile = resolve(outDir, 'content.json');
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(outFile, JSON.stringify(content, null, 2), 'utf8');
 
-const outDir = resolve(ROOT, 'workspace', session, `round-${ROUND}`);
-const outFile = resolve(outDir, 'content.json');
-mkdirSync(outDir, { recursive: true });
-writeFileSync(outFile, JSON.stringify(content, null, 2), 'utf8');
+  const bySection = {};
+  for (const block of content.blocks) {
+    const section = block.section ?? '其他';
+    bySection[section] = (bySection[section] ?? 0) + 1;
+  }
 
-const bySection = {};
-for (const b of content.blocks) { const s = b.section ?? '其他'; bySection[s] = (bySection[s] ?? 0) + 1; }
-
-console.log(`[import-prd-project] 生成完成：${outFile}`);
-console.log(`  session: ${session}`);
-console.log(`  blocks : ${content.blocks.length} 个`);
-console.log(`  types  : ${[...new Set(content.blocks.map((b) => b.type))].join(', ')}`);
-console.log(`  分面   : ${Object.entries(bySection).map(([k, v]) => `${k}=${v}`).join(' · ')}`);
-console.log(uiBase
-  ? `  UI 稿  : 引用外部 ${uiBase}（需该服务在跑）`
-  : `  UI 稿  : 已拷入 workspace/${session}/assets/ui/（${copied.length} 个，工作台自托管，无外部依赖）`);
+  console.log(`[import-prd-project] 生成完成：${outFile}`);
+  console.log(`  session: ${session}`);
+  console.log(`  blocks : ${content.blocks.length} 个`);
+  console.log(`  types  : ${[...new Set(content.blocks.map((block) => block.type))].join(', ')}`);
+  console.log(`  分面   : ${Object.entries(bySection).map(([key, count]) => `${key}=${count}`).join(' · ')}`);
+  console.log(uiBase
+    ? `  UI 稿  : 引用外部 ${uiBase}（需该服务在跑）`
+    : `  UI 稿  : 已拷入 workspace/${session}/assets/ui/（${copied.length} 个，工作台自托管，无外部依赖）`);
+}
