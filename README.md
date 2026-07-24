@@ -61,6 +61,8 @@ workbench participant revoke alice          # 立即吊销该链接
 
 设置 `WORKBENCH_REMOTE_URL` 后，`present` / `wait` 与 `participant add/list/revoke` 切到远程 API；`render`、`serve`、`watch`、`up` 不变。云端因此成为该会话和参与者名册的唯一事实源，本地不会再写一份副本。`wait --events` 会同时监听反馈和启动后新增的会话流事件；不加该参数时行为与原版完全一致。
 
+首次远程 `present` 会同步创建 `session.json`，默认写入本轮标题、`kind:"work"` 和 `status:"active"`。若会话没有命中项目注册表，也没有有效的 `session.json.projectId`，服务端仍成功创建，但响应附带“未归属项目的新会话” warning；CLI 会把它打印到 stderr，该会话同时进入页面“待归类”区。
+
 ```bash
 export WORKBENCH_REMOTE_URL='https://workbench.example.com'
 export WORKBENCH_TOKEN='与云端一致的共享口令'
@@ -88,6 +90,8 @@ workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标�
 常驻 worker 默认只在 `127.0.0.1:8097` 接收事件推送（可用 `WORKER_EVENT_PORT` 改端口），并保留 60 秒一次的低频轮询兜底（可用 `POLL_MS` 调整）。必须在工作台 **server 进程的环境**中把 `WORKBENCH_EVENT_WEBHOOK` 设为 `http://127.0.0.1:8097/events`；只设置 worker unit 不会启用服务端投递。配置后，新轮次、反馈或消息落盘会立即唤醒指定 session；监听不做额外鉴权，因为固定绑定本机回环地址。webhook 单次投递 5 秒超时，失败只记日志，不改变主请求结果。
 
 worker 每 30 秒用管理员口令向 `POST /api/worker-heartbeat` 上报一次存活状态；`GET /api/status` 返回 `workerOnline` 和 `workerLabel`，超过 90 秒未收到心跳才视为云端 AI 离线。同一轮反馈使用 `round@submittedAt` 去重，因此重新提交不会被旧轮次游标吞掉。
+
+Codex 超时或非零退出后，worker 只检查本次项目路由的仓库根目录。若存在未提交改动，会创建 `codex-timeout-<UTC时间戳>` 分支，用包含 session/中断原因的中文提交保存全部改动，再切回原分支并确认干净；回执给出切换快照分支的续跑命令。非 Git 目录、工作台 `workspace/` 数据目录一律跳过；任一 Git 操作失败都会停止后续清理并在回执中说明，保留现场供人工处理。
 
 ## Hybrid 驱动与 SDK 托底标注
 

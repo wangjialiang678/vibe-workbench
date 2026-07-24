@@ -85,6 +85,8 @@ resident-worker.service（本机推送唤醒 + 每 60 秒兜底轮询、全局�
 3. worker 在推进事件游标前读取执行上下文；此时收到 SIGTERM 就不领取事件，重启后仍会再次发现。
 4. 注册仓库存在时，`codex exec -C` 使用该目录；路径缺失、畸形或服务端尚未升级时，回退 `/home/ubuntu/cloud-codex-now`，不根据 session 名猜路径。
 5. 没有 `session.json`、没有 `projectId` 或引用已移除项目的旧会话都保留为“待归类”；原 URL、轮次、反馈、附件和文档继续可用。
+6. 服务端首次写入一轮时自动创建/合并 `session.json`，标题取本轮标题，默认 `kind:"work"`、`status:"active"`。命中项目 ID、`primarySession`、`aliases` 或既有有效 `projectId` 时归入该项目。
+7. 未命中项目的新会话仍正常创建，但 API 返回 warning，远程 CLI 同步打印；页面立即可在“待归类”区找到，不再产生无元数据的隐形会话。
 
 首次上线前先备份 `workspace/`，再在工作台仓库执行：
 
@@ -100,8 +102,10 @@ node scripts/migrate-projects-v1.mjs
 |---|---|---|
 | 工作台进程退出 | systemd 自动重启 | 需要外部可用性告警 |
 | worker 主进程退出 | systemd 自动重启 | 已提前推进游标的任务可能遗失 |
-| Codex 子进程非零退出 | 写失败回执，worker 继续 | 不自动重试 |
-| Codex 超过 30 分钟 | 终止进程组并写超时回执 | 不支持断点续作 |
+| Codex 子进程非零退出 | 若路由仓库有脏改动，封存到 `codex-timeout-<UTC时间戳>`，切回原分支并写失败/续跑回执 | 不自动重试 |
+| Codex 超过 30 分钟 | 终止进程组；按同一规则封存半成品并写超时/续跑回执 | 快照分支仍需人工审阅后续跑 |
+| Git 快照失败 | 回执写明 Git 错误，立即停止后续清理并保留现场 | 需要人工检查当前分支和工作区 |
+| 路由目录非 Git 或命中工作台 `workspace/` | 不执行任何 Git 操作，回执说明跳过原因 | 需要核对项目注册路径 |
 | ChatGPT 登录失效 | `codex exec` 失败，但 worker 本身仍可能显示 active | 缺少 auth readiness 与专门告警 |
 | 推送或网络瞬断 | 当前靠轮询后续发现 | 未来推送仍必须有持久队列兜底 |
 | 多个现有 worker 同时运行 | 可能重复领取 | 无共享租约，禁止直接扩副本 |

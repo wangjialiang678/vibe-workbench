@@ -8,12 +8,12 @@
 
 ## P1 核心功能
 - [backend] content API 注入 diff、feedback 落盘+状态机、status 联合判定、retry 重置
-- [backend] rounds 远程写入（鉴权/2 MiB/lint/409）、feedback GET 轮询、事件 webhook
+- [backend] rounds 远程写入（鉴权/2 MiB/lint/409）、新会话 warning/元数据、feedback GET 轮询、事件 webhook
 - [backend] 参与者 magic-link 身份、owner-only 管理 API、逐人反馈/owner 优先合并/select 分歧、首份兼容唤醒
 - [backend] JSONL 会话流、实名消息、AI 自动回执、owner-only stream-events（message/progress/receipt）、受保护附件上传
 - [backend] 云端文档库分类存储、管理员发布/更新、列表/单篇读取、校验与更新回执
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
-- [backend] 常驻 worker 管理员心跳 + 90 秒在线判定、本机 webhook 即时唤醒、60 秒轮询兜底、同轮重新提交
+- [backend] 常驻 worker 管理员心跳 + 90 秒在线判定、本机 webhook 即时唤醒、60 秒轮询兜底、同轮重新提交、Codex 中断 Git 快照
 - [backend] 多项目注册表 + 旧会话待归类兼容 + owner-only 执行上下文 + worker 仓库路由回退 + v1 迁移幂等
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
 - [frontend] 桌面会话流可拖分栏、决策/文档切换、手机对话/决策/文档三标签与未读角标
@@ -38,8 +38,8 @@
 | FR-2 渲染 | tests/unit/render.test.mjs | blockHtml/md/diff-view | [feature] |
 | FR-3 模板 | tests/unit/templates.test.mjs | think-discuss/dev-review | [feature] |
 | FR-3/8 API | tests/e2e/server.test.mjs | content/feedback/status/retry | [backend] |
-| 远程会话服务 | tests/e2e/server.test.mjs | rounds 写入/冲突/限流/lint、feedback 轮询、webhook | [backend] |
-| 远程 CLI | tests/e2e/present.test.mjs | 远程 present/wait、token URL、错误中文化 | [CLI] |
+| 远程会话服务 | tests/e2e/server.test.mjs | rounds 写入/冲突/限流/lint、新会话 warning/元数据、feedback 轮询、webhook | [backend] |
+| 远程 CLI | tests/e2e/present.test.mjs | 远程 present/wait、warning 打印、token URL、错误中文化 | [CLI] |
 | 会话流数据层 | tests/unit/stream.test.mjs | append/read since/最近100/精确路径/迁移幂等 | [backend] |
 | 会话流与附件 API | tests/e2e/session-stream.test.mjs | 消息实名/长度/回执/管理员事件/webhook/附件类型大小清洗鉴权 | [backend] |
 | 会话流前端 G2 | tests/unit/render.test.mjs、Playwright 冒烟 | 分栏/三区 DOM、消息分侧、系统事件、决策芯片、附件 Markdown、手机未读、文档资产、pin 锚定 | [frontend] |
@@ -50,6 +50,6 @@
 | participant CLI | tests/e2e/bin.test.mjs、tests/e2e/present.test.mjs | 本地/远程 add/list/revoke | [CLI] |
 | 导航/meta | tests/unit/protocol.test.mjs、tests/e2e/present.test.mjs | meta.docsUrl 校验、会话列表与设计资产数据流 | [frontend] |
 | FR-4/6 回路 | tests/e2e/loop.test.mjs | 对账/幂等/error/心跳 | [scenario] |
-| 云端常驻 worker | tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs、tests/unit/status-bar.test.mjs | 心跳鉴权/过期、在线横幅、推送唤醒、兜底轮询、同轮二次提交 | [backend]/[frontend] |
+| 云端常驻 worker | tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs、tests/unit/status-bar.test.mjs | 心跳鉴权/过期、在线横幅、推送唤醒、兜底轮询、同轮二次提交、超时/非零退出快照、非 Git/保护路径/失败兜底 | [backend]/[frontend] |
 | 多项目路由 | tests/unit/projects.test.mjs、tests/unit/migrate-projects.test.mjs、tests/unit/projects-view.test.mjs、tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs | 注册表校验、24 个旧会话兼容、迁移幂等、目录渲染、管理员路径权限、停止/失效路径回退 | [backend]/[frontend] |
 | CLI | tests/e2e/bin.test.mjs | render/help | [CLI] |

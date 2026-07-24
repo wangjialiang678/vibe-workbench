@@ -316,7 +316,7 @@ test('POST /api/feedback 拒绝非法 session 名称', async () => {
 
 // ---- 远程会话写入 / feedback 轮询 ----
 
-test('POST /api/rounds 自动编号并写入 content/content.md/status', async () => {
+test('POST /api/rounds 首轮写入内容、未归属 warning 与默认会话元数据', async () => {
   const s = 'remote.session-01';
   const legacyContent = path.join(tmpDir, 'remote_session-01', 'round-1', 'content.json');
   fs.mkdirSync(path.dirname(legacyContent), { recursive: true });
@@ -330,8 +330,15 @@ test('POST /api/rounds 自动编号并写入 content/content.md/status', async (
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.deepEqual({ ok: body.ok, session: body.session, round: body.round }, { ok: true, session: s, round: 1 });
+  assert.equal(body.warning, '未归属项目的新会话，建议先在项目下创建或使用规范命名');
   assert.equal(new URL(body.url).searchParams.get('session'), s);
   assert.equal(readJSON(paths.content(s, 1)).title, '远程轮次');
+  const metadata = readJSON(paths.session(s, { exactSession: true }));
+  assert.equal(metadata.session, s);
+  assert.equal(metadata.title, '远程轮次');
+  assert.equal(metadata.kind, 'work');
+  assert.equal(metadata.status, 'active');
+  assert.equal(Object.hasOwn(metadata, 'projectId'), false);
   assert.match(fs.readFileSync(paths.contentMd(s, 1), 'utf8'), /云端是唯一事实源/);
   assert.equal(readJSON(paths.status(s)).state, 'rendered');
   assert.equal(fs.existsSync(path.join(tmpDir, s, 'round-1', 'content.json')), true, '点号 session 应按原名落盘');
@@ -345,10 +352,13 @@ test('POST /api/rounds 忽略客户端 round 并由服务端连续编号', async
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(first),
   });
   assert.equal(firstRes.status, 200);
-  assert.equal((await firstRes.json()).round, 1);
+  const firstBody = await firstRes.json();
+  assert.equal(firstBody.round, 1);
+  assert.equal(firstBody.warning, '未归属项目的新会话，建议先在项目下创建或使用规范命名');
 
   const second = roundContent(s, {
     round: 1,
+    title: '第二轮标题不覆盖出生元数据',
     blocks: [{ id: 'second', type: 'markdown', body: '服务端分配第二轮' }],
   });
   const res = await fetch(url('/api/rounds'), {
@@ -356,11 +366,86 @@ test('POST /api/rounds 忽略客户端 round 并由服务端连续编号', async
   });
 
   assert.equal(res.status, 200);
-  assert.equal((await res.json()).round, 2);
+  const secondBody = await res.json();
+  assert.equal(secondBody.round, 2);
+  assert.equal(secondBody.warning, undefined);
   assert.equal(readJSON(paths.content(s, 1)).round, 1);
   assert.equal(readJSON(paths.content(s, 1)).blocks[0].id, 'remote-note');
   assert.equal(readJSON(paths.content(s, 2)).round, 2);
   assert.equal(readJSON(paths.content(s, 2)).blocks[0].id, 'second');
+  assert.equal(readJSON(paths.session(s, { exactSession: true })).title, '远程轮次');
+});
+
+test('POST /api/rounds 注册项目会话首轮自动写入项目归属且不 warning', async () => {
+  const projects = await import('../../src/projects.mjs');
+  const previousRegistry = projects.readProjectRegistry();
+  const s = 'registered-project-main';
+  try {
+    projects.writeProjectRegistry({
+      version: 1,
+      projects: [{
+        id: 'registered-project',
+        displayName: '已注册项目',
+        primarySession: s,
+      }],
+    });
+
+    const res = await fetch(url('/api/rounds'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(roundContent(s, { title: '已注册项目主线' })),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.warning, undefined);
+    const metadata = readJSON(paths.session(s, { exactSession: true }));
+    assert.equal(metadata.projectId, 'registered-project');
+    assert.equal(metadata.title, '已注册项目主线');
+    assert.equal(metadata.kind, 'work');
+    assert.equal(metadata.status, 'active');
+  } finally {
+    projects.writeProjectRegistry(previousRegistry);
+  }
+});
+
+test('POST /api/rounds 已有 session.json.projectId 的项目子会话首轮不 warning', async () => {
+  const projects = await import('../../src/projects.mjs');
+  const previousRegistry = projects.readProjectRegistry();
+  const s = 'registered-project-child';
+  try {
+    projects.writeProjectRegistry({
+      version: 1,
+      projects: [{
+        id: 'registered-parent',
+        displayName: '已注册父项目',
+        primarySession: 'registered-parent-main',
+      }],
+    });
+    projects.updateSessionMetadata(s, {
+      title: '创建时标题',
+      projectId: 'registered-parent',
+      kind: 'review',
+      status: 'active',
+    });
+
+    const res = await fetch(url('/api/rounds'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(roundContent(s, { title: '首轮内容标题' })),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.warning, undefined);
+    const metadata = readJSON(paths.session(s, { exactSession: true }));
+    assert.equal(metadata.projectId, 'registered-parent');
+    assert.equal(metadata.title, '首轮内容标题');
+    assert.equal(metadata.kind, 'work');
+    assert.equal(metadata.status, 'active');
+  } finally {
+    projects.writeProjectRegistry(previousRegistry);
+  }
 });
 
 test('POST /api/rounds 同 session 并发请求获得连续且不同的服务端轮次', async () => {

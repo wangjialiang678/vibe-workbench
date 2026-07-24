@@ -52,7 +52,9 @@ import {
 import {
   executionContextForSession,
   projectCatalog,
+  registeredProjectForSession,
   sessionExists,
+  updateSessionMetadata,
 } from '../projects.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +67,7 @@ const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 const DOCUMENT_REQUEST_LIMIT = (DOCUMENT_BODY_LIMIT * 6) + (64 * 1024);
 const WEBHOOK_TIMEOUT_MS = 5000;
 const WORKER_HEARTBEAT_BODY_LIMIT = 8 * 1024;
+const UNCLASSIFIED_SESSION_WARNING = '未归属项目的新会话，建议先在项目下创建或使用规范命名';
 export const WORKER_HEARTBEAT_STALE_MS = 90 * 1000;
 const AI_IDENTITY = Object.freeze({ id: 'ai', name: 'AI', role: 'ai' });
 const ATTACHMENT_TYPES = new Map([
@@ -1047,7 +1050,20 @@ function handleRequest(
       if (warnings.length) console.error(formatLint(warnings));
 
       try {
+        const registeredProject = content.round === 1
+          ? registeredProjectForSession(content.session)
+          : null;
         const saved = writeRound(content.session, content, { allowOverwrite: false, exactSession: true });
+        if (content.round === 1) {
+          updateSessionMetadata(saved.session, {
+            ...(typeof content.title === 'string' && content.title.trim()
+              ? { title: content.title.trim() }
+              : {}),
+            ...(registeredProject ? { projectId: registeredProject.id } : {}),
+            kind: 'work',
+            status: 'active',
+          }, { exactSession: true });
+        }
         appendStreamEntry(saved.session, {
           author: AI_IDENTITY,
           kind: 'receipt',
@@ -1061,6 +1077,9 @@ function handleRequest(
           url: renderUrl(req, saved.session),
         };
         if (allowIncomplete) response.lintBypassed = true;
+        if (content.round === 1 && !registeredProject) {
+          response.warning = UNCLASSIFIED_SESSION_WARNING;
+        }
         json(res, 200, response);
         emitWebhook(eventWebhook, {
           event: 'round-presented',

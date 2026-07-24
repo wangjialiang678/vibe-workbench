@@ -4,9 +4,12 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
+const execFileAsync = promisify(execFile);
+const WORKBENCH_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_WORKBENCH_URL = 'http://127.0.0.1:8099';
 const DEFAULT_CODEX_MODEL = 'gpt-5.6-sol';
 const DEFAULT_POLL_MS = 60 * 1000;
@@ -439,6 +442,119 @@ function isDirectory(value) {
   try { return fs.statSync(value).isDirectory(); } catch { return false; }
 }
 
+function pathIsWithin(candidate, parent) {
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (relative !== '..'
+    && !relative.startsWith(`..${path.sep}`)
+    && !path.isAbsolute(relative));
+}
+
+function realOrResolvedPath(value) {
+  const resolved = path.resolve(value);
+  try { return fs.realpathSync(resolved); } catch { return resolved; }
+}
+
+function protectedWorkspacePaths(env = process.env) {
+  return [
+    path.join(WORKBENCH_ROOT, 'workspace'),
+    ...(typeof env.WB_WORKSPACE === 'string' && env.WB_WORKSPACE.trim()
+      ? [env.WB_WORKSPACE.trim()]
+      : []),
+  ].map(realOrResolvedPath);
+}
+
+async function executeGit(repoPath, args, { env = process.env } = {}) {
+  return execFileAsync('git', ['-C', repoPath, ...args], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+    env,
+  });
+}
+
+function gitFailureMessage(error) {
+  const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : '';
+  return stderr || error?.message || String(error);
+}
+
+function snapshotTimestamp(now) {
+  const value = typeof now === 'function' ? now() : now;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error('快照时间无效');
+  return date.toISOString().replaceAll('-', '').replaceAll(':', '').replace(/\.\d{3}Z$/, 'Z');
+}
+
+/**
+ * 把 Codex 中断时的全部未提交改动封存到新分支；任何失败都停止后续清理。
+ */
+export async function snapshotInterruptedWorktree(repoPath, {
+  session,
+  reason,
+  now = () => new Date(),
+  env = process.env,
+  protectedPaths = protectedWorkspacePaths(env),
+  gitImpl = executeGit,
+} = {}) {
+  if (!isDirectory(repoPath)) return { status: 'skipped', reason: 'not-git' };
+  const candidate = fs.realpathSync(repoPath);
+  const normalizedProtectedPaths = protectedPaths.map(realOrResolvedPath);
+  if (normalizedProtectedPaths.some((item) => pathIsWithin(candidate, item))) {
+    return { status: 'skipped', reason: 'protected-path' };
+  }
+
+  let topLevel;
+  try {
+    const result = await gitImpl(candidate, ['rev-parse', '--show-toplevel'], { env });
+    topLevel = fs.realpathSync(String(result.stdout || '').trim());
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { status: 'failed', error: gitFailureMessage(error) };
+    }
+    return { status: 'skipped', reason: 'not-git' };
+  }
+  // 不允许从仓库内的普通目录向上命中父仓库，尤其不能误操作 workbench/workspace。
+  if (topLevel !== candidate) return { status: 'skipped', reason: 'not-git' };
+
+  try {
+    const status = await gitImpl(candidate, ['status', '--porcelain=v1', '--untracked-files=all'], { env });
+    if (!String(status.stdout || '').trim()) return { status: 'clean' };
+
+    const current = await gitImpl(candidate, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { env });
+    const originalBranch = String(current.stdout || '').trim();
+    if (!originalBranch) throw new Error('当前仓库不在可恢复的分支上');
+
+    const branch = `codex-timeout-${snapshotTimestamp(now)}`;
+    const commitEnv = {
+      ...env,
+      GIT_AUTHOR_NAME: env.GIT_AUTHOR_NAME || '常驻 Codex worker',
+      GIT_AUTHOR_EMAIL: env.GIT_AUTHOR_EMAIL || 'resident-worker@localhost',
+      GIT_COMMITTER_NAME: env.GIT_COMMITTER_NAME || '常驻 Codex worker',
+      GIT_COMMITTER_EMAIL: env.GIT_COMMITTER_EMAIL || 'resident-worker@localhost',
+    };
+    await gitImpl(candidate, ['switch', '-c', branch], { env: commitEnv });
+    await gitImpl(candidate, ['add', '-A'], { env: commitEnv });
+    await gitImpl(candidate, [
+      '-c',
+      'commit.gpgSign=false',
+      'commit',
+      '--no-verify',
+      '-m',
+      `保存 Codex 中断半成品：session=${session || 'unknown'}；原因=${reason || '未知'}`,
+    ], { env: commitEnv });
+    await gitImpl(candidate, ['switch', originalBranch], { env: commitEnv });
+    const restored = await gitImpl(
+      candidate,
+      ['status', '--porcelain=v1', '--untracked-files=all'],
+      { env: commitEnv },
+    );
+    if (String(restored.stdout || '').trim()) {
+      throw new Error(`已切回 ${originalBranch}，但工作区仍有未提交改动`);
+    }
+    return { status: 'saved', branch, originalBranch };
+  } catch (error) {
+    return { status: 'failed', error: gitFailureMessage(error) };
+  }
+}
+
 function appendTail(current, chunk, maxLength = 32 * 1024) {
   const next = current + String(chunk);
   return next.length > maxLength ? next.slice(-maxLength) : next;
@@ -810,6 +926,41 @@ export function codexMessageChunks(text, maxCharacters = 4000) {
   return chunks;
 }
 
+function interruptedLabel(result) {
+  return result.timedOut
+    ? '已超时中断'
+    : `处理失败：Codex 异常退出（退出码 ${result.exitCode}）`;
+}
+
+function interruptedReceipt(result, snapshot, env) {
+  const label = interruptedLabel(result);
+  const failureDetail = result.timedOut
+    ? ''
+    : tailCharacters(result.stderr, 300).trim();
+  const detail = failureDetail ? `：${failureDetail}` : '';
+  if (snapshot.status === 'saved') {
+    return `${label}${detail}，半成品已存分支 ${snapshot.branch}。`
+      + `建议续跑：先执行 \`git switch ${snapshot.branch}\` 检查半成品，再重新提交任务。`;
+  }
+  if (snapshot.status === 'clean') {
+    return `${label}${detail}；目标 Git 仓库没有未提交改动，无需创建快照。建议重新提交任务续跑。`;
+  }
+  if (snapshot.status === 'failed') {
+    const snapshotError = redactEnvironmentSecrets(
+      tailCharacters(snapshot.error, 300).trim() || '未知 Git 错误',
+      env,
+    );
+    return `${label}${detail}；快照失败：${snapshotError}。`
+      + '为避免进一步改动，已保留当前工作区现场，请人工检查后续跑。';
+  }
+  if (snapshot.reason === 'protected-path') {
+    return `${label}${detail}；目标路径属于工作台 workspace，按保护规则未执行快照。`
+      + '请人工检查项目路由后续跑。';
+  }
+  return `${label}${detail}；项目目录不是可快照的 Git 仓库，未执行快照。`
+    + '请确认项目路由后重新提交任务。';
+}
+
 async function processTask(task, config, {
   fetchImpl,
   spawnImpl,
@@ -885,6 +1036,26 @@ async function processTask(task, config, {
     await stopTaskProgressHeartbeat();
   }
 
+  let interruptionSnapshot = null;
+  if (result.timedOut || result.exitCode !== 0) {
+    const reason = result.timedOut ? '超时' : `异常退出（退出码 ${result.exitCode}）`;
+    try {
+      interruptionSnapshot = await snapshotInterruptedWorktree(requestedCwd, {
+        session: task.session,
+        reason,
+        now,
+      });
+    } catch (error) {
+      interruptionSnapshot = { status: 'failed', error: error.message || String(error) };
+    }
+    logger.log(
+      `[resident-worker] Codex 中断快照：session=${task.session} `
+      + `status=${interruptionSnapshot.status}`
+      + `${interruptionSnapshot.branch ? ` branch=${interruptionSnapshot.branch}` : ''}`
+      + `${interruptionSnapshot.reason ? ` reason=${interruptionSnapshot.reason}` : ''}`,
+    );
+  }
+
   const intakeProgressId = typeof intakeResponse?.entry?.id === 'string'
     ? intakeResponse.entry.id
     : null;
@@ -914,11 +1085,8 @@ async function processTask(task, config, {
   }
 
   let receipt;
-  if (result.timedOut) {
-    receipt = '处理超时：Codex 已在 30 分钟后停止，请稍后重新提交。';
-  } else if (result.exitCode !== 0) {
-    const detail = tailCharacters(result.stderr, 300).trim() || `Codex 退出码 ${result.exitCode}`;
-    receipt = `处理失败：${detail}`;
+  if (interruptionSnapshot) {
+    receipt = interruptedReceipt(result, interruptionSnapshot, process.env);
   } else if (!alreadyReplied && !stdoutMessage) {
     receipt = '已处理完毕';
   }

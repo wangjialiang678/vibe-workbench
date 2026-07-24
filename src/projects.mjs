@@ -162,6 +162,20 @@ export function writeProjectRegistry(value) {
   return normalized;
 }
 
+/** 用注册表中的项目 ID、主会话或别名识别一个尚未落盘的新会话。 */
+export function registeredProjectForSession(session) {
+  if (!isValidSessionName(session)) throw new Error('session 名称无效');
+  const projects = readProjectRegistry().projects;
+  const registeredByName = projects.find((project) => (
+    project.id === session
+    || project.primarySession === session
+    || project.aliases?.includes(session)
+  ));
+  if (registeredByName) return registeredByName;
+  const metadata = readSessionMetadata(session, { exactSession: true });
+  return projects.find((project) => project.id === metadata?.projectId) || null;
+}
+
 function cleanSessionMetadata(session, current, patch) {
   if (!isValidSessionName(session)) throw new Error('session 名称无效');
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {

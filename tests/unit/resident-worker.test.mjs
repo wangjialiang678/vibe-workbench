@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,63 @@ function workerConfig(workerHome, extra = {}) {
     eventPort: 8097,
     workerLabel: '云端 Codex · sol xhigh',
     ...extra,
+  };
+}
+
+function git(repoPath, ...args) {
+  return execFileSync('git', ['-C', repoPath, ...args], { encoding: 'utf8' }).trim();
+}
+
+function createGitFixture(prefix = 'resident-git-') {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(repoPath, 'init', '-b', 'main');
+  git(repoPath, 'config', 'user.name', '测试用户');
+  git(repoPath, 'config', 'user.email', 'test@example.com');
+  fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '初始内容\n');
+  git(repoPath, 'add', 'tracked.txt');
+  git(repoPath, 'commit', '-m', '初始提交');
+  return repoPath;
+}
+
+function singleTaskFetch(session, repoPath, streamEvents) {
+  return async (target, options = {}) => {
+    const url = new URL(target);
+    let payload;
+    if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+      payload = {
+        ok: true,
+        entries: [{
+          id: `${session}-message`,
+          author: { id: 'owner', name: '管理员', role: 'owner' },
+          kind: 'message',
+          text: '执行会产生半成品的任务',
+        }],
+      };
+    } else if (url.pathname === '/api/messages') {
+      payload = { ok: true, entries: [] };
+    } else if (url.pathname === '/api/status') {
+      payload = { ok: true, status: null, display: 'unknown' };
+    } else if (url.pathname === '/api/session-context') {
+      payload = {
+        ok: true,
+        context: {
+          session: { id: session, title: '快照测试' },
+          primaryProject: {
+            id: 'snapshot-project',
+            displayName: '快照项目',
+            repoPath,
+          },
+          relatedProjects: [],
+        },
+      };
+    } else if (url.pathname === '/api/stream-events') {
+      const event = JSON.parse(options.body);
+      streamEvents.push(event);
+      payload = { ok: true, entry: { id: `${session}-${event.kind}-${streamEvents.length}`, ...event } };
+    } else {
+      throw new Error(`未预期的请求：${url.pathname}`);
+    }
+    return new Response(JSON.stringify(payload), { status: 200 });
   };
 }
 
@@ -582,6 +640,179 @@ test('Codex 超时后终止子进程', async () => {
   assert.equal(result.timedOut, true);
   assert.deepEqual(groupKills, [[-43210, 'SIGTERM']]);
   assert.deepEqual(child.killedWith, []);
+});
+
+test('Codex 中断快照提交全部改动并恢复原分支干净状态', async () => {
+  assert.equal(typeof worker.snapshotInterruptedWorktree, 'function');
+  const repoPath = createGitFixture('resident-snapshot-');
+  try {
+    fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '半成品修改\n');
+    fs.writeFileSync(path.join(repoPath, 'new-file.txt'), '未跟踪半成品\n');
+
+    const result = await worker.snapshotInterruptedWorktree(repoPath, {
+      session: 'snapshot-session',
+      reason: '超时',
+      now: () => new Date('2026-07-24T12:34:56.000Z'),
+    });
+
+    assert.equal(result.status, 'saved');
+    assert.equal(result.branch, 'codex-timeout-20260724T123456Z');
+    assert.equal(git(repoPath, 'branch', '--show-current'), 'main');
+    assert.equal(git(repoPath, 'status', '--porcelain'), '');
+    assert.equal(git(repoPath, 'show', `${result.branch}:tracked.txt`), '半成品修改');
+    assert.equal(git(repoPath, 'show', `${result.branch}:new-file.txt`), '未跟踪半成品');
+    assert.match(
+      git(repoPath, 'log', '-1', '--format=%s', result.branch),
+      /保存 Codex 中断半成品.*snapshot-session.*超时/,
+    );
+  } finally {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  }
+});
+
+test('Codex 中断快照跳过非 Git 目录并保留文件', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-non-git-'));
+  const target = path.join(directory, 'work.txt');
+  try {
+    fs.writeFileSync(target, '现场内容\n');
+
+    const result = await worker.snapshotInterruptedWorktree(directory, {
+      session: 'non-git-session',
+      reason: '超时',
+    });
+
+    assert.deepEqual(result, { status: 'skipped', reason: 'not-git' });
+    assert.equal(fs.readFileSync(target, 'utf8'), '现场内容\n');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Codex 中断快照绝不操作工作台 workspace 保护路径', async () => {
+  const repoPath = createGitFixture('resident-protected-workspace-');
+  try {
+    fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '受保护现场\n');
+
+    const result = await worker.snapshotInterruptedWorktree(repoPath, {
+      session: 'protected-session',
+      reason: '异常退出（退出码 1）',
+      protectedPaths: [repoPath],
+    });
+
+    assert.deepEqual(result, { status: 'skipped', reason: 'protected-path' });
+    assert.match(git(repoPath, 'status', '--porcelain'), /tracked\.txt/);
+    assert.equal(git(repoPath, 'branch', '--list', 'codex-timeout-*'), '');
+  } finally {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  }
+});
+
+test('Codex 中断快照 Git 操作失败时如实返回并保留现场', async () => {
+  const repoPath = createGitFixture('resident-snapshot-failure-');
+  try {
+    fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '失败时保留\n');
+    const calls = [];
+    const result = await worker.snapshotInterruptedWorktree(repoPath, {
+      session: 'failure-session',
+      reason: '异常退出（退出码 2）',
+      async gitImpl(_repoPath, args) {
+        calls.push(args);
+        if (args[0] === 'rev-parse') return { stdout: `${repoPath}\n`, stderr: '' };
+        if (args[0] === 'status') return { stdout: ' M tracked.txt\n', stderr: '' };
+        if (args[0] === 'symbolic-ref') return { stdout: 'main\n', stderr: '' };
+        throw new Error('模拟创建快照分支失败');
+      },
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.error, /模拟创建快照分支失败/);
+    assert.equal(calls.some((args) => args[0] === 'switch'), true);
+    assert.equal(fs.readFileSync(path.join(repoPath, 'tracked.txt'), 'utf8'), '失败时保留\n');
+    assert.match(git(repoPath, 'status', '--porcelain'), /tracked\.txt/);
+    assert.equal(git(repoPath, 'branch', '--show-current'), 'main');
+  } finally {
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  }
+});
+
+test('Codex 超时后自动快照目标仓库并写入分支与续跑方式', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-timeout-receipt-'));
+  const repoPath = createGitFixture('resident-timeout-project-');
+  const streamEvents = [];
+  const snapshotBranch = 'codex-timeout-20260724T150000Z';
+  try {
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      sessions: ['timeout-snapshot-session'],
+      timeoutMs: 5,
+      now: () => Date.parse('2026-07-24T15:00:00.000Z'),
+      logger: { log() {} },
+      fetchImpl: singleTaskFetch('timeout-snapshot-session', repoPath, streamEvents),
+      spawnImpl() {
+        fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '超时前的半成品\n');
+        fs.writeFileSync(path.join(repoPath, 'timeout-new.txt'), '新文件\n');
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = (signal) => {
+          queueMicrotask(() => child.emit('close', null, signal));
+          return true;
+        };
+        return child;
+      },
+    });
+
+    assert.equal(result.processed, 1);
+    const receipt = streamEvents.find(({ kind }) => kind === 'receipt');
+    assert.match(receipt.text, /已超时中断/);
+    assert.match(receipt.text, new RegExp(snapshotBranch));
+    assert.match(receipt.text, new RegExp(`git switch ${snapshotBranch}`));
+    assert.equal(git(repoPath, 'branch', '--show-current'), 'main');
+    assert.equal(git(repoPath, 'status', '--porcelain'), '');
+    assert.equal(git(repoPath, 'show', `${snapshotBranch}:timeout-new.txt`), '新文件');
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  }
+});
+
+test('Codex 非零退出且快照失败时回执说明错误并保留脏现场', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-failed-snapshot-receipt-'));
+  const repoPath = createGitFixture('resident-failed-snapshot-project-');
+  const streamEvents = [];
+  const snapshotBranch = 'codex-timeout-20260724T160000Z';
+  try {
+    git(repoPath, 'branch', snapshotBranch);
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      sessions: ['failed-snapshot-session'],
+      now: () => Date.parse('2026-07-24T16:00:00.000Z'),
+      logger: { log() {} },
+      fetchImpl: singleTaskFetch('failed-snapshot-session', repoPath, streamEvents),
+      spawnImpl() {
+        fs.writeFileSync(path.join(repoPath, 'tracked.txt'), '异常退出现场\n');
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => {
+          child.stderr.emit('data', 'Codex 模拟失败');
+          child.emit('close', 2, null);
+        });
+        return child;
+      },
+    });
+
+    assert.equal(result.processed, 1);
+    const receipt = streamEvents.find(({ kind }) => kind === 'receipt');
+    assert.match(receipt.text, /异常退出.*退出码 2/);
+    assert.match(receipt.text, /快照失败/);
+    assert.match(receipt.text, /已保留当前工作区现场/);
+    assert.equal(fs.readFileSync(path.join(repoPath, 'tracked.txt'), 'utf8'), '异常退出现场\n');
+    assert.match(git(repoPath, 'status', '--porcelain'), /tracked\.txt/);
+    assert.equal(git(repoPath, 'branch', '--show-current'), 'main');
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+    fs.rmSync(repoPath, { recursive: true, force: true });
+  }
 });
 
 test('解析 Codex stdout：提取最终回答并剥离启动信息与 token 统计', () => {

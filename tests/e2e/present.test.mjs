@@ -243,6 +243,8 @@ test('CLI 远程 present：只写云端 workspace，返回带 token 的远程 UR
   assert.equal(result.code, 0, result.stderr);
   const output = JSON.parse(result.stdout);
   assert.deepEqual({ ok: output.ok, session: output.session, round: output.round }, { ok: true, session, round: 1 });
+  assert.equal(output.warning, '未归属项目的新会话，建议先在项目下创建或使用规范命名');
+  assert.match(result.stderr, /未归属项目的新会话，建议先在项目下创建或使用规范命名/);
   assert.equal(output.server, 'remote');
   assert.equal(new URL(output.url).origin, `http://127.0.0.1:${remotePort}`);
   assert.equal(new URL(output.url).searchParams.get('token'), remoteToken);
@@ -250,6 +252,14 @@ test('CLI 远程 present：只写云端 workspace，返回带 token 的远程 UR
   assert.equal(new URL(output.urlPinned).searchParams.get('round'), '1');
   assert.equal(ws.readJSON(ws.paths.content(session, 1)).title, '来自本地 CLI');
   assert.equal(ws.readJSON(ws.paths.content(session, 1)).round, 1, 'CLI 应采用服务端响应轮号，忽略输入 round');
+  assert.deepEqual(
+    {
+      title: ws.readJSON(ws.paths.session(session, { exactSession: true })).title,
+      kind: ws.readJSON(ws.paths.session(session, { exactSession: true })).kind,
+      status: ws.readJSON(ws.paths.session(session, { exactSession: true })).status,
+    },
+    { title: '来自本地 CLI', kind: 'work', status: 'active' },
+  );
   assert.equal(fs.existsSync(path.join(clientTmp, session, 'round-1', 'content.json')), false);
 });
 

@@ -183,7 +183,7 @@ listener 心跳过期 ⇒ 前端显示 offline（提交已存，恢复后自动�
 
 ```
 workspace/<session>/
-  session.json                 { claudeSessionId, cwd, createdAt }  ← --resume 续接
+  session.json                 { session,title,projectId?,kind,status,...执行器兼容字段 }
   status.json                  当前状态 + 心跳
   round-<n>/
     content.json / content.md  AI 渲染的一轮（state=rendered）
@@ -254,9 +254,11 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 会话流：`workspace/<session>/stream.jsonl` 是 append-only 消息档案，每行包含 `id/at/author/kind/text/refs?`。普通消息作者取认证身份，AI 回执/进度作者固定为 `ai`；rounds 与 feedback 成功后分别自动写“已出第 N 轮”和“某人已提交第 N 轮反馈”。历史规范 `feedback.json` 的非空 `sessionComment` 可用 `stream-migrate` 幂等迁入。
 
-远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，默认 `wait` 每 3 秒轮询云端 feedback；显式 `wait --events` 同时增量轮询 messages，任一新事件即返回。`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。
+远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，默认 `wait` 每 3 秒轮询云端 feedback；显式 `wait --events` 同时增量轮询 messages，任一新事件即返回。`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。服务端首轮成功后合并写入会话标题、`kind:"work"`、`status:"active"`；项目 ID、主会话、别名或既有 `session.json.projectId` 命中注册项目时保留/写入归属，否则成功响应附带 warning，CLI 写 stderr，会话按既有目录规则显示为“待归类”。
 
 事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘、feedback 成功落盘和 message 成功落流后异步 POST 最小事件 JSON。云端常驻 worker 固定在 `127.0.0.1:WORKER_EVENT_PORT`（默认 8097）接收这些事件并立即检查指定 session；60 秒全量轮询仅用于 webhook 丢失兜底。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。worker 另以 30 秒周期写管理员心跳，页面优先据此展示云端 AI 在线状态。
+
+Codex 子进程超时或非零退出时，worker 仅对本次 `executionContext.primaryProject.repoPath` 做 Git 善后。候选真实路径必须恰好等于 Git 顶层目录，并避开默认及 `WB_WORKSPACE` 指定的数据目录；脏工作区封存到 `codex-timeout-<UTC时间戳>` 后切回原分支。非 Git、受保护路径或 Git 失败都不会转而操作 worker 常驻目录，结果通过对话流 receipt 如实返回。
 
 远程写入的 session 限 80 字符且必须匹配 `/^[A-Za-z0-9._-]+$/`（另拒绝 `.` / `..`）。服务端对点号 session 使用精确目录，避免与下划线名称碰撞；本地默认路径仍兼容旧版“点号转下划线”的既有 workspace，精确目录一旦存在则自动跟随。
 

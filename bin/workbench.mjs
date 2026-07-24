@@ -321,6 +321,10 @@ export async function cmdPresent(session, contentObj, { port = 8099, allowIncomp
       next: `node bin/workbench.mjs wait ${session} ${round}`,
     };
     if (allowIncompleteDecisions || response.lintBypassed) result.lintBypassed = true;
+    if (typeof response.warning === 'string' && response.warning.trim()) {
+      result.warning = response.warning.trim();
+      console.error(`警告：${result.warning}`);
+    }
     return result;
   }
 
