@@ -68,7 +68,7 @@ vibecoding 工作台/
   "recommendation": null,        // 推荐值（optionId / 文本 / verdict）
   "importance": "normal",        // high | normal | low
   "default": null,               // 预填默认（无需决策项的既定值，用户同意即跳过）
-  "assignee": null,              // 可选责任人 ID；省略/null/空串=公共块
+  "assignee": null,              // 可选责任人 ID；省略/null/空串=公共块；参与者按卡可见
 
   // —— 类型特定字段见 2.3 ——
 
@@ -103,11 +103,13 @@ vibecoding 工作台/
     {"blockId":"b-z","type":"edit","value":"用户改写后的 markdown"},
     {"blockId":"b-w","type":"comment","value":null,"comment":"批注…"}
   ],
-  "summary":"总评（可选）"
+  "summary":"总评（可选）",
+  "unanswered":["b-y"]       // 可选；服务端按当前身份可见 block 集合过滤
 }
 ```
 
 服务端并写 `feedback.md`（人读）。
+参与者只能看到当前轮 content 中已知且对自己可见 block 的 `items`/`unanswered`；未知 block ID 的参与者写入直接拒绝，当前 content 缺失或无效时不返回 feedback。owner 视图保留历史反馈中的未知 ID。
 
 ---
 
@@ -234,12 +236,13 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 | GET/POST `/api/messages` | 读取会话流（支持 ID/时间 `since`）/ 以请求身份追加实名消息 |
 | POST `/api/stream-events` | 仅管理员以 AI 身份追加 `message` / `progress` / `receipt` |
 | POST `/api/attachments?session=` | 上传 ≤5 MiB PNG/JPEG/WebP/GIF/PDF 到该会话 `assets/uploads/` |
-| GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入） |
+| GET `/api/assets?session=` | 列出会话资产；参与者只得到当前身份可见 block 可达的文件 |
+| GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入）；参与者的 `removed` 与上一轮响应标记重新按身份校验 |
 | POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
-| GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；无反馈则 HTTP 200 + `pending:true` |
+| GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；参与者只看到已授权 block；无反馈则 HTTP 200 + `pending:true` |
 | GET `/api/status?session=` | 返回 status.json、本地驱动心跳新鲜度，以及 `workerOnline` / `workerLabel` |
 | POST `/api/worker-heartbeat` | 仅口令门内管理员可写；记录常驻 worker 的 `{at,label?}`，90 秒未更新即离线 |
-| POST `/api/retry?session=&round=` | 重置该轮为 submitted（清 ack/error） |
+| POST `/api/retry?session=&round=` | 仅 owner 重置该轮为 submitted（清 ack/error）；本地无口令且无 token 仍走 owner 兼容路径 |
 | GET `/api/sessions` | 列出 workspace 下会话（dev 用） |
 | GET/POST `/api/participants` | 管理员脱敏列表 / 新增参与者并返回完整邀请链接 |
 | DELETE `/api/participants/:id` | 管理员吊销参与者 magic-link |
@@ -247,11 +250,11 @@ AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→fee
 
 服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
 
-公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
+公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。会话资产下载还校验 block 可见性、路径 realpath 不得越出 workspace；同一资产被公共块和私有块共同引用时按公共可见放行。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
 
 参与者名册格式为 `[{id,name,token,createdAt}]`，写入采用同目录临时文件 + rename，token 为 16 个密码学随机字节的十六进制表示。CLI `participant add/list/revoke` 在本地直接维护名册；配置 `WORKBENCH_REMOTE_URL` 后复用管理 API。只有 add/API 创建响应包含一次性可分发的完整邀请链接，list 永不回显 token。
 
-逐人反馈：服务端覆盖客户端传入的 `submittedBy`，参与者反馈写 `feedback-<id>.json`；第一份同步写规范 `feedback.json`，让旧 listener 与 `wait` 保持“首份即唤醒”。owner 后交时覆盖规范文件，并成为 GET 的合并主视图；`byParticipant` 始终保留逐人提交。参与者可在 claimed 后补交自己的文件，但不得把 claimed/responded/error 状态倒退；owner 仍沿用 claimed 时 409。冲突只比较同 block 的 `type:'select'`，不同参与者值不一致时返回 `conflicts:[{blockId,choices}]`。
+逐人反馈：服务端覆盖客户端传入的 `submittedBy`，参与者反馈写 `feedback-<id>.json`；第一份同步写规范 `feedback.json`，让旧 listener 与 `wait` 保持“首份即唤醒”。owner 后交时覆盖规范文件，并成为 GET 的合并主视图；`byParticipant` 始终保留逐人提交。参与者可在 claimed 后补交自己的文件，但不得把 claimed/responded/error 状态倒退；owner 仍沿用 claimed 时 409。冲突只比较已授权集合内同 block 的 `type:'select'`，不同参与者值不一致时返回 `conflicts:[{blockId,choices}]`。
 
 会话流：`workspace/<session>/stream.jsonl` 是 append-only 消息档案，每行包含 `id/at/author/kind/text/refs?`。普通消息作者取认证身份，AI 回执/进度作者固定为 `ai`；rounds 与 feedback 成功后分别自动写“已出第 N 轮”和“某人已提交第 N 轮反馈”。历史规范 `feedback.json` 的非空 `sessionComment` 可用 `stream-migrate` 幂等迁入。
 

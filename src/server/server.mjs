@@ -6,7 +6,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { computeDiff, removedBlocks, diffSanity } from '../protocol/diff.mjs';
-import { validateFeedback } from '../protocol/schema.mjs';
+import { validateContent, validateFeedback } from '../protocol/schema.mjs';
 import {
   lintContent,
   formatLint,
@@ -33,6 +33,7 @@ import {
   readStatus,
   writeStatus,
   listSessions,
+  listRounds,
   isValidSessionName,
   prepareRound,
   writeRound,
@@ -285,7 +286,65 @@ function assetUrl(session, relativePath) {
   return `/assets/${encodeURIComponent(session)}/${encodedPath}`;
 }
 
-function listSessionAssets(session) {
+function normalizeAssetSubpath(value) {
+  if (typeof value !== 'string' || !value || value.includes('\0')) return null;
+  const normalized = path.posix.normalize(value);
+  if (!normalized || normalized === '.' || normalized.startsWith('../') || normalized.startsWith('/')) return null;
+  return normalized;
+}
+
+function readValidContentForVisibility(session, round) {
+  const content = readJSON(paths.content(session, round), null);
+  return validateContent(content).ok
+    && content.session === session
+    && content.round === round
+    ? content
+    : null;
+}
+
+const ASSET_LINK_RE = /\/assets\/([^/\s"'<>]+)\/([A-Za-z0-9._~!$&'()*+,;=:@%/-]+)/g;
+
+function collectAssetPaths(value, session, target) {
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(ASSET_LINK_RE)) {
+      const rawPath = match[2].replace(/[).,\]}]+$/, '');
+      try {
+        if (decodeURIComponent(match[1]) !== session) continue;
+        const decodedPath = rawPath.split('/').map((part) => decodeURIComponent(part)).join('/');
+        const normalized = normalizeAssetSubpath(decodedPath);
+        if (normalized) target.add(normalized);
+      } catch {
+        // 无法验证的资产引用不授权任何文件。
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectAssetPaths(item, session, target));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach((item) => collectAssetPaths(item, session, target));
+  }
+}
+
+function visibleAssetPathsForIdentity(session, identity) {
+  if (identity?.role !== 'participant') return null;
+
+  const allowed = new Set();
+  // 采用“公共可见”规则：同一资产只要被任一当前身份可见的块引用，便整体放行；
+  // 公共块对所有参与者可见，因此公共块与私有块共同引用时不会被私有引用误伤。
+  for (const round of listRounds(session)) {
+    const content = readValidContentForVisibility(session, round);
+    if (!Array.isArray(content?.blocks)) continue;
+    for (const block of visibleBlocksForIdentity(content.blocks, identity)) {
+      collectAssetPaths(block, session, allowed);
+    }
+  }
+  return allowed;
+}
+
+function listSessionAssets(session, allowedPaths = null) {
   const root = path.resolve(workspaceDir(), session, 'assets');
   const files = [];
 
@@ -302,6 +361,7 @@ function listSessionAssets(session) {
       if (entry.isDirectory()) {
         walk(absolutePath, relativePath);
       } else if (entry.isFile()) {
+        if (allowedPaths && !allowedPaths.has(relativePath)) continue;
         files.push({
           path: relativePath,
           url: assetUrl(session, relativePath),
@@ -356,9 +416,9 @@ export function visibleBlocksForIdentity(blocks, identity) {
 }
 
 function feedbackVisibilityForIdentity(session, round, identity) {
-  if (identity?.role !== 'participant') return null;
-  const content = readJSON(paths.content(session, round), null);
-  if (!Array.isArray(content?.blocks)) return null;
+  if (identity?.role !== 'participant') return { role: 'owner' };
+  const content = readValidContentForVisibility(session, round);
+  if (!Array.isArray(content?.blocks)) return { role: 'participant', valid: false };
   const knownBlockIds = new Set(
     content.blocks.map((block) => block?.id).filter((id) => typeof id === 'string'),
   );
@@ -367,19 +427,72 @@ function feedbackVisibilityForIdentity(session, round, identity) {
       .map((block) => block?.id)
       .filter((id) => typeof id === 'string'),
   );
-  return { knownBlockIds, visibleBlockIds };
+  return { role: 'participant', valid: true, knownBlockIds, visibleBlockIds };
 }
 
 function filterFeedbackForIdentity(feedback, visibility) {
-  if (!feedback || !visibility || !Array.isArray(feedback.items)) return feedback;
+  if (!feedback || visibility?.role !== 'participant') return feedback;
+  if (!visibility.valid || !Array.isArray(feedback.items)
+    || (feedback.unanswered != null && !Array.isArray(feedback.unanswered))) return null;
   return {
     ...feedback,
-    // 未出现在当前内容中的旧 blockId 保留，兼容历史反馈文件；已知块严格按可见性过滤。
-    items: feedback.items.filter((item) => (
-      !visibility.knownBlockIds.has(item?.blockId)
-      || visibility.visibleBlockIds.has(item.blockId)
-    )),
+    items: feedback.items.filter((item) => visibility.visibleBlockIds.has(item?.blockId)),
+    ...(Array.isArray(feedback.unanswered)
+      ? { unanswered: feedback.unanswered.filter((blockId) => visibility.visibleBlockIds.has(blockId)) }
+      : {}),
   };
+}
+
+function streamBlockRefVisible(session, refs, identity) {
+  if (identity?.role !== 'participant') return true;
+  if (!refs || typeof refs.blockId !== 'string') return true;
+  const round = validRoundQuery(refs.round);
+  if (round == null) return false;
+  const content = readValidContentForVisibility(session, round);
+  if (!Array.isArray(content?.blocks)) return false;
+  const block = content.blocks.find((candidate) => candidate?.id === refs.blockId);
+  return Boolean(block && isBlockVisibleTo(block, identity));
+}
+
+function stripHiddenStreamBlockRef(entry) {
+  const safeRefs = { ...entry.refs };
+  delete safeRefs.blockId;
+  if (Object.keys(safeRefs).length) return { ...entry, refs: safeRefs };
+  const { refs: _refs, ...withoutRefs } = entry;
+  return withoutRefs;
+}
+
+function filterStreamEntriesForIdentity(session, entries, allEntries, identity) {
+  if (identity?.role !== 'participant') return entries;
+
+  const hiddenAskIds = new Set(
+    allEntries
+      .filter((entry) => entry.kind === 'ask'
+        && entry.refs?.blockId
+        && !streamBlockRefVisible(session, entry.refs, identity))
+      .map((entry) => entry.ask?.id)
+      .filter(Boolean),
+  );
+  return entries.flatMap((entry) => {
+    if (entry.kind === 'ask' && hiddenAskIds.has(entry.ask?.id)) return [];
+    if (entry.kind === 'answer' && hiddenAskIds.has(entry.answerTo)) return [];
+    if (!entry.refs?.blockId || streamBlockRefVisible(session, entry.refs, identity)) return [entry];
+    return [stripHiddenStreamBlockRef(entry)];
+  });
+}
+
+function assertParticipantCanAnswerAsk(session, answerTo, identity) {
+  if (identity?.role !== 'participant' || typeof answerTo !== 'string') return;
+  const entries = readStreamEntries(session, {
+    limit: Number.MAX_SAFE_INTEGER,
+    exactSession: true,
+  });
+  const ask = entries.find((entry) => entry.kind === 'ask' && entry.ask?.id === answerTo);
+  if (ask?.refs?.blockId && !streamBlockRefVisible(session, ask.refs, identity)) {
+    const error = new Error('该 ask 关联的 block 对当前参与者不可见');
+    error.code = 'ASK_NOT_VISIBLE';
+    throw error;
+  }
 }
 
 function requestTokens(req, requestUrl, isApi) {
@@ -1005,11 +1118,15 @@ function handleRequest(
         ...(since ? { since } : {}),
         exactSession: true,
       });
+      const allEntries = identity.role === 'participant'
+        ? readStreamEntries(session, { limit: Number.MAX_SAFE_INTEGER, exactSession: true })
+        : entries;
+      const visibleEntries = filterStreamEntriesForIdentity(session, entries, allEntries, identity);
       // 前端需要服务端确认的身份来判断消息左右分侧；只返回公开身份字段，不暴露 token。
       json(res, 200, {
         ok: true,
         identity: { id: identity.id, name: identity.name, role: identity.role },
-        entries,
+        entries: visibleEntries,
       });
     } catch (error) {
       console.error('[workbench:messages] 读取失败：', error.message);
@@ -1035,6 +1152,7 @@ function handleRequest(
         return;
       }
       try {
+        if (isAnswer) assertParticipantCanAnswerAsk(body.session, body.answerTo, identity);
         const entry = isAnswer
           ? appendAnswerEntry(body.session, {
               author: identity,
@@ -1057,7 +1175,9 @@ function handleRequest(
         });
       } catch (error) {
         if (isAnswer) {
-          const status = error?.code === 'ASK_ALREADY_ANSWERED' ? 409 : 400;
+          const status = error?.code === 'ASK_ALREADY_ANSWERED'
+            ? 409
+            : error?.code === 'ASK_NOT_VISIBLE' ? 403 : 400;
           json(res, status, { ok: false, error: error.message });
           return;
         }
@@ -1164,7 +1284,10 @@ function handleRequest(
       return;
     }
     try {
-      json(res, 200, { ok: true, files: listSessionAssets(session) });
+      json(res, 200, {
+        ok: true,
+        files: listSessionAssets(session, visibleAssetPathsForIdentity(session, identity)),
+      });
     } catch (error) {
       console.error('[workbench:assets] 索引失败：', error.message);
       json(res, 500, { ok: false, error: '会话资产读取失败' });
@@ -1429,15 +1552,28 @@ function handleRequest(
     }
     const prevRound = content.prevRound || (r > 1 ? r - 1 : 0);
     const prevContent = prevRound > 0 ? readJSON(paths.content(session, prevRound), null) : null;
-    const currentBlocks = visibleBlocksForIdentity(content.blocks || [], identity);
+    const currentContentBlocks = Array.isArray(content.blocks) ? content.blocks : null;
+    const currentBlocks = visibleBlocksForIdentity(currentContentBlocks || [], identity);
     const prevBlocks = prevContent ? visibleBlocksForIdentity(prevContent.blocks || [], identity) : [];
     const diffed = computeDiff(currentBlocks, prevBlocks);
-    const removed = removedBlocks(currentBlocks, prevBlocks);
+    const currentBlockIds = new Set(
+      (currentContentBlocks || [])
+        .map((block) => block?.id)
+        .filter((id) => typeof id === 'string'),
+    );
+    const removed = currentContentBlocks
+      ? removedBlocks(currentBlocks, prevBlocks).filter((block) => !currentBlockIds.has(block?.id))
+      : [];
     const sanity = diffSanity(diffed, removed);
 
     // 改动 E + 改动 C（DESIGN §4）：注入 _respondedToPrev 与 _decidedInPrev
     // 读上一轮 feedback；null guard：缺失/第1轮/文件被删均安全跳过，绝不报错
-    const prevFeedback = prevRound > 0 ? readJSON(paths.feedback(session, prevRound), null) : null;
+    const prevFeedback = prevRound > 0
+      ? filterFeedbackForIdentity(
+          readJSON(paths.feedback(session, prevRound), null),
+          feedbackVisibilityForIdentity(session, prevRound, identity),
+        )
+      : null;
     let finalBlocks = diffed;
     if (prevFeedback && Array.isArray(prevFeedback.items)) {
       const respondedIds = new Set(prevFeedback.items.map((it) => it.blockId).filter(Boolean));
@@ -1470,19 +1606,21 @@ function handleRequest(
         return;
       }
       if (identity.role === 'participant') {
-        const content = readJSON(paths.content(session, round), null);
-        const invisibleBlockIds = new Set(
-          Array.isArray(content?.blocks)
-            ? content.blocks
-              .filter((block) => !isBlockVisibleTo(block, identity))
-              .map((block) => block?.id)
-              .filter((id) => typeof id === 'string')
-            : [],
-        );
+        const visibility = feedbackVisibilityForIdentity(session, round, identity);
+        if (!visibility.valid) {
+          json(res, 403, { ok: false, error: '无法验证当前轮内容，拒绝写入反馈' });
+          return;
+        }
         const forbiddenBlockIds = [...new Set(
-          fb.items
-            .map((item) => item?.blockId)
-            .filter((blockId) => invisibleBlockIds.has(blockId)),
+          [
+            ...fb.items.map((item) => item?.blockId),
+            ...(Array.isArray(fb.unanswered) ? fb.unanswered : []),
+          ]
+            .filter((blockId) => (
+              typeof blockId !== 'string'
+              || !visibility.knownBlockIds.has(blockId)
+              || !visibility.visibleBlockIds.has(blockId)
+            )),
         )];
         if (forbiddenBlockIds.length) {
           console.error('[workbench:feedback] 拒绝参与者提交不可见块反馈：', {
@@ -1597,15 +1735,20 @@ function handleRequest(
   }
 
   if (urlPath === '/api/retry' && method === 'POST') {
+    if (identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员可重试轮次' });
+      return;
+    }
     const { session, round } = parseQuery(rawUrl);
-    const r = parseInt(round, 10);
-    if (!session || !Number.isInteger(r)) {
+    const r = validRoundQuery(round);
+    if (!isValidSessionName(session) || r == null) {
       json(res, 400, { ok: false, error: 'session and round required' });
       return;
     }
-    removeFile(paths.ack(session, r));
-    removeFile(paths.error(session, r));
-    writeStatus(session, { state: 'submitted', error: null, round: r });
+    const pathOptions = { exactSession: true };
+    removeFile(paths.ack(session, r, pathOptions));
+    removeFile(paths.error(session, r, pathOptions));
+    writeStatus(session, { state: 'submitted', error: null, round: r }, undefined, pathOptions);
     json(res, 200, { ok: true });
     return;
   }
@@ -1624,14 +1767,36 @@ function handleRequest(
       return;
     }
     const root = path.resolve(workspaceDir(), session, 'assets');
-    const abs = path.resolve(root, sub);
+    const normalizedSub = normalizeAssetSubpath(sub);
+    if (!normalizedSub) {
+      json(res, 403, { ok: false, error: 'forbidden' });
+      return;
+    }
+    const allowedAssetPaths = visibleAssetPathsForIdentity(session, identity);
+    if (allowedAssetPaths && !allowedAssetPaths.has(normalizedSub)) {
+      json(res, 403, { ok: false, error: 'asset forbidden' });
+      return;
+    }
+    const abs = path.resolve(root, normalizedSub);
     if (!abs.startsWith(root + path.sep)) {
       json(res, 403, { ok: false, error: 'forbidden' });
       return;
     }
     try {
-      const buf = fs.readFileSync(abs);
-      const ext = path.extname(abs).toLowerCase();
+      const workspaceRoot = fs.realpathSync(workspaceDir());
+      const realRoot = fs.realpathSync(root);
+      const realAbs = fs.realpathSync(abs);
+      if (!realRoot.startsWith(workspaceRoot + path.sep)
+        || (realAbs !== realRoot && !realAbs.startsWith(realRoot + path.sep))) {
+        json(res, 403, { ok: false, error: 'forbidden' });
+        return;
+      }
+      if (!fs.statSync(realAbs).isFile()) {
+        json(res, 404, { ok: false, error: 'asset not found' });
+        return;
+      }
+      const buf = fs.readFileSync(realAbs);
+      const ext = path.extname(realAbs).toLowerCase();
       cors(res);
       if (ext === '.html') noReferrer(res);
       // 防存储型 XSS：禁止 MIME 嗅探；PDF 等可执行脚本的文档强制下载而非内嵌打开

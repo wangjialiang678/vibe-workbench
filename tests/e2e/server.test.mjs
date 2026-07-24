@@ -1134,6 +1134,17 @@ test('GET /assets：路径穿越与非法 session 名被挡', async () => {
   assert.equal(missing.status, 404);
 });
 
+test('GET /assets：不跟随会话资产目录内指向外部文件的符号链接', async () => {
+  const outside = path.join(tmpDir, 'outside-asset-secret.txt');
+  const assetDir = path.join(tmpDir, session, 'assets', 'ui');
+  fs.mkdirSync(assetDir, { recursive: true });
+  fs.writeFileSync(outside, 'outside secret');
+  fs.symlinkSync(outside, path.join(assetDir, 'escape.txt'));
+
+  const response = await fetch(url(`/assets/${session}/ui/escape.txt`));
+  assert.notEqual(response.status, 200);
+});
+
 // ---- HTTP 鉴权与监听地址安全边界 ----
 
 async function withTokenServer(token, fn) {
@@ -1278,7 +1289,11 @@ test('参与者 token 放行页面/API，解析实名身份且根跳转不泄漏
     assert.equal((await fetch(`${base}/api/health?token=wrong`)).status, 403);
 
     const sessionId = 'participant-identity';
-    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), {
+      session: sessionId,
+      round: 1,
+      blocks: [{ id: 'decision-x', type: 'markdown', body: '待评审决策' }],
+    });
     writeStatus(sessionId, { state: 'rendered', round: 1 });
     const posted = await fetch(`${base}/api/feedback`, {
       method: 'POST',
@@ -1378,7 +1393,11 @@ test('逐人反馈：独立落盘、首份兼容唤醒、owner 优先合并并�
   await withIdentityServer({ participants }, async ({ port: authPort }) => {
     const base = `http://127.0.0.1:${authPort}`;
     const sessionId = 'multi-feedback';
-    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), {
+      session: sessionId,
+      round: 1,
+      blocks: [{ id: 'decision-x', type: 'markdown', body: '待评审决策' }],
+    });
     writeStatus(sessionId, { state: 'rendered', round: 1 });
     const submit = (token, value, comment = '') => fetch(`${base}/api/feedback`, {
       method: 'POST',
@@ -1448,7 +1467,14 @@ test('逐人反馈：相同 select/非 select 不报分歧，claimed 后参与�
   await withIdentityServer({ participants }, async ({ port: authPort }) => {
     const base = `http://127.0.0.1:${authPort}`;
     const sessionId = 'late-feedback';
-    writeJSON(paths.content(sessionId, 1, { exactSession: true }), { session: sessionId, round: 1, blocks: [] });
+    writeJSON(paths.content(sessionId, 1, { exactSession: true }), {
+      session: sessionId,
+      round: 1,
+      blocks: [
+        { id: 'same', type: 'markdown', body: '相同选择' },
+        { id: 'notes', type: 'markdown', body: '补充意见' },
+      ],
+    });
     writeStatus(sessionId, { state: 'rendered', round: 1 });
     const post = (token, items) => fetch(`${base}/api/feedback`, {
       method: 'POST',

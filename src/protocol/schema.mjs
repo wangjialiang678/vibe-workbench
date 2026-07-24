@@ -33,6 +33,8 @@ export function blockFingerprint(block) {
     recommendation: block.recommendation ?? null,
     default: block.default ?? null,
     value: block.value ?? null,
+    // 空串与省略/null 都是公共块，指纹也按同一语义归一化。
+    assignee: block.assignee || null,
     // 决策块结构化字段（iteration-brief P1）：AI 补了背景/理由 → 该轮应标 CHANGED
     background: block.background ?? null,
     why: block.why ?? null,
@@ -161,5 +163,11 @@ export function validateFeedback(fb) {
     if (!it || !it.blockId) errors.push(`items[${i}].blockId required`);
     if (it && it.type && !FEEDBACK_TYPES.includes(it.type)) errors.push(`items[${i}].type invalid: ${it.type}`);
   });
+  if (fb.unanswered != null) {
+    if (!Array.isArray(fb.unanswered)) errors.push('unanswered must be array');
+    else fb.unanswered.forEach((blockId, i) => {
+      if (typeof blockId !== 'string' || !blockId.trim()) errors.push(`unanswered[${i}] must be block id string`);
+    });
+  }
   return { ok: errors.length === 0, errors };
 }

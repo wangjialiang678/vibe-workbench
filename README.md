@@ -41,7 +41,7 @@ WORKBENCH_TOKEN='请换成足够长的随机值' \
 
 - 页面通过 `?token=...` 进入；页面会把 token 自动透传给后续同源 API 请求。
 - 脚本或 API 客户端优先使用请求头 `x-workbench-token`，也兼容 query 参数 `?token=...`。
-- 渲染器自身的静态 JS/CSS/字体/图片可免口令加载；HTML、静态 `.json`/`.map`、所有 `/api/*` 及会话 `/assets/*` 均受保护。前端会给直接渲染的 `/assets/` iframe、图片和链接自动附加 query token。
+- 渲染器自身的静态 JS/CSS/字体/图片可免口令加载；HTML、静态 `.json`/`.map`、所有 `/api/*` 及会话 `/assets/*` 均受保护。参与者的会话资产清单和直读还必须能追溯到当前身份可见的 block；同一资产只要被公共块引用就按公共可见放行。前端会给直接渲染的 `/assets/` iframe、图片和链接自动附加 query token。
 - `present` 等需要访问 server 的 CLI 命令会自动读取 `WORKBENCH_TOKEN`；它返回的页面 URL 也会带 token。未配置远程模式时，`wait` 仍只读本地文件。
 - HTML 与代理页面统一返回 `Referrer-Policy: no-referrer`，避免 token 随 Referer 发往下一跳；但 token 仍可能进入浏览器历史和反向代理访问日志。公网部署必须使用 HTTPS，并按实际安全要求处理日志和定期轮换口令。
 
@@ -57,7 +57,7 @@ workbench participant revoke alice          # 立即吊销该链接
 
 参与者 token 可进入页面和普通 API，但 `/api/participants` 的新增、列表、吊销只接受管理员口令。多人在同一轮提交时分别写入 `feedback-<id>.json`，首份提交同时建立 `feedback.json` 兼容桥，既有 `wait` / listener 会被第一份反馈立即唤醒；管理员反馈仍写 `feedback.json` 并在聚合视图中优先。页面会在对应块下只读显示各人意见，`select` 选择不同时标注「意见分歧」。
 
-块可选 `assignee` 字段指定责任人 ID：省略、`null` 或空串表示公共块；有值时仅该参与者与管理员可见。服务端按块过滤内容与反馈读接口，并拦截参与者对不可见块的反馈提交。
+块可选 `assignee` 字段指定责任人 ID：省略、`null` 或空串表示公共块；有值时仅该参与者与管理员可见。服务端按块过滤内容、跨轮 diff/历史响应标记、feedback 与会话流引用，并拦截参与者对不可见或未知块的反馈提交。参与者不能调用 `/api/retry`；吊销名册 token 后后续请求立即失效。
 
 ### 让本地 CLI 使用云端 workspace
 
@@ -75,7 +75,7 @@ node bin/workbench.mjs wait <session> <round> --events
 node bin/workbench.mjs stream-migrate <session>   # 历史 sessionComment 幂等迁移
 ```
 
-每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 以 AI 身份写 `message` / `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
+每个会话的消息、AI 回执和进度以 JSONL 追加到 `workspace/<session>/stream.jsonl`。`POST /api/messages` 使用已认证的 owner/participant 实名，`GET /api/messages?session=&since=` 支持 ID 或时间游标；参与者收到的 refs 会按 block 可见性裁剪，隐藏 ask 及其 answer 不返回，回答 ask 时服务端重新验证关联 block。轮次与反馈成功后自动写 AI 回执。管理员可通过 `POST /api/stream-events` 以 AI 身份写 `message` / `progress` / `receipt`。`POST /api/attachments?session=` 接受不超过 5 MiB 的 PNG/JPEG/WebP/GIF/PDF，保存到 `assets/uploads/` 并由既有受保护 `/assets/` 路由读取。
 
 会话文档保存在 `workspace/<session>/documents/<category>/<slug>.md`，分类限于「需求 / PRD / 架构 / UI 设计 / 交互设计 / 测试 / 其他」，正文上限 256 KiB（按 UTF-8 字节）。管理员可用 `POST /api/documents` 发布或更新；`GET /api/documents?session=...` 返回列表，增加 `slug=...` 返回单篇正文，跨分类出现同名 slug 时可再传 `category=...` 消歧。CLI 会优先采用源文件 frontmatter 的 `title`，否则用文件名，也可显式覆盖：
 
