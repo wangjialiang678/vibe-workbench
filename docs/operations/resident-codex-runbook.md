@@ -290,6 +290,59 @@ heartbeat、空轮询和正常 readiness 探测只更新 metrics；仅在状态�
 
 建议阈值：根盘使用率 75% warning、85% critical；最老 pending 超过 2 分钟 warning、10 分钟 critical；auth readiness 一次状态变化即告警；dead-letter 非零、备份超过 26 小时或恢复校验失败立即告警。
 
+### 6.9 日志策略（2026-07-25 已实施 · 云端 Codex 执行 + 本机落库）
+
+> 本节为 2026-07-24/25 日志治理任务的实施结果（创始人拍板：云端要有日志，但须治理）。系统级配置由云端常驻 Codex 直接实施，本章节文本由其成文、经本机会话落库（遵守 §框架自改边界）。
+
+#### 目标与安全边界
+
+服务器日志用于故障定位、任务追踪和审计，但必须有明确上限。日志治理只处理日志及其轮转配置，不删除业务数据。以下内容始终不属于清理对象：`workspace/`、`.vibeloop/tickets/`、ledger/账本、会话内容、上传附件、配置和凭证。journald 只能用 `journalctl --rotate` / `--vacuum-*` 清理，禁止手工删除 `/var/log/journal` 内文件；凭证、令牌和完整敏感载荷不得写入日志。
+
+#### 日志源与保留策略
+
+| 日志源 | 必须保留 | 可精简 | 保留方式 |
+|---|---|---|---|
+| journald（全部 systemd unit） | warning/error、服务启停/重启、认证与 sudo 审计线索、任务开始/结束/超时、非零处理结果 | 高频成功心跳、空轮询、重复 debug | `SystemMaxUse=500M` 且 `MaxRetentionSec=14day`，先触达者生效 |
+| nginx access/error | 4xx/5xx、上游失败、请求时间与路由线索 | 健康检查等高频成功请求可在源头采样 | 沿用现有 daily、14 代、压缩 |
+| `.vibeloop/vibeloop.log` | ticket 处理、修复/判断/合并/通知结果、warning/error | 全零 `runOnce 完成`、调试噪声 | 达 5M 轮转，保留 5 代，压缩；`copytruncate` 避免重启服务 |
+| resident-worker | 推送接收、Codex 启动/结束、exit/signal/timeout、失败、启动/停机 | `queued=0 processed=0` 的逐分钟成功轮询 | 写入 journald，受全局 500M/14 天约束 |
+| notify relay | 投递成功/失败、重试、目标响应码、服务启停 | 无事件心跳和重复调试 | 写入 journald，受全局约束 |
+
+必须保留清单：所有错误和告警；服务生命周期变化；认证/sudo 审计线索；任务或 ticket 的接收、开始、结束和异常退出；有实际动作的处理统计；通知投递结果与重试；定位请求失败所需的 nginx 状态、路由和时间线。日志中不得保留令牌、cookie、Authorization 头或完整敏感正文。
+
+#### 当前配置
+
+`/etc/systemd/journald.conf.d/60-log-governance.conf`：
+
+```ini
+[Journal]
+SystemMaxUse=500M
+MaxRetentionSec=14day
+```
+
+`/etc/logrotate.d/vibeloop`：
+
+```text
+/home/ubuntu/apps/ai-video-paper-edit/.vibeloop/vibeloop.log {
+    size 5M
+    rotate 5
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su ubuntu ubuntu
+}
+```
+
+logrotate 由系统 `logrotate.timer` 每日检查；5M 是检查时的轮转阈值，不是实时硬上限。`copytruncate` 有极短复制窗口，若未来应用支持重开日志文件，应改为 rename + reload 以消除该窗口。
+
+实施效果（2026-07-25）：journald 从 2.3G 降至 125.8M，根盘从 79% 降至 75%，释放约 2.25GiB；重启、写入测试、journal 完整性校验均通过。
+
+#### 心跳与空轮询降噪（结论已出，代码改动待办）
+
+2026-07-25 实测：resident-worker 近 24 小时约 1,502 条日志中 1,400 条（93%）为空轮询完成；paperedit 侧另有 2,879 条全零 `runOnce 完成`。心跳机制保留，源头日志应改为：有 queued/processed、异常或状态变化时立即记录；纯空闲成功轮询每 60 分钟输出一次聚合摘要（含空闲轮数、最近成功时间）。**涉及 resident-worker.mjs 与引擎 runOnce 的代码改动按框架自改边界由本机会话派发实施。**
+
 ## 7. 安全排障清单
 
 以下命令不需要输出任何口令：
