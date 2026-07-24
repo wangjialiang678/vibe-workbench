@@ -126,6 +126,14 @@ test('事件过滤只保留 owner 与 participant，忽略 AI 条目', () => {
       text: '按钮点了没有反应。',
     },
     {
+      id: 'answer-1',
+      author: { id: 'owner', name: '创始人', role: 'owner' },
+      kind: 'answer',
+      text: '滚动发布',
+      answerTo: 'deploy-mode',
+      answerValue: 'rolling',
+    },
+    {
       id: 'ai-2',
       author: { id: 'ai', name: 'AI', role: 'ai' },
       kind: 'progress',
@@ -135,7 +143,7 @@ test('事件过滤只保留 owner 与 participant，忽略 AI 条目', () => {
 
   assert.deepEqual(
     worker.filterHumanEntries(entries).map((entry) => entry.id),
-    ['owner-1', 'participant-1'],
+    ['owner-1', 'participant-1', 'answer-1'],
   );
 });
 
@@ -164,6 +172,58 @@ test('任务简报包含事件原文、会话与轮次', () => {
   assert.match(brief, /请修复支付回调里的重复入账，并把验证结果写回来。/);
   assert.match(brief, /stdout 不会被任何人看到/);
   assert.match(brief, /"kind":"message"/);
+});
+
+test('任务简报包含 ask 卡行为指引、curl 模板，并要求写卡后结束运行等待回答', () => {
+  const brief = worker.buildTaskBrief({
+    session: 'ask-guide',
+    round: 2,
+    events: [{
+      type: 'message',
+      entry: {
+        id: 'message-ask-guide',
+        author: { id: 'owner', name: '创始人', role: 'owner' },
+        kind: 'message',
+        text: '继续处理，有简单取舍就问我。',
+      },
+    }],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/home/ubuntu/cloud-codex-now',
+  });
+
+  assert.match(brief, /简单取舍/);
+  assert.match(brief, /复杂决策.*整轮工作台卡片/);
+  assert.match(brief, /"kind":"ask"/);
+  assert.match(brief, /"desc":/);
+  assert.match(brief, /"recommendation":/);
+  assert.match(brief, /写入 ask.*结束本次运行.*等待回答/s);
+  assert.match(brief, /curl --fail-with-body/);
+  assert.match(brief, /\$WORKBENCH_URL\/api\/stream-events/);
+});
+
+test('answer 事件进入本次事件原文，并作为 D19 最近对话注入后续简报', () => {
+  const answer = {
+    id: 'answer-current',
+    at: '2026-07-23T10:00:00.000Z',
+    author: { id: 'alice', name: '小艾', role: 'participant' },
+    kind: 'answer',
+    text: '滚动发布',
+    answerTo: 'deploy-mode',
+    answerValue: 'rolling',
+  };
+  const brief = worker.buildTaskBrief({
+    session: 'answer-memory',
+    round: 3,
+    events: [{ type: 'message', entry: answer }],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/home/ubuntu/cloud-codex-now',
+    historyEntries: [{ ...answer, id: 'answer-history', text: '明早发布' }],
+  });
+
+  assert.match(brief, /"kind": "answer"/);
+  assert.match(brief, /"answerTo": "deploy-mode"/);
+  assert.match(brief, /"answerValue": "rolling"/);
+  assert.match(brief, /人类回答·小艾：明早发布/);
 });
 
 test('任务简报注入最近对话与反馈要点，并明确历史不是新任务', () => {
@@ -647,7 +707,7 @@ test('Codex 未自行写流时，把 stdout 最终回答作为 AI message 补写
   }
 });
 
-test('Codex 已自行写入实质 AI 条目时不重复转发 stdout', async () => {
+test('Codex 已自行写入 ask 后不重复转发 stdout 或补 receipt', async () => {
   const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-existing-reply-'));
   const streamEvents = [];
   try {
@@ -677,10 +737,19 @@ test('Codex 已自行写入实质 AI 条目时不重复转发 stdout', async () 
           payload = {
             ok: true,
             entries: [{
-              id: 'codex-reply-1',
+              id: 'codex-ask-1',
               author: { id: 'ai', name: 'AI', role: 'ai' },
-              kind: 'receipt',
-              text: 'Codex：已自行通过 API 写入处理结果。',
+              kind: 'ask',
+              text: '请选择发布方式',
+              ask: {
+                id: 'deploy-mode',
+                question: '请选择发布方式',
+                options: [
+                  { id: 'safe', label: '分批发布', desc: '更稳，但更慢。' },
+                  { id: 'fast', label: '直接发布', desc: '更快，但风险更高。' },
+                ],
+                multi: false,
+              },
             }],
           };
         } else if (url.pathname === '/api/status') {

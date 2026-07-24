@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  appendAnswerEntry,
+  appendAskEntry,
   appendStreamEntry,
   migrateSessionComments,
   readStreamEntries,
@@ -202,6 +204,170 @@ test('流数据层拒绝非法 session、author、kind 与空白文本', () => {
       /text|文本|内容/i,
     );
   }
+});
+
+test('ask 条目规范化保存问题、2—4 个带解释的选项与合法推荐项', () => {
+  const entry = appendAskEntry('ask-contract', {
+    author: ai,
+    kind: 'ask',
+    text: '请选择发布节奏',
+    ask: {
+      id: 'release-pace',
+      question: '这次按什么节奏发布？',
+      options: [
+        { id: 'safe', label: '分批发布', desc: '风险较低，但完成时间更晚。' },
+        { id: 'fast', label: '一次发布', desc: '速度更快，但回滚压力更大。' },
+      ],
+      multi: false,
+      recommendation: 'safe',
+    },
+  });
+
+  assert.equal(entry.kind, 'ask');
+  assert.deepEqual(entry.ask, {
+    id: 'release-pace',
+    question: '这次按什么节奏发布？',
+    options: [
+      { id: 'safe', label: '分批发布', desc: '风险较低，但完成时间更晚。' },
+      { id: 'fast', label: '一次发布', desc: '速度更快，但回滚压力更大。' },
+    ],
+    multi: false,
+    recommendation: 'safe',
+  });
+  assert.throws(
+    () => appendAskEntry('ask-contract', {
+      author: ai,
+      kind: 'ask',
+      text: '重复卡片',
+      ask: {
+        id: 'release-pace',
+        question: '重复问题',
+        options: [
+          { id: 'a', label: 'A', desc: '代价 A' },
+          { id: 'b', label: 'B', desc: '代价 B' },
+        ],
+        multi: false,
+      },
+    }),
+    (error) => error?.code === 'ASK_ALREADY_EXISTS',
+  );
+});
+
+test('ask 条目拒绝缺 desc、非法 recommendation、重复选项与非 false multi', () => {
+  const base = {
+    author: ai,
+    kind: 'ask',
+    text: '请选择',
+    ask: {
+      id: 'invalid-ask',
+      question: '选哪个？',
+      options: [
+        { id: 'a', label: 'A', desc: '代价 A' },
+        { id: 'b', label: 'B', desc: '代价 B' },
+      ],
+      multi: false,
+    },
+  };
+
+  assert.throws(
+    () => appendStreamEntry('ask-missing-desc', {
+      ...base,
+      ask: { ...base.ask, options: [{ id: 'a', label: 'A' }, base.ask.options[1]] },
+    }),
+    /desc|解释/i,
+  );
+  assert.throws(
+    () => appendStreamEntry('ask-bad-recommendation', {
+      ...base,
+      ask: { ...base.ask, recommendation: 'missing' },
+    }),
+    /recommendation|推荐/i,
+  );
+  assert.throws(
+    () => appendStreamEntry('ask-duplicate-option', {
+      ...base,
+      ask: {
+        ...base.ask,
+        options: [
+          { id: 'same', label: 'A', desc: '代价 A' },
+          { id: 'same', label: 'B', desc: '代价 B' },
+        ],
+      },
+    }),
+    /重复|option/i,
+  );
+  assert.throws(
+    () => appendStreamEntry('ask-multi-true', {
+      ...base,
+      ask: { ...base.ask, multi: true },
+    }),
+    /multi/i,
+  );
+});
+
+test('answer 只可引用本 session 未回答 ask 的合法选项，重复回答报专用冲突码', () => {
+  const session = 'answer-contract';
+  appendAskEntry(session, {
+    author: ai,
+    kind: 'ask',
+    text: '请选择发布节奏',
+    ask: {
+      id: 'release-pace',
+      question: '这次按什么节奏发布？',
+      options: [
+        { id: 'safe', label: '分批发布', desc: '风险较低，但完成时间更晚。' },
+        { id: 'fast', label: '一次发布', desc: '速度更快，但回滚压力更大。' },
+      ],
+      multi: false,
+    },
+  });
+
+  assert.throws(
+    () => appendAnswerEntry(session, {
+      author: owner,
+      answerTo: 'missing-ask',
+      answerValue: 'safe',
+    }),
+    (error) => error?.code === 'ASK_NOT_FOUND',
+  );
+  assert.throws(
+    () => appendAnswerEntry(session, {
+      author: owner,
+      answerTo: 'release-pace',
+      answerValue: 'missing-option',
+    }),
+    (error) => error?.code === 'INVALID_ASK_ANSWER',
+  );
+
+  const answer = appendAnswerEntry(session, {
+    author: owner,
+    answerTo: 'release-pace',
+    answerValue: ['safe'],
+  });
+  assert.deepEqual(
+    {
+      author: answer.author,
+      kind: answer.kind,
+      text: answer.text,
+      answerTo: answer.answerTo,
+      answerValue: answer.answerValue,
+    },
+    {
+      author: owner,
+      kind: 'answer',
+      text: '分批发布',
+      answerTo: 'release-pace',
+      answerValue: ['safe'],
+    },
+  );
+  assert.throws(
+    () => appendAnswerEntry(session, {
+      author: owner,
+      answerTo: 'release-pace',
+      answerValue: 'fast',
+    }),
+    (error) => error?.code === 'ASK_ALREADY_ANSWERED',
+  );
 });
 
 test('migrateSessionComments：迁移规范反馈留言并保留作者、时间与轮次引用', () => {

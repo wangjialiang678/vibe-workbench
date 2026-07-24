@@ -542,6 +542,9 @@ let _viewerId = '';
 let _lastStreamId = '';
 const _seenStreamIds = new Set();
 const _streamEntriesData = [];
+const _askSelections = new Map();
+const _askSubmitting = new Set();
+const _askErrors = new Map();
 
 function latestPendingDecisionCount() {
   return Math.max(
@@ -564,7 +567,12 @@ function renderStreamEntries() {
       .map((details) => details.dataset.progressGroupId),
   );
   const template = document.createElement('template');
-  template.innerHTML = streamEntriesHtml(_streamEntriesData, { viewerId: _viewerId });
+  template.innerHTML = streamEntriesHtml(_streamEntriesData, {
+    viewerId: _viewerId,
+    selectedAnswers: _askSelections,
+    submittingAskIds: _askSubmitting,
+    askErrors: _askErrors,
+  });
   template.content.querySelectorAll('[src^="/assets/"], [href^="/assets/"]').forEach((element) => {
     const attribute = element.hasAttribute('src') ? 'src' : 'href';
     element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
@@ -623,7 +631,7 @@ function appendStreamEntries(entries, { countUnread = false, advanceCursor = tru
     _seenStreamIds.add(entry.id);
     _streamEntriesData.push(entry);
     addedEntries += 1;
-    if (entry.kind === 'message') addedMessages += 1;
+    if (entry.kind === 'message' || entry.kind === 'ask') addedMessages += 1;
   }
   if (addedEntries > 0) renderStreamEntries();
   if (nearBottom || !countUnread || (_activeView === 'stream' && isNarrowScreen())) {
@@ -671,6 +679,12 @@ function roundPageUrl(round) {
 }
 
 $streamEntries?.addEventListener('click', (event) => {
+  const askConfirm = event.target.closest('[data-ask-confirm]');
+  if (askConfirm) {
+    const askId = askConfirm.dataset.askId;
+    if (askId) void submitAskAnswer(askId);
+    return;
+  }
   const decisionChip = event.target.closest('[data-open-decision]');
   if (decisionChip) {
     const round = Number(decisionChip.dataset.round);
@@ -689,6 +703,14 @@ $streamEntries?.addEventListener('click', (event) => {
   else location.assign(roundPageUrl(round));
 });
 
+$streamEntries?.addEventListener('change', (event) => {
+  const option = event.target.closest('[data-ask-option]');
+  if (!option?.checked || !option.dataset.askId) return;
+  _askSelections.set(option.dataset.askId, option.value);
+  _askErrors.delete(option.dataset.askId);
+  renderStreamEntries();
+});
+
 let _composerBusy = false;
 function setComposerBusy(busy, label = '') {
   _composerBusy = busy;
@@ -697,17 +719,43 @@ function setComposerBusy(busy, label = '') {
   if ($streamSendStatus) $streamSendStatus.textContent = label;
 }
 
-async function postStreamMessage(text) {
+async function postStreamMessage(text, extra = {}) {
   const response = await fetch(apiUrl('/api/messages'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: SESSION, text }),
+    body: JSON.stringify({ session: SESSION, text, ...extra }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.entry) throw new Error(data.error || `HTTP ${response.status}`);
   // 成功响应后立刻本地追加，不等待下一次 3 秒轮询。
   appendStreamEntries([data.entry], { advanceCursor: false });
   return data.entry;
+}
+
+async function submitAskAnswer(askId) {
+  if (_askSubmitting.has(askId)) return;
+  const askEntry = _streamEntriesData.find(
+    (entry) => entry?.kind === 'ask' && entry.ask?.id === askId,
+  );
+  const answerValue = _askSelections.get(askId);
+  const selectedOption = askEntry?.ask?.options?.find((option) => option.id === answerValue);
+  if (!askEntry || !selectedOption) return;
+
+  _askSubmitting.add(askId);
+  _askErrors.delete(askId);
+  renderStreamEntries();
+  try {
+    await postStreamMessage(selectedOption.label, {
+      answerTo: askId,
+      answerValue,
+    });
+    _askSelections.delete(askId);
+  } catch (error) {
+    _askErrors.set(askId, `提交失败：${error.message}`);
+  } finally {
+    _askSubmitting.delete(askId);
+    renderStreamEntries();
+  }
 }
 
 async function sendComposerText() {

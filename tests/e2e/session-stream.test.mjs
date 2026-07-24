@@ -340,6 +340,219 @@ test('POST /api/stream-events 拒绝参与者，owner 可写 message/progress/re
   ]);
 });
 
+test('POST /api/stream-events 写 ask，并拒绝缺 desc、非法 recommendation 与越界选项数', async () => {
+  const session = 'ask-validation';
+  const validAsk = {
+    id: 'deploy-mode',
+    question: '选择部署方式',
+    options: [
+      { id: 'rolling', label: '滚动发布', desc: '风险低，但发布时间更长。' },
+      { id: 'direct', label: '直接发布', desc: '速度快，但故障影响面更大。' },
+    ],
+    multi: false,
+    recommendation: 'rolling',
+  };
+
+  const denied = await postJson('/api/stream-events', {
+    session,
+    kind: 'ask',
+    text: validAsk.question,
+    ask: validAsk,
+  }, PARTICIPANT.token);
+  assert.equal(denied.status, 403);
+
+  const accepted = await postJson('/api/stream-events', {
+    session,
+    kind: 'ask',
+    text: validAsk.question,
+    ask: validAsk,
+  });
+  assert.equal(accepted.status, 200);
+  const acceptedBody = await accepted.json();
+  assert.equal(acceptedBody.entry.kind, 'ask');
+  assert.equal(acceptedBody.entry.author.id, 'ai');
+  assert.deepEqual(acceptedBody.entry.ask, validAsk);
+
+  const cases = [
+    {
+      name: '缺 desc',
+      ask: {
+        ...validAsk,
+        id: 'missing-desc',
+        options: [{ id: 'a', label: 'A' }, validAsk.options[1]],
+        recommendation: undefined,
+      },
+    },
+    {
+      name: '非法推荐项',
+      ask: { ...validAsk, id: 'bad-rec', recommendation: 'not-an-option' },
+    },
+    {
+      name: '选项不足',
+      ask: {
+        ...validAsk,
+        id: 'too-few',
+        options: [validAsk.options[0]],
+        recommendation: 'rolling',
+      },
+    },
+    {
+      name: '选项过多',
+      ask: {
+        ...validAsk,
+        id: 'too-many',
+        options: [
+          ...validAsk.options,
+          { id: 'three', label: '第三项', desc: '代价三。' },
+          { id: 'four', label: '第四项', desc: '代价四。' },
+          { id: 'five', label: '第五项', desc: '代价五。' },
+        ],
+      },
+    },
+  ];
+  for (const item of cases) {
+    const response = await postJson('/api/stream-events', {
+      session,
+      kind: 'ask',
+      text: item.name,
+      ask: item.ask,
+    });
+    assert.equal(response.status, 400, item.name);
+    assert.equal((await response.json()).ok, false);
+  }
+});
+
+test('POST /api/messages 实名写 answer，校验引用与选项，并拒绝同一 ask 重复回答', async () => {
+  const session = 'answer-validation';
+  const ask = {
+    id: 'release-window',
+    question: '选择发布时间',
+    options: [
+      { id: 'tonight', label: '今晚发布', desc: '更快交付，但值守成本更高。' },
+      { id: 'tomorrow', label: '明早发布', desc: '值守稳定，但晚半天交付。' },
+    ],
+    multi: false,
+    recommendation: 'tomorrow',
+  };
+  assert.equal((await postJson('/api/stream-events', {
+    session,
+    kind: 'ask',
+    text: ask.question,
+    ask,
+  })).status, 200);
+
+  const missing = await postJson('/api/messages', {
+    session,
+    answerTo: 'missing-ask',
+    answerValue: 'tonight',
+  }, PARTICIPANT.token);
+  assert.equal(missing.status, 400);
+
+  const invalid = await postJson('/api/messages', {
+    session,
+    answerTo: ask.id,
+    answerValue: 'missing-option',
+  }, PARTICIPANT.token);
+  assert.equal(invalid.status, 400);
+
+  const answered = await postJson('/api/messages', {
+    session,
+    answerTo: ask.id,
+    answerValue: 'tomorrow',
+    author: { id: 'mallory', name: '伪造用户', role: 'owner' },
+  }, PARTICIPANT.token);
+  assert.equal(answered.status, 200);
+  const body = await answered.json();
+  assert.deepEqual(body.entry.author, {
+    id: PARTICIPANT.id,
+    name: PARTICIPANT.name,
+    role: 'participant',
+  });
+  assert.equal(body.entry.kind, 'answer');
+  assert.equal(body.entry.text, '明早发布');
+  assert.equal(body.entry.answerTo, ask.id);
+  assert.equal(body.entry.answerValue, 'tomorrow');
+
+  const repeated = await postJson('/api/messages', {
+    session,
+    answerTo: ask.id,
+    answerValue: 'tonight',
+  });
+  assert.equal(repeated.status, 409);
+  assert.equal((await repeated.json()).ok, false);
+
+  const entries = await getMessages(session);
+  assert.deepEqual(entries.map((entry) => entry.kind), ['ask', 'answer']);
+});
+
+test('answer 仍走 message-posted webhook，可即时唤醒 resident worker', async () => {
+  let resolveEvent;
+  const receivedEvent = new Promise((resolve) => { resolveEvent = resolve; });
+  const webhookServer = http.createServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      resolveEvent(JSON.parse(raw));
+      res.writeHead(204);
+      res.end();
+    });
+  });
+  webhookServer.listen(0, '127.0.0.1');
+  await waitForListening(webhookServer);
+
+  const previousWebhook = process.env.WORKBENCH_EVENT_WEBHOOK;
+  process.env.WORKBENCH_EVENT_WEBHOOK =
+    `http://127.0.0.1:${webhookServer.address().port}/events`;
+  const eventServer = startServer(0, '127.0.0.1', { participantsFile });
+  await waitForListening(eventServer);
+  if (previousWebhook == null) delete process.env.WORKBENCH_EVENT_WEBHOOK;
+  else process.env.WORKBENCH_EVENT_WEBHOOK = previousWebhook;
+
+  const eventBase = `http://127.0.0.1:${eventServer.address().port}`;
+  try {
+    const ask = {
+      id: 'wake-choice',
+      question: '是否继续？',
+      options: [
+        { id: 'yes', label: '继续', desc: '立即继续，会占用当前资源。' },
+        { id: 'no', label: '暂停', desc: '暂不占资源，但整体完成更晚。' },
+      ],
+      multi: false,
+    };
+    const askResponse = await fetch(`${eventBase}/api/stream-events`, {
+      method: 'POST',
+      headers: authHeaders(OWNER_TOKEN, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        session: 'answer-webhook',
+        kind: 'ask',
+        text: ask.question,
+        ask,
+      }),
+    });
+    assert.equal(askResponse.status, 200);
+
+    const answerResponse = await fetch(`${eventBase}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(PARTICIPANT.token, { 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        session: 'answer-webhook',
+        answerTo: ask.id,
+        answerValue: 'yes',
+      }),
+    });
+    assert.equal(answerResponse.status, 200);
+
+    const event = await withTimeout(receivedEvent, 1000, '等待 answer webhook 超时');
+    assert.equal(event.event, 'message-posted');
+    assert.equal(event.session, 'answer-webhook');
+    assert.equal(event.kind, 'answer');
+  } finally {
+    await closeServer(eventServer);
+    await closeServer(webhookServer);
+  }
+});
+
 async function upload({
   session,
   mime,

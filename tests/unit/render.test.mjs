@@ -106,6 +106,88 @@ test('streamEntryHtml：receipt 与 progress 使用各自醒目的居中样式�
   assert.match(progress, /SDK 托底：正在执行/);
 });
 
+test('streamEntryHtml：未回答 ask 渲染内嵌决策卡、选项解释与推荐徽标', () => {
+  const html = streamEntryHtml({
+    id: 'ask-entry',
+    kind: 'ask',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    text: '选择发布方式',
+    ask: {
+      id: 'deploy-mode',
+      question: '这次用哪种发布方式？',
+      options: [
+        { id: 'rolling', label: '滚动发布', desc: '风险较低，但耗时更长。' },
+        { id: 'direct', label: '直接发布', desc: '速度更快，但回滚压力更大。' },
+      ],
+      multi: false,
+      recommendation: 'rolling',
+    },
+  }, { selectedAnswers: new Map([['deploy-mode', 'rolling']]) });
+
+  assert.match(html, /stream-ask-card/);
+  assert.match(html, /这次用哪种发布方式？/);
+  assert.match(html, /需你选 1 项/);
+  assert.match(html, /滚动发布/);
+  assert.match(html, /风险较低，但耗时更长。/);
+  assert.match(html, /推荐/);
+  assert.match(html, /data-ask-option/);
+  assert.match(html, /value="rolling"[^>]*checked/);
+  assert.match(html, /点选项即提交/);
+  assert.match(html, /data-ask-confirm/);
+  assert.doesNotMatch(html, /stream-ask-card--answered/);
+});
+
+test('streamEntriesHtml：已回答 ask 锁定所选项和答题人，answer 自身显示紧凑一行', () => {
+  const html = streamEntriesHtml([
+    {
+      id: 'ask-entry',
+      kind: 'ask',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      text: '选择发布方式',
+      ask: {
+        id: 'deploy-mode',
+        question: '这次用哪种发布方式？',
+        options: [
+          { id: 'rolling', label: '滚动发布', desc: '风险较低，但耗时更长。' },
+          { id: 'direct', label: '直接发布', desc: '速度更快，但回滚压力更大。' },
+        ],
+        multi: false,
+        recommendation: 'rolling',
+      },
+    },
+    {
+      id: 'answer-entry',
+      kind: 'answer',
+      author: { id: 'alice', name: '小艾', role: 'participant' },
+      text: '滚动发布',
+      answerTo: 'deploy-mode',
+      answerValue: 'rolling',
+    },
+  ]);
+
+  assert.match(html, /stream-ask-card--answered/);
+  assert.match(html, /已回答 · 小艾/);
+  assert.match(html, /value="rolling"[^>]*checked[^>]*disabled/);
+  assert.match(html, /小艾已选择“滚动发布”/);
+  assert.match(html, /stream-entry--answer/);
+  assert.match(html, /小艾/);
+  assert.match(html, /滚动发布/);
+  assert.doesNotMatch(html, /data-ask-confirm[^>]*>确定/);
+});
+
+test('ask 卡片交互提交 answerTo/answerValue，并沿用变量适配桌面与手机', () => {
+  assert.match(renderApp, /data-ask-option/);
+  assert.match(renderApp, /data-ask-confirm/);
+  assert.match(renderApp, /answerTo/);
+  assert.match(renderApp, /answerValue/);
+  assert.match(renderCss, /\.stream-ask-card\s*\{[\s\S]*?var\(--color-/);
+  assert.match(renderCss, /\.stream-ask-recommendation\s*\{[\s\S]*?var\(--color-status-ok\)/);
+  assert.match(
+    renderCss,
+    /@media \(max-width: 760px\)\s*\{[\s\S]*?\.stream-ask-card/,
+  );
+});
+
 test('streamEntriesHtml：连续 AI progress 默认折叠旧进度，只常显最新一条且不折叠最终消息', () => {
   const html = streamEntriesHtml([
     {

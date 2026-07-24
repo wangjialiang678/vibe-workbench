@@ -11,7 +11,7 @@ import {
 } from './workspace.mjs';
 
 const AUTHOR_ROLES = new Set(['owner', 'participant', 'ai']);
-const ENTRY_KINDS = new Set(['message', 'receipt', 'progress']);
+const ENTRY_KINDS = new Set(['message', 'receipt', 'progress', 'ask', 'answer']);
 const DEFAULT_LIMIT = 100;
 
 function assertValidSession(session) {
@@ -45,6 +45,72 @@ function cleanRefs(refs) {
   return Object.keys(clean).length ? clean : undefined;
 }
 
+function requiredText(value, name) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${name} 必须是非空字符串`);
+  }
+  return value.trim();
+}
+
+function cleanAsk(ask) {
+  if (!ask || typeof ask !== 'object' || Array.isArray(ask)) {
+    throw new Error('ask 决策卡必须是对象');
+  }
+  const id = requiredText(ask.id, 'ask.id');
+  const question = requiredText(ask.question, 'ask.question');
+  if (!Array.isArray(ask.options) || ask.options.length < 2 || ask.options.length > 4) {
+    throw new Error('ask.options 必须包含 2—4 个选项');
+  }
+  const optionIds = new Set();
+  const options = ask.options.map((option, index) => {
+    if (!option || typeof option !== 'object' || Array.isArray(option)) {
+      throw new Error(`ask.options[${index}] 必须是对象`);
+    }
+    const optionId = requiredText(option.id, `ask.options[${index}].id`);
+    if (optionIds.has(optionId)) throw new Error(`ask option id 重复：${optionId}`);
+    optionIds.add(optionId);
+    return {
+      id: optionId,
+      label: requiredText(option.label, `ask.options[${index}].label`),
+      desc: requiredText(option.desc, `ask.options[${index}].desc 解释`),
+    };
+  });
+  if (ask.multi !== false) throw new Error('ask.multi 当前只允许 false');
+
+  let recommendation;
+  if (ask.recommendation != null) {
+    recommendation = requiredText(ask.recommendation, 'ask.recommendation');
+    if (!optionIds.has(recommendation)) {
+      throw new Error('ask.recommendation 必须指向合法 option id');
+    }
+  }
+  return {
+    id,
+    question,
+    options,
+    multi: false,
+    ...(recommendation ? { recommendation } : {}),
+  };
+}
+
+function cleanAnswerFields(input) {
+  const answerTo = requiredText(input.answerTo, 'answerTo');
+  let answerValue;
+  if (typeof input.answerValue === 'string') {
+    answerValue = requiredText(input.answerValue, 'answerValue');
+  } else if (Array.isArray(input.answerValue) && input.answerValue.length > 0) {
+    answerValue = input.answerValue.map((value, index) => (
+      requiredText(value, `answerValue[${index}]`)
+    ));
+    if (new Set(answerValue).size !== answerValue.length) {
+      throw new Error('answerValue 数组不能包含重复 option id');
+    }
+  } else {
+    throw new Error('answerValue 必须是 option id 或非空数组');
+  }
+  return { answerTo, answerValue };
+}
+
 function normalizeEntry(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('流条目必须是对象');
   const id = input.id == null ? randomUUID() : input.id;
@@ -62,6 +128,8 @@ function normalizeEntry(input) {
     kind: input.kind,
     text: input.text,
     ...(refs ? { refs } : {}),
+    ...(input.kind === 'ask' ? { ask: cleanAsk(input.ask) } : {}),
+    ...(input.kind === 'answer' ? cleanAnswerFields(input) : {}),
   };
 }
 
@@ -77,6 +145,12 @@ export function appendStreamEntry(session, input, { exactSession = false } = {})
   // O_APPEND 语义确保同一进程内并发请求不会互相覆盖已有内容。
   fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
   return entry;
+}
+
+function streamProtocolError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
 }
 
 function readAllEntries(file) {
@@ -98,6 +172,56 @@ function readAllEntries(file) {
     }
   }
   return entries;
+}
+
+/** 写入 ask 时在同一 session 内保证卡片 id 唯一。 */
+export function appendAskEntry(session, input, { exactSession = false } = {}) {
+  const entry = normalizeEntry(input);
+  if (entry.kind !== 'ask') throw new Error('appendAskEntry 只接受 kind: ask');
+  const existing = readAllEntries(streamPath(session, { exactSession }));
+  if (existing.some((item) => item.kind === 'ask' && item.ask?.id === entry.ask.id)) {
+    throw streamProtocolError('ASK_ALREADY_EXISTS', `ask.id 已存在：${entry.ask.id}`);
+  }
+  return appendStreamEntry(session, entry, { exactSession });
+}
+
+/**
+ * 回答必须引用本 session 已存在且未回答的 ask。
+ * 当前 ask.multi 固定为 false；数组形式仅接受单元素，作为协议的兼容表示。
+ */
+export function appendAnswerEntry(session, input, { exactSession = false } = {}) {
+  assertValidSession(session);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('answer 回答必须是对象');
+  }
+  const { answerTo, answerValue } = cleanAnswerFields(input);
+  const existing = readAllEntries(streamPath(session, { exactSession }));
+  const askEntry = existing.find((entry) => entry.kind === 'ask' && entry.ask?.id === answerTo);
+  if (!askEntry) {
+    throw streamProtocolError('ASK_NOT_FOUND', `answerTo 对应的 ask 不存在：${answerTo}`);
+  }
+  if (existing.some((entry) => entry.kind === 'answer' && entry.answerTo === answerTo)) {
+    throw streamProtocolError('ASK_ALREADY_ANSWERED', `ask 已回答：${answerTo}`);
+  }
+
+  const selectedIds = Array.isArray(answerValue) ? answerValue : [answerValue];
+  if (askEntry.ask.multi === false && selectedIds.length !== 1) {
+    throw streamProtocolError('INVALID_ASK_ANSWER', '该 ask 只能选择 1 项');
+  }
+  const labelsById = new Map(askEntry.ask.options.map((option) => [option.id, option.label]));
+  if (selectedIds.some((id) => !labelsById.has(id))) {
+    throw streamProtocolError('INVALID_ASK_ANSWER', 'answerValue 必须是该 ask 的合法 option id');
+  }
+  const text = selectedIds.map((id) => labelsById.get(id)).join('、');
+  return appendStreamEntry(session, {
+    ...(input.id == null ? {} : { id: input.id }),
+    ...(input.at == null ? {} : { at: input.at }),
+    author: input.author,
+    kind: 'answer',
+    text,
+    answerTo,
+    answerValue,
+  }, { exactSession });
 }
 
 export function readStreamEntries(session, {

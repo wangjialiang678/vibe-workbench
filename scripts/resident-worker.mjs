@@ -96,7 +96,7 @@ export function writeState(workerHome, state) {
   fs.renameSync(temporaryFile, stateFile);
 }
 
-/** 只让真人消息进入任务队列，同时允许游标越过 AI 回执和进度。 */
+/** 只让真人消息/回答进入任务队列，同时允许游标越过 AI 回执、提问和进度。 */
 export function filterHumanEntries(entries) {
   if (!Array.isArray(entries)) return [];
   return entries.filter((entry) => HUMAN_ROLES.has(entry?.author?.role));
@@ -219,7 +219,8 @@ function truncateCharacters(value, limit) {
 }
 
 function memoryEntryLine(entry) {
-  if (entry?.kind !== 'message' || !['owner', 'participant', 'ai'].includes(entry.author?.role)) {
+  if (!['message', 'answer'].includes(entry?.kind)
+    || !['owner', 'participant', 'ai'].includes(entry.author?.role)) {
     return null;
   }
   const text = truncateCharacters(
@@ -229,7 +230,7 @@ function memoryEntryLine(entry) {
   if (!text) return null;
   const speaker = entry.author.role === 'ai'
     ? 'AI 最终 message'
-    : `人类消息·${entry.author.name || entry.author.id || entry.author.role}`;
+    : `${entry.kind === 'answer' ? '人类回答' : '人类消息'}·${entry.author.name || entry.author.id || entry.author.role}`;
   const at = typeof entry.at === 'string' && entry.at ? `${entry.at} ` : '';
   return `- ${at}${speaker}：${text}`;
 }
@@ -337,7 +338,9 @@ export function buildTaskBrief({
       ].join('\n')
     : '- 当前会话尚未归属注册项目；不得据 session 名称猜测或扩大仓库范围。';
   const originals = events.map((event, index) => [
-    `### 事件 ${index + 1}：${event.type === 'message' ? '人类消息' : '反馈提交'}`,
+    `### 事件 ${index + 1}：${event.type === 'message'
+      ? (event.entry?.kind === 'answer' ? '人类回答' : '人类消息')
+      : '反馈提交'}`,
     '```json',
     JSON.stringify(eventOriginal(event), null, 2),
     '```',
@@ -368,6 +371,7 @@ ${originals}
 - 管理员口令只从环境变量 \`WORKBENCH_TOKEN\` 读取；工作台地址从 \`WORKBENCH_URL\` 读取，绝不在输出中打印口令。
 - 可操作仓库以“项目路由”中的注册路径为准；未注册会话只允许在常驻执行目录中处理。
 - 向对话流写最终回答：POST \`$WORKBENCH_URL/api/stream-events\`，请求头 \`x-workbench-token: $WORKBENCH_TOKEN\`，JSON 为 \`{"session":"${session}","kind":"message","text":"Codex：..."}\`；进度和兜底状态才使用 \`progress\` / \`receipt\`。
+- 简单取舍可写内嵌 ask 卡：\`curl --fail-with-body -X POST "$WORKBENCH_URL/api/stream-events" -H "x-workbench-token: $WORKBENCH_TOKEN" -H "content-type: application/json" --data '{"session":"${session}","kind":"ask","text":"请选择发布方式","ask":{"id":"deploy-mode","question":"请选择发布方式","options":[{"id":"safe","label":"分批发布","desc":"风险较低，但完成更晚。"},{"id":"fast","label":"直接发布","desc":"速度更快，但回滚压力更大。"}],"multi":false,"recommendation":"safe"}}'\`。
 - 发布重要 Markdown 到文档库：\`WORKBENCH_REMOTE_URL="$WORKBENCH_URL" node /home/ubuntu/apps/vibecoding-workbench/bin/workbench.mjs doc-publish ${session} <分类> <slug> <md文件路径> --title <标题>\`。
 
 ## 行为准则
@@ -377,7 +381,8 @@ ${originals}
 4. 小型代码改动可以直接实施；完成相关测试后在对应仓库创建 git commit，并把 commit 摘要写回对话流。
 5. 重大架构变更只写分析和建议，不改代码，等待创始人与 Claude 主会话处理。
 6. 每完成一个阶段，立即通过 stream-events API 写一句“刚做完 X，接下来 Y”的进度，JSON 为 {"session":"${session}","kind":"progress","text":"Codex：刚做完 X，接下来 Y"}；不要等最终完成才汇报。
-7. 禁止外发、回显或写入任何凭证。`;
+7. 遇到一个问题、2—4 个选项即可说清的简单取舍时，可以写 ask；每项必须包含代价说明 desc，可标 recommendation。写入 ask 后立即结束本次运行并等待回答，不再补最终 message 或 receipt。复杂决策仍使用整轮工作台卡片。
+8. 禁止外发、回显或写入任何凭证。`;
 }
 
 function cleanProjectContext(value) {
@@ -771,7 +776,7 @@ async function hasSubstantiveAiEntry(
     if (!Array.isArray(payload.entries)) throw new Error('/api/messages 缺少 entries 数组');
     return payload.entries.some((entry) => entry?.author?.role === 'ai'
       && entry.id !== intakeProgressId
-      && ['message', 'receipt'].includes(entry.kind)
+      && ['message', 'receipt', 'ask'].includes(entry.kind)
       && typeof entry.text === 'string'
       && entry.text.trim());
   } catch (error) {

@@ -25,8 +25,69 @@ function timeLabel(value) {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+function mapValue(collection, key) {
+  if (collection instanceof Map) return collection.get(key);
+  if (collection && typeof collection === 'object') return collection[key];
+  return undefined;
+}
+
+function selectedAnswerIds(value) {
+  return (Array.isArray(value) ? value : [value])
+    .filter((item) => typeof item === 'string' && item);
+}
+
+function askCardHtml(entry, options) {
+  const ask = entry.ask || {};
+  const askId = String(ask.id || '');
+  const answer = options.answer || mapValue(options.answersByAskId, askId);
+  const answered = Boolean(answer);
+  const selectedValue = answered
+    ? answer.answerValue
+    : mapValue(options.selectedAnswers, askId);
+  const selectedIds = new Set(selectedAnswerIds(selectedValue));
+  const answerer = answer?.author?.name || answer?.author?.id || '参与者';
+  const selectedLabels = (Array.isArray(ask.options) ? ask.options : [])
+    .filter((option) => selectedIds.has(option.id))
+    .map((option) => option.label);
+  const submitting = options.submittingAskIds instanceof Set
+    ? options.submittingAskIds.has(askId)
+    : Boolean(mapValue(options.submittingAskIds, askId));
+  const error = mapValue(options.askErrors, askId);
+  const optionsHtml = (Array.isArray(ask.options) ? ask.options : []).map((option) => {
+    const selected = selectedIds.has(option.id);
+    const recommended = ask.recommendation === option.id;
+    return `<label class="stream-ask-option${selected ? ' is-selected' : ''}${recommended ? ' is-recommended' : ''}${answered && !selected ? ' is-muted' : ''}">
+  <input type="radio" name="ask-${escapeHtml(askId)}" value="${escapeHtml(option.id)}"${selected ? ' checked' : ''}${answered || submitting ? ' disabled' : ''} data-ask-option data-ask-id="${escapeHtml(askId)}">
+  <span class="stream-ask-option-copy">
+    <span class="stream-ask-option-head"><strong>${escapeHtml(option.label)}</strong>${recommended ? '<span class="stream-ask-recommendation">推荐</span>' : ''}</span>
+    <span class="stream-ask-option-desc">${escapeHtml(option.desc)}</span>
+  </span>
+</label>`;
+  }).join('');
+  const footer = answered
+    ? `<div class="stream-ask-result">${escapeHtml(answerer)}已选择“${escapeHtml(selectedLabels.join('、') || answer.text)}”</div>`
+    : `<div class="stream-ask-actions">
+  <span>点选项即提交</span>
+  <button type="button" data-ask-confirm data-ask-id="${escapeHtml(askId)}"${selectedIds.size === 0 || submitting ? ' disabled' : ''}>${submitting ? '提交中…' : '确定'}</button>
+</div>${error ? `<p class="stream-ask-error" role="alert">${escapeHtml(error)}</p>` : ''}`;
+  const status = answered ? `已回答 · ${escapeHtml(answerer)}` : '需你选 1 项';
+
+  return `<article class="stream-entry stream-entry--ask" data-entry-id="${escapeHtml(entry.id)}">
+  <section class="stream-ask-card${answered ? ' stream-ask-card--answered' : ''}" data-ask-card="${escapeHtml(askId)}"${submitting ? ' aria-busy="true"' : ''}>
+    <header class="stream-ask-head">
+      <span class="stream-ask-kicker">QUICK DECISION</span>
+      <span class="stream-ask-status">${status}</span>
+    </header>
+    <h3>${escapeHtml(ask.question)}</h3>
+    <div class="stream-ask-options">${optionsHtml}</div>
+    ${footer}
+  </section>
+</article>`;
+}
+
 /** 生成单条会话流 HTML；viewerId 用于区分自己的消息。 */
-export function streamEntryHtml(entry, { viewerId = '' } = {}) {
+export function streamEntryHtml(entry, options = {}) {
+  const { viewerId = '' } = options;
   if (!entry || typeof entry !== 'object') return '';
   const id = escapeHtml(entry.id);
   const kind = entry.kind;
@@ -48,6 +109,15 @@ export function streamEntryHtml(entry, { viewerId = '' } = {}) {
   if (kind === 'progress') {
     return `<article class="stream-entry stream-entry--system stream-entry--progress" data-entry-id="${id}">
   <div class="stream-progress-text">${text}</div>
+</article>`;
+  }
+
+  if (kind === 'ask') return askCardHtml(entry, options);
+
+  if (kind === 'answer') {
+    const answerer = escapeHtml(author.name || author.id || '参与者');
+    return `<article class="stream-entry stream-entry--system stream-entry--answer" data-entry-id="${id}" data-answer-to="${escapeHtml(entry.answerTo)}">
+  <div class="stream-answer-line"><strong>${answerer}</strong><span>选择了“${escapeHtml(entry.text)}”</span>${at ? `<time>${escapeHtml(at)}</time>` : ''}</div>
 </article>`;
   }
 
@@ -83,20 +153,30 @@ ${streamEntryHtml(latest, options)}`;
 
 /** 连续 AI progress 组成一个默认关闭的原生 details；其他条目（尤其最终 message）保持独立。 */
 export function streamEntriesHtml(entries = [], options = {}) {
+  const source = Array.isArray(entries) ? entries : [];
+  const answersByAskId = new Map();
+  for (const entry of source) {
+    if (entry?.kind === 'answer'
+      && typeof entry.answerTo === 'string'
+      && !answersByAskId.has(entry.answerTo)) {
+      answersByAskId.set(entry.answerTo, entry);
+    }
+  }
+  const renderOptions = { ...options, answersByAskId };
   const html = [];
   let progressEntries = [];
   const flushProgress = () => {
     if (!progressEntries.length) return;
-    html.push(progressGroupHtml(progressEntries, options));
+    html.push(progressGroupHtml(progressEntries, renderOptions));
     progressEntries = [];
   };
-  for (const entry of Array.isArray(entries) ? entries : []) {
+  for (const entry of source) {
     if (isAiProgress(entry)) {
       progressEntries.push(entry);
       continue;
     }
     flushProgress();
-    html.push(streamEntryHtml(entry, options));
+    html.push(streamEntryHtml(entry, renderOptions));
   }
   flushProgress();
   return html.join('');
