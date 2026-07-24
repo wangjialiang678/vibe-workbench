@@ -1,6 +1,6 @@
 # 迭代简报：user-vibeloop 实战反馈（2026-07-13）
 
-**给本项目智能体**：以下各项来自工作台在 user-vibeloop 项目上的真实使用（4 轮决策会话 + 嵌入真实系统操作，用户 Michael 亲测）。原始记录见 `docs/feedback-log.md` 同日条目；**具体病例（坏文案原文 + 用户反应原话 + 修正对照）见 `docs/feedback-examples-2026-07-13.md`，完整语料在 `workspace/user-vibeloop/round-{1..4}/`**——做 P1 结构化字段与 lint 时请直接拿病例当 fixture 与验收样例。按优先级排列，每项带验收标准。动手前先读 `DESIGN.md`/`PRD.md` 对齐既有架构，遵循本仓库现有代码风格与测试惯例。
+**给本项目智能体**：以下各项来自工作台在 user-vibeloop 项目上的真实使用（4 轮决策会话 + 嵌入真实系统操作，用户 Michael 亲测）。原始记录见 `docs/feedback-log.md` 同日条目；**具体病例（坏文案原文 + 用户反应原话 + 修正对照）见 `docs/feedback-examples-2026-07-13.md`，完整语料在私有归档（`workspace/` 不随仓库分发）**——做 P1 结构化字段与 lint 时请直接拿病例当 fixture 与验收样例。按优先级排列，每项带验收标准。动手前先读 `DESIGN.md`/`PRD.md` 对齐既有架构，遵循本仓库现有代码风格与测试惯例。
 
 ---
 
