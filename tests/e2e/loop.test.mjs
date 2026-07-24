@@ -24,14 +24,14 @@ after(() => {
 // 顶层 describe 内先于 it 执行，而静态 import 在模块顶层就运行。
 // 解法：用动态 import 延迟到测试体内（首次 it 内 import 即可；node:test 保证 before 先于 it）。
 let buildArgv, parseStreamJson, redactSecrets, runClaude;
-let getSession, setSessionId, getCwd;
+let getSession, getSessionId, setSessionId, getCwd;
 let processRound, reconcile, markDead;
 let paths, readJSON, exists, writeJSON, writeText, readStatus;
 
 before(async () => {
   ({ buildArgv, parseStreamJson, redactSecrets, runClaude } =
     await import('../../src/loop/claude-exec.mjs'));
-  ({ getSession, setSessionId, getCwd } =
+  ({ getSession, getSessionId, setSessionId, getCwd } =
     await import('../../src/loop/session-store.mjs'));
   ({ processRound, reconcile, markDead } =
     await import('../../src/loop/listener.mjs'));
@@ -350,6 +350,27 @@ describe('session-store', () => {
     assert.equal(data.cwd, '/my/project');
   });
 
+  it('setSessionId 记录 agent 所属，getSessionId 拒绝跨 agent 续接', () => {
+    const s = mkSession('store-agent-owner');
+    setSessionId(s, 'codex-session', 'codex');
+
+    assert.equal(getSessionId(s, 'codex'), 'codex-session');
+    assert.equal(getSessionId(s, 'claude'), null);
+    assert.equal(getSession(s).agent, 'codex');
+  });
+
+  it('无 agent 字段的存量 sessionId 仅按 Claude 会话兼容', () => {
+    const s = mkSession('store-legacy-owner');
+    writeJSON(paths.session(s), {
+      claudeSessionId: 'legacy-claude-session',
+      createdAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    assert.equal(getSessionId(s, 'claude'), 'legacy-claude-session');
+    assert.equal(getSessionId(s, 'workbuddy'), null);
+    assert.equal(getSessionId(s, 'codex'), null);
+  });
+
   it('getCwd 无记录时返回 null', () => {
     const s = mkSession('store-test-4');
     assert.equal(getCwd(s), null);
@@ -535,6 +556,24 @@ describe('processRound', () => {
     assert.equal(result.driverSource, 'sdk-fallback');
     assert.equal(readStatus(s).driverSource, 'sdk-fallback');
     assert.equal(readJSON(paths.error(s, 1)).driverSource, 'sdk-fallback');
+  });
+
+  it('driver 启动失败时错误文案跟随当前 agent', async () => {
+    const s = mkSession('pr-codex-driver-error');
+    mkRound(s, 1);
+    const codexFailure = () => Promise.reject({
+      kind: 'driver',
+      message: 'spawn codex ENOENT',
+      driverSource: 'subscription',
+      agent: 'codex',
+    });
+
+    await processRound(s, 1, { driver: codexFailure });
+
+    const error = readJSON(paths.error(s, 1));
+    assert.match(error.userMessage, /Codex/);
+    assert.match(error.suggestedAction, /`codex`/);
+    assert.doesNotMatch(error.userMessage, /Claude/);
   });
 
   it('写 ack 中含 pid', async () => {
