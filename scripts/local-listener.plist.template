@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vibeloop.local-listener</string>
+
+  <!-- 把下面三个路径替换为本机真实绝对路径；node 可用 which node 查找。 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__LISTENER_SCRIPT__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__WORKBENCH_DIR__</string>
+
+  <!-- 安装说明：复制到 ~/Library/LaunchAgents/ 后替换所有 __PLACEHOLDER__，再执行：
+       chmod 600 ~/Library/LaunchAgents/com.vibeloop.local-listener.plist
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vibeloop.local-listener.plist
+       卸载：launchctl bootout gui/$(id -u)/com.vibeloop.local-listener
+  -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WORKBENCH_URL</key>
+    <string>__WORKBENCH_URL__</string>
+    <key>WORKBENCH_TOKEN</key>
+    <string>__WORKBENCH_TOKEN__</string>
+    <key>LISTENER_EXECUTOR</key>
+    <string>local-mac</string>
+    <key>POLL_MS</key>
+    <string>30000</string>
+    <key>LISTENER_REPO_MAP</key>
+    <string>__LISTENER_REPO_MAP_JSON__</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.vibeloop-listener/launchd.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.vibeloop-listener/launchd.stderr.log</string>
+</dict>
+</plist>
