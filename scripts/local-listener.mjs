@@ -418,6 +418,8 @@ async function executeClaudeTask(task, config, deps, signal) {
   await writeProgress(task, `『本地监听器』开始执行 Claude 任务：${task.title}`, config, deps);
   const result = await runCommand('claude', [
     '-p', prompt, '--output-format', 'text',
+    // D23 全自动拍板（2026-07-24）：无人值守编排需要工具权限（写流 curl、读仓库、派 tcd）；护栏=单并发+限时+全程留痕
+    '--dangerously-skip-permissions',
   ], {
     cwd: repo,
     timeoutMs: DEFAULT_CLAUDE_TIMEOUT_MS,
@@ -520,6 +522,7 @@ async function executeSessionEvent(task, config, deps, signal) {
   const repo = await sessionEventRepo(task, config, deps);
   const result = await runCommand('claude', [
     '-p', sessionEventBrief(task, config), '--output-format', 'text',
+    '--dangerously-skip-permissions',
   ], {
     cwd: repo,
     env: {

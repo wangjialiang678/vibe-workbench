@@ -201,7 +201,7 @@ test('claude-task 写入前后 progress，stdout 截断后 complete', async () =
 
   await listener.pollOnce();
 
-  assert.deepEqual(spawnCalls[0].args, ['-p', '检查代码', '--output-format', 'text']);
+  assert.deepEqual(spawnCalls[0].args, ['-p', '检查代码', '--output-format', 'text', '--dangerously-skip-permissions']);
   assert.equal(spawnCalls[0].options.cwd, '/tmp/demo-repo');
   assert.deepEqual(calls.filter(({ path }) => path === '/api/stream-events').length, 2);
 });
@@ -248,7 +248,7 @@ test('message/feedback/round 会话事件先通知，再按会话项目启动 Cl
     assert.deepEqual(spawnCalls.map(({ command }) => command), ['osascript', 'claude']);
     assert.match(spawnCalls[0].args[1], new RegExp(`listener-test.*${type}|${type}.*listener-test`));
     assert.equal(spawnCalls[1].options.cwd, '/tmp/demo-repo');
-    assert.deepEqual(spawnCalls[1].args, ['-p', spawnCalls[1].args[1], '--output-format', 'text']);
+    assert.deepEqual(spawnCalls[1].args, ['-p', spawnCalls[1].args[1], '--output-format', 'text', '--dangerously-skip-permissions']);
     assert.match(spawnCalls[1].args[1], /本地编排者 Claude/);
     assert.match(spawnCalls[1].args[1], /事件原文 JSON/);
     assert.match(spawnCalls[1].args[1], /listener-test/);
