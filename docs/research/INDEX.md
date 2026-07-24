@@ -6,6 +6,7 @@
 |---|---|---|---|
 | 2026-07-02 | [hci-clarification-community-and-project-review.md](2026-07-02-hci-clarification-community-and-project-review.md) | Vibe Coding 前澄清方式（PRD/测试/场景/UI/交互/消歧方法论）社区调研 + 本项目独立设计评审 | 调研 medium（UI 一路 high）；评审已读码核验 |
 | 2026-07-02 | [2026-07-02-fusion-and-annotation-design.md](2026-07-02-fusion-and-annotation-design.md) | PRD 工作台并入 Vibe 工作台的融合与批注系统设计 | — |
+| 2026-07-24 | [2026-07-24-resident-worker-hardening-code-research.md](2026-07-24-resident-worker-hardening-code-research.md) | 常驻 worker 中断快照与新会话元数据/warning 的现有代码落点 | 已读码核验 |
 
 ## 原始调研笔记（raw/，含全部来源 URL）
 - `raw/2026-07-02-community-spec-prd.md` — Spec-Driven Development / Kiro / Spec Kit / EARS / anti-goals
