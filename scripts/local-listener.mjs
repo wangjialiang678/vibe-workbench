@@ -626,7 +626,7 @@ export function createListener(config, {
       wakePoll = null;
       resolve();
     }, config.pollMs);
-    timer.unref?.();
+    // 不能 unref：这是常驻进程在两次轮询之间唯一的活跃句柄，unref 会让 Node 认为无事可做而正常退出（launchd 表现为每 pollMs 重启一次）。stop() 经 wakePoll 清理，不依赖 unref。
     wakePoll = () => {
       clearTimeout(timer);
       wakePoll = null;
