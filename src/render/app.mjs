@@ -14,7 +14,7 @@ import {
   composerValueAfterSend,
   containerPinPopoverPosition,
   decisionChipForLatestReceipt,
-  streamEntryHtml,
+  streamEntriesHtml,
 } from './stream-view.mjs';
 import {
   unansweredDecisions,
@@ -557,14 +557,24 @@ function setStreamConnection(label, state = '') {
   $streamConnection.dataset.state = state;
 }
 
-function streamTemplate(entry) {
+function renderStreamEntries() {
+  if (!$streamEntries) return;
+  const openProgressGroups = new Set(
+    [...$streamEntries.querySelectorAll('details[data-progress-group-id][open]')]
+      .map((details) => details.dataset.progressGroupId),
+  );
   const template = document.createElement('template');
-  template.innerHTML = streamEntryHtml(entry, { viewerId: _viewerId });
+  template.innerHTML = streamEntriesHtml(_streamEntriesData, { viewerId: _viewerId });
   template.content.querySelectorAll('[src^="/assets/"], [href^="/assets/"]').forEach((element) => {
     const attribute = element.hasAttribute('src') ? 'src' : 'href';
     element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
   });
-  return template;
+  $streamEntries.replaceChildren(template.content);
+  for (const groupId of openProgressGroups) {
+    $streamEntries
+      .querySelector(`details[data-progress-group-id="${cssEsc(groupId)}"]`)
+      ?.setAttribute('open', '');
+  }
 }
 
 function refreshDecisionChip() {
@@ -612,10 +622,10 @@ function appendStreamEntries(entries, { countUnread = false, advanceCursor = tru
     if (!entry?.id || _seenStreamIds.has(entry.id)) continue;
     _seenStreamIds.add(entry.id);
     _streamEntriesData.push(entry);
-    $streamEntries.append(streamTemplate(entry).content);
     addedEntries += 1;
     if (entry.kind === 'message') addedMessages += 1;
   }
+  if (addedEntries > 0) renderStreamEntries();
   if (nearBottom || !countUnread || (_activeView === 'stream' && isNarrowScreen())) {
     requestAnimationFrame(() => { $streamEntries.scrollTop = $streamEntries.scrollHeight; });
   }

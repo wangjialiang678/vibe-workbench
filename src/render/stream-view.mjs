@@ -65,6 +65,43 @@ export function streamEntryHtml(entry, { viewerId = '' } = {}) {
 </article>`;
 }
 
+function isAiProgress(entry) {
+  return entry?.kind === 'progress' && entry.author?.role === 'ai';
+}
+
+function progressGroupHtml(entries, options) {
+  if (entries.length === 1) return streamEntryHtml(entries[0], options);
+  const older = entries.slice(0, -1);
+  const latest = entries.at(-1);
+  const groupId = escapeHtml(entries[0]?.id || latest?.id || 'progress');
+  return `<details class="stream-progress-group" data-progress-group-id="${groupId}">
+  <summary><span class="stream-progress-expand">展开 ${older.length} 条过程进度</span><span class="stream-progress-collapse">收起 ${older.length} 条过程进度</span></summary>
+  <div class="stream-progress-history">${older.map((entry) => streamEntryHtml(entry, options)).join('')}</div>
+</details>
+${streamEntryHtml(latest, options)}`;
+}
+
+/** 连续 AI progress 组成一个默认关闭的原生 details；其他条目（尤其最终 message）保持独立。 */
+export function streamEntriesHtml(entries = [], options = {}) {
+  const html = [];
+  let progressEntries = [];
+  const flushProgress = () => {
+    if (!progressEntries.length) return;
+    html.push(progressGroupHtml(progressEntries, options));
+    progressEntries = [];
+  };
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (isAiProgress(entry)) {
+      progressEntries.push(entry);
+      continue;
+    }
+    flushProgress();
+    html.push(streamEntryHtml(entry, options));
+  }
+  flushProgress();
+  return html.join('');
+}
+
 /** 最新轮 receipt 下方的小型决策入口；其他情况不生成。 */
 export function decisionChipHtml(entry, { latestRound, pendingCount } = {}) {
   const round = Number(entry?.refs?.round);

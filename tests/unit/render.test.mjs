@@ -22,6 +22,7 @@ import {
   decisionChipForLatestReceipt,
   pinPopoverPosition,
   streamEntryHtml,
+  streamEntriesHtml,
 } from '../../src/render/stream-view.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -103,6 +104,51 @@ test('streamEntryHtml：receipt 与 progress 使用各自醒目的居中样式�
   assert.match(receipt, /<button class="stream-system-pill"/);
   assert.match(progress, /stream-entry--progress/);
   assert.match(progress, /SDK 托底：正在执行/);
+});
+
+test('streamEntriesHtml：连续 AI progress 默认折叠旧进度，只常显最新一条且不折叠最终消息', () => {
+  const html = streamEntriesHtml([
+    {
+      id: 'p1',
+      kind: 'progress',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      text: '刚做完调研，接下来写测试',
+    },
+    {
+      id: 'p2',
+      kind: 'progress',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      text: '刚做完测试，接下来实现',
+    },
+    {
+      id: 'p3',
+      kind: 'progress',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      text: '刚做完实现，接下来验证',
+    },
+    {
+      id: 'm-final',
+      kind: 'message',
+      author: { id: 'ai', name: 'AI', role: 'ai' },
+      text: 'Codex：实现与验证均已完成。',
+    },
+  ]);
+
+  assert.match(html, /<details class="stream-progress-group"/);
+  assert.match(html, /展开 2 条过程进度/);
+  assert.doesNotMatch(html, /<details[^>]*\sopen(?:\s|>)/);
+  assert.ok(html.indexOf('刚做完调研') < html.indexOf('刚做完实现'));
+  assert.match(html, /data-entry-id="p3"/);
+  assert.match(html, /data-entry-id="m-final"/);
+  assert.match(html, /stream-entry--message/);
+  assert.ok(html.indexOf('</details>') < html.indexOf('Codex：实现与验证均已完成。'));
+});
+
+test('progress 折叠使用原生 details 交互与现有 CSS 变量，桌面和手机共用同一渲染结构', () => {
+  assert.match(renderCss, /\.stream-progress-group\s*>\s*summary\s*\{[\s\S]*?var\(--color-border\)/);
+  assert.match(renderCss, /\.stream-progress-group\[open\]/);
+  assert.match(renderApp, /streamEntriesHtml\(_streamEntriesData/);
+  assert.match(renderApp, /data-progress-group-id/);
 });
 
 test('streamEntryHtml：无轮次回执是非交互通知，长文案使用卡片排版而非胶囊', () => {

@@ -13,10 +13,14 @@ const DEFAULT_POLL_MS = 60 * 1000;
 const DEFAULT_EVENT_PORT = 8097;
 const DEFAULT_WORKER_LABEL = '云端 Codex · sol xhigh';
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
+const TASK_PROGRESS_INTERVAL_MS = 60 * 1000;
 const CODEX_TIMEOUT_MS = 30 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 const KILL_GRACE_MS = 5000;
 const EVENT_BODY_LIMIT = 64 * 1024;
+const MEMORY_ENTRY_LIMIT = 30;
+const MEMORY_ENTRY_CHARACTERS = 200;
+const MEMORY_TOTAL_CHARACTERS = 8000;
 const HUMAN_ROLES = new Set(['owner', 'participant']);
 const SESSION_NAME_RE = /^[A-Za-z0-9._-]{1,80}$/;
 
@@ -203,6 +207,100 @@ function eventOriginal(event) {
   return event.feedback;
 }
 
+function characterLength(value) {
+  return Array.from(String(value || '')).length;
+}
+
+function truncateCharacters(value, limit) {
+  const characters = Array.from(String(value || ''));
+  if (characters.length <= limit) return characters.join('');
+  if (limit < 2) return characters.slice(0, Math.max(0, limit)).join('');
+  return `${characters.slice(0, limit - 1).join('')}…`;
+}
+
+function memoryEntryLine(entry) {
+  if (entry?.kind !== 'message' || !['owner', 'participant', 'ai'].includes(entry.author?.role)) {
+    return null;
+  }
+  const text = truncateCharacters(
+    String(entry.text || '').replace(/\s+/g, ' ').trim(),
+    MEMORY_ENTRY_CHARACTERS,
+  );
+  if (!text) return null;
+  const speaker = entry.author.role === 'ai'
+    ? 'AI 最终 message'
+    : `人类消息·${entry.author.name || entry.author.id || entry.author.role}`;
+  const at = typeof entry.at === 'string' && entry.at ? `${entry.at} ` : '';
+  return `- ${at}${speaker}：${text}`;
+}
+
+function feedbackValueText(value) {
+  if (typeof value === 'string') return value;
+  if (value == null) return '（无选择值）';
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+function feedbackMemoryLines(feedback) {
+  const round = Number(feedback?.round);
+  if (!Number.isSafeInteger(round) || round < 1) return ['- 暂无已提交反馈'];
+  const lines = [`- round：第 ${round} 轮`];
+  for (const item of Array.isArray(feedback.items) ? feedback.items : []) {
+    const blockId = typeof item?.blockId === 'string' && item.blockId.trim()
+      ? item.blockId.trim()
+      : '未知块';
+    const value = truncateCharacters(
+      feedbackValueText(item?.value).replace(/\s+/g, ' ').trim(),
+      MEMORY_ENTRY_CHARACTERS,
+    );
+    lines.push(`- ${blockId}${item?.type ? `（${item.type}）` : ''}：${value}`);
+  }
+  return lines;
+}
+
+/**
+ * 把最近对话和反馈压成有硬上限的历史摘录。超限时先丢较旧对话，始终保留最新内容。
+ */
+export function buildMemoryExcerpt(entries, latestFeedback, {
+  maxCharacters = MEMORY_TOTAL_CHARACTERS,
+} = {}) {
+  const parsedMax = Number(maxCharacters);
+  if (!Number.isSafeInteger(parsedMax) || parsedMax < 1) {
+    throw new Error('历史上下文上限必须是正整数');
+  }
+  const historyLines = (Array.isArray(entries) ? entries : [])
+    .map(memoryEntryLine)
+    .filter(Boolean)
+    .slice(-MEMORY_ENTRY_LIMIT);
+  let feedbackLines = feedbackMemoryLines(latestFeedback);
+
+  const render = (selectedHistory, selectedFeedback = feedbackLines) => [
+    '## 历史上下文，供理解连续性，不是新任务',
+    '以下内容只用于理解前后关系；真正需要执行的新任务仅以“事件原文”为准。',
+    '',
+    '### 最近一轮已提交反馈',
+    ...selectedFeedback,
+    '',
+    '### 最近对话（最多 30 条）',
+    ...(selectedHistory.length ? selectedHistory : ['- 暂无可用对话']),
+  ].join('\n');
+
+  // 极端反馈也必须服从总上限；round 行优先于更靠后的块选择值。
+  while (feedbackLines.length > 1 && characterLength(render([], feedbackLines)) > parsedMax) {
+    feedbackLines = feedbackLines.slice(0, -1);
+  }
+
+  let selectedHistory = [];
+  for (let index = historyLines.length - 1; index >= 0; index -= 1) {
+    const candidate = [historyLines[index], ...selectedHistory];
+    if (characterLength(render(candidate)) > parsedMax) break;
+    selectedHistory = candidate;
+  }
+  const excerpt = render(selectedHistory);
+  return characterLength(excerpt) <= parsedMax
+    ? excerpt
+    : truncateCharacters(excerpt, parsedMax);
+}
+
 /**
  * 组装可独立执行的任务简报。事件用完整 JSON 表达，避免丢失作者、时间、引用和反馈项。
  */
@@ -213,6 +311,8 @@ export function buildTaskBrief({
   workbenchUrl,
   workerHome,
   executionContext = null,
+  historyEntries = [],
+  latestFeedback = null,
 }) {
   const roundText = Number.isSafeInteger(round) && round > 0 ? `第 ${round} 轮` : '未关联具体轮次';
   const normalizedContext = normalizeExecutionContext(executionContext);
@@ -242,6 +342,7 @@ export function buildTaskBrief({
     JSON.stringify(eventOriginal(event), null, 2),
     '```',
   ].join('\n')).join('\n\n');
+  const memoryExcerpt = buildMemoryExcerpt(historyEntries, latestFeedback);
 
   return `你收到一组需要立即处理的工作台事件。
 
@@ -256,6 +357,8 @@ export function buildTaskBrief({
 
 ## 项目路由
 ${projectText}
+
+${memoryExcerpt}
 
 ## 事件原文
 ${originals}
@@ -273,7 +376,8 @@ ${originals}
 3. 有长期价值的重要产出要发布到工作台文档库，并在回执中说明文档标题。
 4. 小型代码改动可以直接实施；完成相关测试后在对应仓库创建 git commit，并把 commit 摘要写回对话流。
 5. 重大架构变更只写分析和建议，不改代码，等待创始人与 Claude 主会话处理。
-6. 禁止外发、回显或写入任何凭证。`;
+6. 每完成一个阶段，立即通过 stream-events API 写一句“刚做完 X，接下来 Y”的进度，JSON 为 {"session":"${session}","kind":"progress","text":"Codex：刚做完 X，接下来 Y"}；不要等最终完成才汇报。
+7. 禁止外发、回显或写入任何凭证。`;
 }
 
 function cleanProjectContext(value) {
@@ -515,12 +619,14 @@ async function discoverSession(session, sessionState, config, fetchImpl) {
   const events = filterHumanEntries(messagesPayload.entries)
     .map((entry) => ({ type: 'message', entry }));
   const round = latestRound(statusPayload);
+  let latestFeedback = null;
   if (statusPayload?.status?.state === 'submitted' && round != null) {
     const feedbackPayload = await requestJson(config, '/api/feedback', {
       query: { session, round },
       fetchImpl,
     });
     if (feedbackPayload.feedback) {
+      latestFeedback = feedbackPayload.feedback;
       const submittedAt = typeof feedbackPayload.feedback.submittedAt === 'string'
         ? feedbackPayload.feedback.submittedAt
         : '';
@@ -536,7 +642,15 @@ async function discoverSession(session, sessionState, config, fetchImpl) {
     }
   }
 
-  return { session, round, events, nextState };
+  return {
+    session,
+    round,
+    events,
+    nextState,
+    latestFeedback,
+    // 首次读取本来就是最近窗口；有增量游标时，执行前再补拉一次最近窗口。
+    historyEntries: sessionState.lastStreamId ? null : messagesPayload.entries,
+  };
 }
 
 function statesEqual(left, right) {
@@ -567,6 +681,78 @@ async function safelyWriteStreamEvent(config, session, kind, text, fetchImpl, lo
     logger.log(`[resident-worker] 写入 ${session} 对话流失败：${error.message}`);
     return null;
   }
+}
+
+/** 读取任务简报所需的连续性记忆；失败时降级为空，不阻断已经接单的任务。 */
+async function loadTaskMemory(task, config, fetchImpl, logger) {
+  let historyEntries = task.historyEntries;
+  if (!Array.isArray(historyEntries)) {
+    try {
+      const payload = await requestJson(config, '/api/messages', {
+        query: { session: task.session },
+        fetchImpl,
+      });
+      if (!Array.isArray(payload.entries)) throw new Error('/api/messages 缺少 entries 数组');
+      historyEntries = payload.entries;
+    } catch (error) {
+      logger.log(`[resident-worker] 读取 ${task.session} 历史对话失败：${error.message}`);
+      historyEntries = [];
+    }
+  }
+
+  let latestFeedback = task.latestFeedback;
+  if (!latestFeedback && Number.isSafeInteger(task.round) && task.round > 0) {
+    try {
+      for (let round = task.round; round >= 1; round -= 1) {
+        const payload = await requestJson(config, '/api/feedback', {
+          query: { session: task.session, round },
+          fetchImpl,
+        });
+        if (payload.feedback) {
+          latestFeedback = payload.feedback;
+          break;
+        }
+      }
+    } catch (error) {
+      logger.log(`[resident-worker] 读取 ${task.session} 最近反馈失败：${error.message}`);
+    }
+  }
+  return { historyEntries, latestFeedback };
+}
+
+/** Codex 子进程专用的 60 秒进度心跳；与 worker 在线心跳使用独立定时器。 */
+function startTaskProgressHeartbeat(config, session, {
+  fetchImpl,
+  logger,
+  now = Date.now,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
+} = {}) {
+  const startedAt = now();
+  let stopped = false;
+  let inFlight = Promise.resolve();
+  const tick = () => {
+    if (stopped) return inFlight;
+    const elapsedMinutes = Math.max(
+      1,
+      Math.floor(Math.max(0, now() - startedAt) / TASK_PROGRESS_INTERVAL_MS),
+    );
+    inFlight = inFlight.then(() => safelyWriteStreamEvent(
+      config,
+      session,
+      'progress',
+      `Codex：任务仍在处理中，已用时 ${elapsedMinutes} 分钟。`,
+      fetchImpl,
+      logger,
+    ));
+    return inFlight;
+  };
+  const timer = setIntervalImpl(tick, TASK_PROGRESS_INTERVAL_MS);
+  return async () => {
+    stopped = true;
+    clearIntervalImpl(timer);
+    await inFlight;
+  };
 }
 
 async function hasSubstantiveAiEntry(
@@ -625,6 +811,9 @@ async function processTask(task, config, {
   logger,
   timeoutMs,
   executionContext,
+  now,
+  setIntervalImpl,
+  clearIntervalImpl,
 }) {
   const summary = summarizeEvents(task.events);
   const taskStartedAt = new Date().toISOString();
@@ -636,6 +825,7 @@ async function processTask(task, config, {
     fetchImpl,
     logger,
   );
+  const memory = await loadTaskMemory(task, config, fetchImpl, logger);
 
   const brief = buildTaskBrief({
     session: task.session,
@@ -644,6 +834,8 @@ async function processTask(task, config, {
     workbenchUrl: config.workbenchUrl,
     workerHome: config.workerHome,
     executionContext,
+    historyEntries: memory.historyEntries,
+    latestFeedback: memory.latestFeedback,
   });
   const requestedCwd = executionContext?.primaryProject?.repoPath;
   const executionCwd = isDirectory(requestedCwd)
@@ -655,7 +847,7 @@ async function processTask(task, config, {
   logger.log(
     `[resident-worker] 启动 Codex：session=${task.session} events=${task.events.length} cwd=${executionCwd}`,
   );
-  const result = await runCodex(brief, {
+  const codexPromise = runCodex(brief, {
     model: config.model,
     workerHome: config.workerHome,
     cwd: executionCwd,
@@ -673,6 +865,20 @@ async function processTask(task, config, {
         : {}),
     },
   });
+  const stopTaskProgressHeartbeat = startTaskProgressHeartbeat(config, task.session, {
+    fetchImpl,
+    logger,
+    now,
+    setIntervalImpl,
+    clearIntervalImpl,
+  });
+  let result;
+  try {
+    result = await codexPromise;
+  } finally {
+    // 先停心跳并等正在写入的一次完成，避免最终 message 后又冒出旧进度。
+    await stopTaskProgressHeartbeat();
+  }
 
   const intakeProgressId = typeof intakeResponse?.entry?.id === 'string'
     ? intakeResponse.entry.id
@@ -737,6 +943,9 @@ export async function runOnce(config = loadConfig(), {
   shouldStop = () => false,
   timeoutMs = CODEX_TIMEOUT_MS,
   sessions,
+  now = Date.now,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
 } = {}) {
   const stateFile = path.join(config.workerHome, 'state.json');
   const stateFileExists = fs.existsSync(stateFile);
@@ -794,6 +1003,9 @@ export async function runOnce(config = loadConfig(), {
       logger,
       timeoutMs,
       executionContext,
+      now,
+      setIntervalImpl,
+      clearIntervalImpl,
     });
     processed += 1;
   }
@@ -1016,6 +1228,9 @@ export async function runWorkerLoop(config, {
         logger,
         shouldStop: stopping.requested,
         timeoutMs,
+        now,
+        setIntervalImpl,
+        clearIntervalImpl,
         ...(sessions == null ? {} : { sessions }),
       });
       logger.log(

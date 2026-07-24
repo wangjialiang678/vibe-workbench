@@ -450,6 +450,35 @@ body.project-home .content-region {
 }
 .stream-progress-text p { display: inline; }
 
+.stream-progress-group {
+  width: 100%;
+  margin: 17px 0 -9px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.stream-progress-group > summary {
+  width: fit-content;
+  max-width: 92%;
+  margin: 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+  text-align: center;
+  cursor: pointer;
+  list-style: none;
+}
+.stream-progress-group > summary::-webkit-details-marker { display: none; }
+.stream-progress-group > summary:hover { border-color: var(--color-focus); }
+.stream-progress-collapse { display: none; }
+.stream-progress-group[open] .stream-progress-expand { display: none; }
+.stream-progress-group[open] .stream-progress-collapse { display: inline; }
+.stream-progress-history { padding-top: 9px; }
+.stream-progress-history .stream-entry--progress { margin: 0 0 8px; }
+.stream-progress-group + .stream-entry--progress { margin-top: 8px; }
+
 .stream-decision-chip {
   width: calc(100% - 18px);
   margin: -2px 9px 16px;

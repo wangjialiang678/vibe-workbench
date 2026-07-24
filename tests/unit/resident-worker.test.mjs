@@ -166,6 +166,310 @@ test('任务简报包含事件原文、会话与轮次', () => {
   assert.match(brief, /"kind":"message"/);
 });
 
+test('任务简报注入最近对话与反馈要点，并明确历史不是新任务', () => {
+  const brief = worker.buildTaskBrief({
+    session: 'memory-session',
+    round: 8,
+    events: [{
+      type: 'message',
+      entry: {
+        id: 'current-message',
+        author: { id: 'owner', name: '创始人', role: 'owner' },
+        kind: 'message',
+        text: '继续处理。',
+      },
+    }],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/home/ubuntu/cloud-codex-now',
+    historyEntries: [
+      {
+        id: 'human-history',
+        at: '2026-07-23T09:00:00.000Z',
+        author: { id: 'owner', name: '创始人', role: 'owner' },
+        kind: 'message',
+        text: '上次先完成登录链路。',
+      },
+      {
+        id: 'progress-noise',
+        author: { id: 'ai', name: 'AI', role: 'ai' },
+        kind: 'progress',
+        text: '这条进度噪音不能进入记忆',
+      },
+      {
+        id: 'ai-history',
+        at: '2026-07-23T09:10:00.000Z',
+        author: { id: 'ai', name: 'AI', role: 'ai' },
+        kind: 'message',
+        text: 'Codex：登录链路已完成。',
+      },
+      {
+        id: 'receipt-noise',
+        author: { id: 'ai', name: 'AI', role: 'ai' },
+        kind: 'receipt',
+        text: '这条回执噪音不能进入记忆',
+      },
+    ],
+    latestFeedback: {
+      round: 7,
+      items: [
+        { blockId: 'auth-mode', type: 'select', value: '沿用管理员口令' },
+        { blockId: 'mobile-layout', type: 'verdict', value: '通过' },
+      ],
+    },
+  });
+
+  assert.match(brief, /历史上下文，供理解连续性，不是新任务/);
+  assert.match(brief, /上次先完成登录链路/);
+  assert.match(brief, /Codex：登录链路已完成/);
+  assert.doesNotMatch(brief, /这条进度噪音/);
+  assert.doesNotMatch(brief, /这条回执噪音/);
+  assert.match(brief, /第 7 轮/);
+  assert.match(brief, /auth-mode[^\n]*沿用管理员口令/);
+  assert.match(brief, /mobile-layout[^\n]*通过/);
+  assert.match(brief, /刚做完 X，接下来 Y/);
+  assert.match(brief, /"kind":"progress"/);
+});
+
+test('历史记忆每条截断到 200 字、只取最近 30 条且总量超限时优先保留最新', () => {
+  const entries = Array.from({ length: 33 }, (_, index) => ({
+    id: `history-${index}`,
+    at: `2026-07-23T09:${String(index).padStart(2, '0')}:00.000Z`,
+    author: { id: 'owner', name: '创始人', role: 'owner' },
+    kind: 'message',
+    text: index === 32 ? `最新-${'新'.repeat(260)}` : `历史-${index}-${'旧'.repeat(80)}`,
+  }));
+  entries.splice(10, 0, {
+    id: 'noise',
+    author: { id: 'ai', name: 'AI', role: 'ai' },
+    kind: 'progress',
+    text: '不应注入的进度',
+  });
+
+  const excerpt = worker.buildMemoryExcerpt(entries, {
+    round: 9,
+    items: [{ blockId: 'choice', type: 'select', value: '最新选择' }],
+  }, { maxCharacters: 1200 });
+
+  assert.ok(Array.from(excerpt).length <= 1200);
+  assert.doesNotMatch(excerpt, /不应注入的进度/);
+  assert.doesNotMatch(excerpt, /历史-0-/);
+  assert.doesNotMatch(excerpt, /历史-1-/);
+  assert.doesNotMatch(excerpt, /历史-2-/);
+  assert.match(excerpt, /最新-/);
+  assert.match(excerpt, /第 9 轮/);
+  assert.match(excerpt, /choice[^\n]*最新选择/);
+  const newestLine = excerpt.split('\n').find((line) => line.includes('最新-'));
+  const newestText = newestLine.slice(newestLine.indexOf('最新-'));
+  assert.equal(Array.from(newestText).length, 200);
+  assert.ok(newestText.endsWith('…'));
+});
+
+test('有增量游标时重新拉取最近对话，并找到最近一轮已提交反馈后注入 Codex 简报', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-memory-load-'));
+  let brief = '';
+  const requestedFeedbackRounds = [];
+  try {
+    worker.writeState(workerHome, {
+      perSession: { 'memory-load': { lastStreamId: 'old-cursor' } },
+    });
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      sessions: ['memory-load'],
+      logger: { log() {} },
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        assert.equal(options.headers['x-workbench-token'], 'test-token');
+        let payload;
+        if (url.pathname === '/api/messages' && url.searchParams.get('since') === 'old-cursor') {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'current-message',
+              author: { id: 'owner', name: '创始人', role: 'owner' },
+              kind: 'message',
+              text: '继续上次任务。',
+            }],
+          };
+        } else if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [
+              {
+                id: 'old-human',
+                author: { id: 'owner', name: '创始人', role: 'owner' },
+                kind: 'message',
+                text: '上次先确认部署范围。',
+              },
+              {
+                id: 'old-progress',
+                author: { id: 'ai', name: 'AI', role: 'ai' },
+                kind: 'progress',
+                text: '不应进入简报的历史进度',
+              },
+              {
+                id: 'old-ai-final',
+                author: { id: 'ai', name: 'AI', role: 'ai' },
+                kind: 'message',
+                text: 'Codex：已确认只部署测试环境。',
+              },
+              {
+                id: 'current-message',
+                author: { id: 'owner', name: '创始人', role: 'owner' },
+                kind: 'message',
+                text: '继续上次任务。',
+              },
+            ],
+          };
+        } else if (url.pathname === '/api/messages') {
+          payload = { ok: true, entries: [] };
+        } else if (url.pathname === '/api/status') {
+          payload = {
+            ok: true,
+            status: { session: 'memory-load', state: 'presented', round: 3 },
+            display: 'awaiting_feedback',
+          };
+        } else if (url.pathname === '/api/feedback') {
+          const feedbackRound = Number(url.searchParams.get('round'));
+          requestedFeedbackRounds.push(feedbackRound);
+          payload = feedbackRound === 2
+            ? {
+                ok: true,
+                feedback: {
+                  session: 'memory-load',
+                  round: 2,
+                  items: [{ blockId: 'deploy-target', type: 'select', value: '测试环境' }],
+                },
+              }
+            : { ok: false, pending: true };
+        } else if (url.pathname === '/api/session-context') {
+          payload = { ok: true, context: { session: { id: 'memory-load' }, primaryProject: null } };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          payload = { ok: true, entry: { id: `stream-${event.kind}`, ...event } };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl(_command, args) {
+        brief = args.at(-1);
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => child.emit('close', 0, null));
+        return child;
+      },
+    });
+
+    assert.equal(result.processed, 1);
+    assert.deepEqual(requestedFeedbackRounds, [3, 2]);
+    assert.match(brief, /上次先确认部署范围/);
+    assert.match(brief, /Codex：已确认只部署测试环境/);
+    assert.doesNotMatch(brief, /不应进入简报的历史进度/);
+    assert.match(brief, /第 2 轮/);
+    assert.match(brief, /deploy-target[^\n]*测试环境/);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('Codex 子进程运行期间每 60 秒写进度心跳，退出后立即停止', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-task-heartbeat-'));
+  const streamEvents = [];
+  let now = 0;
+  let taskTick;
+  let clearedTimer = null;
+  let child;
+  let resolveSpawned;
+  const spawned = new Promise((resolve) => { resolveSpawned = resolve; });
+  let running;
+  try {
+    running = worker.runOnce(workerConfig(workerHome), {
+      sessions: ['heartbeat-session'],
+      now: () => now,
+      setIntervalImpl(callback, ms) {
+        assert.equal(ms, 60_000);
+        taskTick = callback;
+        return 'task-progress-timer';
+      },
+      clearIntervalImpl(timer) {
+        clearedTimer = timer;
+      },
+      logger: { log() {} },
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'heartbeat-message',
+              author: { id: 'owner', name: '创始人', role: 'owner' },
+              kind: 'message',
+              text: '执行长任务。',
+            }],
+          };
+        } else if (url.pathname === '/api/messages') {
+          payload = { ok: true, entries: [] };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/session-context') {
+          payload = { ok: true, context: { session: { id: 'heartbeat-session' }, primaryProject: null } };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          streamEvents.push(event);
+          payload = { ok: true, entry: { id: `event-${streamEvents.length}`, ...event } };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl() {
+        child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        resolveSpawned();
+        return child;
+      },
+    });
+
+    await spawned;
+    if (typeof taskTick !== 'function') {
+      child.emit('close', 0, null);
+      await running;
+      assert.equal(typeof taskTick, 'function');
+      return;
+    }
+    now = 60_000;
+    await taskTick();
+    now = 120_000;
+    await taskTick();
+    child.emit('close', 0, null);
+    await running;
+
+    assert.equal(clearedTimer, 'task-progress-timer');
+    assert.deepEqual(
+      streamEvents.filter(({ kind }) => kind === 'progress').map(({ text }) => text),
+      [
+        '常驻 Codex 已接单：执行长任务。（模型 sol xhigh）',
+        'Codex：任务仍在处理中，已用时 1 分钟。',
+        'Codex：任务仍在处理中，已用时 2 分钟。',
+      ],
+    );
+    const countAfterExit = streamEvents.length;
+    now = 180_000;
+    await taskTick();
+    assert.equal(streamEvents.length, countAfterExit);
+  } finally {
+    if (child && running && clearedTimer == null) {
+      child.emit('close', 0, null);
+      await running;
+    }
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
 test('Codex 超时后终止子进程', async () => {
   assert.equal(typeof worker.runCodex, 'function');
 
