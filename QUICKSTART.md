@@ -84,7 +84,14 @@ WORKBENCH_TOKEN='换成足够长的随机值' node bin/workbench.mjs up --host 0
 公网入口请自行套 HTTPS 反代。详见 [README.md](README.md) 的「公网部署与共享口令」。
 
 **端口被占了**
-`--port` 换一个即可，AI 侧无需改动（`present` 返回的 URL 会跟着变）。
+换一个端口即可，但**起服务和渲染要用同一个端口**——`present` 默认连 8099，不显式传就会指到错的地方：
+
+```bash
+node bin/workbench.mjs up --port 8123                      # 起服务
+node bin/workbench.mjs present <session> content.json --port 8123   # AI 侧也要带上
+```
+
+告诉你的 AI「工作台在 8123 端口」，它就会在每次 `present` 时带上 `--port`。
 
 ## 下一步
 
