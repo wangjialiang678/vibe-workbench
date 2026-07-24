@@ -345,6 +345,43 @@ function renderUrl(req, session) {
 const OWNER_IDENTITY = Object.freeze({ id: 'owner', name: '管理员', role: 'owner' });
 const TERMINAL_OR_PROCESSING_STATES = new Set(['claimed', 'responded', 'error']);
 
+// block.assignee 是通用的责任人 ID：未设置/null/空串表示公共块。
+export function isBlockVisibleTo(block, identity) {
+  if (identity?.role !== 'participant') return true;
+  return block?.assignee == null || block.assignee === '' || block.assignee === identity.id;
+}
+
+export function visibleBlocksForIdentity(blocks, identity) {
+  return Array.isArray(blocks) ? blocks.filter((block) => isBlockVisibleTo(block, identity)) : [];
+}
+
+function feedbackVisibilityForIdentity(session, round, identity) {
+  if (identity?.role !== 'participant') return null;
+  const content = readJSON(paths.content(session, round), null);
+  if (!Array.isArray(content?.blocks)) return null;
+  const knownBlockIds = new Set(
+    content.blocks.map((block) => block?.id).filter((id) => typeof id === 'string'),
+  );
+  const visibleBlockIds = new Set(
+    visibleBlocksForIdentity(content.blocks, identity)
+      .map((block) => block?.id)
+      .filter((id) => typeof id === 'string'),
+  );
+  return { knownBlockIds, visibleBlockIds };
+}
+
+function filterFeedbackForIdentity(feedback, visibility) {
+  if (!feedback || !visibility || !Array.isArray(feedback.items)) return feedback;
+  return {
+    ...feedback,
+    // 未出现在当前内容中的旧 blockId 保留，兼容历史反馈文件；已知块严格按可见性过滤。
+    items: feedback.items.filter((item) => (
+      !visibility.knownBlockIds.has(item?.blockId)
+      || visibility.visibleBlockIds.has(item.blockId)
+    )),
+  };
+}
+
 function requestTokens(req, requestUrl, isApi) {
   const queryToken = requestUrl.searchParams.get('token');
   const headerToken = req.headers['x-workbench-token'];
@@ -444,9 +481,16 @@ function detectFeedbackConflicts(ownerFeedback, byParticipant) {
   return conflicts;
 }
 
-function feedbackView(session, round) {
-  const primary = readJSON(paths.feedback(session, round, { exactSession: true }), null);
-  const byParticipant = participantFeedbackEntries(session, round);
+function feedbackView(session, round, identity = OWNER_IDENTITY) {
+  const visibility = feedbackVisibilityForIdentity(session, round, identity);
+  const primary = filterFeedbackForIdentity(
+    readJSON(paths.feedback(session, round, { exactSession: true }), null),
+    visibility,
+  );
+  const byParticipant = participantFeedbackEntries(session, round).map((entry) => ({
+    ...entry,
+    feedback: filterFeedbackForIdentity(entry.feedback, visibility),
+  }));
   // 无 submittedBy 的旧反馈视为 owner；参与者兼容桥不重复算作 owner。
   const ownerFeedback = primary && (!primary.submittedBy || primary.submittedBy.id === 'owner')
     ? primary
@@ -1330,7 +1374,7 @@ function handleRequest(
       json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
       return;
     }
-    const view = feedbackView(session, parsedRound);
+    const view = feedbackView(session, parsedRound, identity);
     if (!view.feedback) {
       json(res, 200, { ok: false, pending: true });
       return;
@@ -1385,9 +1429,10 @@ function handleRequest(
     }
     const prevRound = content.prevRound || (r > 1 ? r - 1 : 0);
     const prevContent = prevRound > 0 ? readJSON(paths.content(session, prevRound), null) : null;
-    const prevBlocks = prevContent ? (prevContent.blocks || []) : [];
-    const diffed = computeDiff(content.blocks || [], prevBlocks);
-    const removed = removedBlocks(content.blocks || [], prevBlocks);
+    const currentBlocks = visibleBlocksForIdentity(content.blocks || [], identity);
+    const prevBlocks = prevContent ? visibleBlocksForIdentity(prevContent.blocks || [], identity) : [];
+    const diffed = computeDiff(currentBlocks, prevBlocks);
+    const removed = removedBlocks(currentBlocks, prevBlocks);
     const sanity = diffSanity(diffed, removed);
 
     // 改动 E + 改动 C（DESIGN §4）：注入 _respondedToPrev 与 _decidedInPrev
@@ -1423,6 +1468,36 @@ function handleRequest(
       if (!isValidSessionName(session) || !Number.isInteger(round) || round < 1) {
         json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
         return;
+      }
+      if (identity.role === 'participant') {
+        const content = readJSON(paths.content(session, round), null);
+        const invisibleBlockIds = new Set(
+          Array.isArray(content?.blocks)
+            ? content.blocks
+              .filter((block) => !isBlockVisibleTo(block, identity))
+              .map((block) => block?.id)
+              .filter((id) => typeof id === 'string')
+            : [],
+        );
+        const forbiddenBlockIds = [...new Set(
+          fb.items
+            .map((item) => item?.blockId)
+            .filter((blockId) => invisibleBlockIds.has(blockId)),
+        )];
+        if (forbiddenBlockIds.length) {
+          console.error('[workbench:feedback] 拒绝参与者提交不可见块反馈：', {
+            session,
+            round,
+            participant: identity.id,
+            blockIds: forbiddenBlockIds,
+          });
+          json(res, 403, {
+            ok: false,
+            error: `反馈包含不可见块：${forbiddenBlockIds.join('、')}`,
+            blockIds: forbiddenBlockIds,
+          });
+          return;
+        }
       }
       const pathOptions = { exactSession: true };
       const st = readStatus(session, pathOptions);

@@ -70,6 +70,13 @@ export function validateBlock(block) {
   if (block.recommendReason != null && typeof block.recommendReason !== 'string') errors.push('recommendReason must be string');
   if (block.audience != null && !AUDIENCE.includes(block.audience)) errors.push(`audience invalid: ${block.audience}`);
   if (block.live != null && typeof block.live !== 'boolean') errors.push('live must be boolean');
+  // 按卡可见性：省略/null/空串表示公共块；非空值必须是非空字符串。
+  if (block.assignee != null && (
+    typeof block.assignee !== 'string'
+    || (block.assignee.length > 0 && !block.assignee.trim())
+  )) {
+    errors.push('assignee must be a non-empty string when provided');
+  }
 
   if (block.type === 'choice') {
     if (!Array.isArray(block.options) || block.options.length === 0) errors.push('choice requires non-empty options[]');

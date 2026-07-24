@@ -60,7 +60,8 @@ Block 通用字段 + 注意力元数据（决定呈现位置）：
   "hasRecommendation": false,  // 是否带推荐
   "recommendation": null,      // 推荐的 option id / 值
   "importance":"normal",       // high|normal|low
-  "default": null              // 预设默认值（仅"已设默认"项给）
+  "default": null,              // 预设默认值（仅"已设默认"项给）
+  "assignee": null              // 可选责任人 ID；省略/null/空串=公共块
 }
 ```
 
@@ -78,6 +79,8 @@ type 与字段：
 - `needsDecision:false` + 有 default → 折叠「已设默认」（同意即跳过）
 
 **tab 分面导航（可选）**：块带 `section` → 页面顶部出 tab 导航，上述四区在每个 tab 内部生效。每 tab 角标 = 未确认决策数。超过 4 个块或跨类目时建议打 section。
+
+**按卡可见性（可选）**：`assignee` 为参与者 `id` 时，只有该参与者和管理员能读取该块；省略、`null` 或空串表示所有人可见。服务端会在内容和反馈读接口过滤，并拒绝参与者对不可见块提交反馈。
 
 ## ⚠️ 决策块必须写"人话"（否则对方会盲选 → 伪决策）
 

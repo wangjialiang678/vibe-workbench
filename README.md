@@ -57,6 +57,8 @@ workbench participant revoke alice          # 立即吊销该链接
 
 参与者 token 可进入页面和普通 API，但 `/api/participants` 的新增、列表、吊销只接受管理员口令。多人在同一轮提交时分别写入 `feedback-<id>.json`，首份提交同时建立 `feedback.json` 兼容桥，既有 `wait` / listener 会被第一份反馈立即唤醒；管理员反馈仍写 `feedback.json` 并在聚合视图中优先。页面会在对应块下只读显示各人意见，`select` 选择不同时标注「意见分歧」。
 
+块可选 `assignee` 字段指定责任人 ID：省略、`null` 或空串表示公共块；有值时仅该参与者与管理员可见。服务端按块过滤内容与反馈读接口，并拦截参与者对不可见块的反馈提交。
+
 ### 让本地 CLI 使用云端 workspace
 
 设置 `WORKBENCH_REMOTE_URL` 后，`present` / `wait` 与 `participant add/list/revoke` 切到远程 API；`render`、`serve`、`watch`、`up` 不变。云端因此成为该会话和参与者名册的唯一事实源，本地不会再写一份副本。`wait --events` 会同时监听反馈和启动后新增的会话流事件；不加该参数时行为与原版完全一致。

@@ -68,6 +68,7 @@ vibecoding 工作台/
   "recommendation": null,        // 推荐值（optionId / 文本 / verdict）
   "importance": "normal",        // high | normal | low
   "default": null,               // 预填默认（无需决策项的既定值，用户同意即跳过）
+  "assignee": null,              // 可选责任人 ID；省略/null/空串=公共块
 
   // —— 类型特定字段见 2.3 ——
 
