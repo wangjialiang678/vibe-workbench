@@ -6,8 +6,8 @@ import {
   readStatus, writeStatus,
   listSessions, listRounds,
 } from '../workspace.mjs';
-import { getSession, setSessionId, getCwd } from './session-store.mjs';
-import { runClaude } from './claude-exec.mjs';
+import { getSession, getSessionId, setSessionId, getCwd } from './session-store.mjs';
+import { resolveAgent, runAgent } from './agent-exec.mjs';
 
 const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
 
@@ -15,7 +15,7 @@ const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
 // 内部工具
 
 /**
- * 拼装要发给 claude 的 prompt：content + feedback。
+ * 拼装要发给 AI driver 的 prompt：content + feedback。
  */
 function buildPrompt(session, round) {
   const feedback = readJSON(paths.feedback(session, round), null);
@@ -45,7 +45,7 @@ function buildPrompt(session, round) {
  * @param {{ driver?: Function }} opts
  * @returns {Promise<{ status: 'skipped'|'responded'|'error', driverSource?: 'subscription'|'sdk-fallback' }>}
  */
-export async function processRound(session, round, { driver = (a) => runClaude(a) } = {}) {
+export async function processRound(session, round, { driver } = {}) {
   const ackPath = paths.ack(session, round);
 
   // 幂等锁：已认领则跳过
@@ -64,13 +64,22 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
   // 组装 prompt
   const prompt = buildPrompt(session, round);
 
-  // 取 session 元数据
+  // 取 session 元数据。注入 driver 时维持原契约，直接传历史续接 ID。
   const sessionData = getSession(session);
-  const claudeSessionId = sessionData?.claudeSessionId || null;
   const cwd = getCwd(session) || undefined;
 
   try {
-    const result = await driver({ prompt, sessionId: claudeSessionId, cwd });
+    let activeAgent = null;
+    let activeDriver = driver;
+    let agentSessionId = sessionData?.claudeSessionId || null;
+
+    if (typeof activeDriver !== 'function') {
+      activeAgent = resolveAgent().agent;
+      agentSessionId = getSessionId(session, activeAgent);
+      activeDriver = (args) => runAgent({ ...args, agent: activeAgent });
+    }
+
+    const result = await activeDriver({ prompt, sessionId: agentSessionId, cwd });
     // 测试/自定义 driver 未声明来源时，按产品路径命名视为 subscription。
     const driverSource = result.driverSource === 'sdk-fallback'
       ? 'sdk-fallback'
@@ -84,7 +93,7 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
 
     // 更新 session（续接 id）
     if (result.sessionId) {
-      setSessionId(session, result.sessionId);
+      setSessionId(session, result.sessionId, activeAgent);
     }
 
     // 更新状态 → responded
@@ -100,7 +109,11 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
       : 'subscription';
 
     // 按 DESIGN §13 P1：按 kind 写 userMessage/suggestedAction
-    const { userMessage, suggestedAction } = kindToUserFacing(kind);
+    const configuredAgent = typeof process.env.WORKBENCH_AGENT === 'string'
+      ? process.env.WORKBENCH_AGENT.trim().toLowerCase()
+      : '';
+    const activeAgent = err.agent || configuredAgent || null;
+    const { userMessage, suggestedAction } = kindToUserFacing(kind, activeAgent);
 
     writeJSON(paths.error(session, round), {
       kind,
@@ -118,13 +131,40 @@ export async function processRound(session, round, { driver = (a) => runClaude(a
   }
 }
 
-function kindToUserFacing(kind) {
-  switch (kind) {
-    case 'driver':
+function driverHelp(agent) {
+  switch (agent) {
+    case 'claude':
       return {
-        userMessage: 'AI 驱动程序未找到或启动失败，请检查 claude CLI 是否正确安装。',
-        suggestedAction: '请确认 `claude` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
+        name: 'Claude Code',
+        action: '请确认 `claude` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
       };
+    case 'workbuddy':
+      return {
+        name: 'WorkBuddy',
+        action: '请确认 `codebuddy` 命令或 `WORKBENCH_WORKBUDDY_BIN` 配置可用，问题修复后无需重试（会自动处理）。',
+      };
+    case 'codex':
+      return {
+        name: 'Codex',
+        action: '请确认 `codex` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
+      };
+    default:
+      return {
+        name: 'AI',
+        action: '请确认 Claude Code、WorkBuddy 或 Codex CLI 已安装，或正确设置 `WORKBENCH_AGENT`。',
+      };
+  }
+}
+
+function kindToUserFacing(kind, agent = null) {
+  switch (kind) {
+    case 'driver': {
+      const help = driverHelp(agent);
+      return {
+        userMessage: `${help.name} 驱动程序未找到或启动失败，请检查本地 CLI 是否正确安装。`,
+        suggestedAction: help.action,
+      };
+    }
     case 'timeout':
       return {
         userMessage: 'AI 处理超时，请稍后重试。',
