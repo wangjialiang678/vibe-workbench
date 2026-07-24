@@ -33,7 +33,7 @@ Vibe Workbench（127.0.0.1:8099，外部由 HTTPS 反代）
       └── /api/messages、/api/stream-events 等
       │
       ▼
-resident-worker.service（当前每 5 秒轮询、全局串行）
+resident-worker.service（本机推送唤醒 + 每 60 秒兜底轮询、全局串行）
       │
       └── 每个任务 spawn 一个新的 codex exec（30 分钟超时）
               │
@@ -47,7 +47,8 @@ resident-worker.service（当前每 5 秒轮询、全局串行）
 | 组件 | 位置 / 标识 | 当前职责 |
 |---|---|---|
 | 工作台仓库 | `/home/ubuntu/apps/vibecoding-workbench` | 会话、文档、附件、反馈、渲染与 API |
-| 主业务仓库 | `/home/ubuntu/apps/user-vibeloop` | Vibeloop 主业务代码 |
+| 项目注册表 | `workspace/projects.json` | 显式登记项目仓库与记忆路径；公开目录不返回服务器路径 |
+| 项目仓库 | 注册表中的 `repoPath` | worker 按会话归属选择执行目录，不再固定到单一主业务仓库 |
 | 长期记忆 | `/home/ubuntu/agent-memory/` | 跨会话背景与用户决策快照 |
 | worker 工作目录 | `/home/ubuntu/cloud-codex-now` | 常驻执行者约束、游标状态 |
 | 工作台服务 | `vibeloop-workbench.service` | Node HTTP 服务，失败后约 3 秒重启 |
@@ -77,7 +78,23 @@ resident-worker.service（当前每 5 秒轮询、全局串行）
 
 产品层应明确显示“处理中 / 已排队”，避免用户把“已保存”误认为“已注入当前推理”。默认规则建议保持确定性：任务领取之后到达的消息进入下一个 turn；以后若要支持“追加到当前任务”，应作为显式能力单独设计。
 
-### 3.2 当前失败语义
+### 3.2 项目路由与旧会话兼容
+
+1. 项目必须显式写入 `workspace/projects.json`；会话通过各目录下的 `session.json.projectId` 归属项目。
+2. worker 只用管理员口令读取 `/api/session-context`。参与者可以读取项目目录，但拿不到 `repoPath`、`memoryPath`。
+3. worker 在推进事件游标前读取执行上下文；此时收到 SIGTERM 就不领取事件，重启后仍会再次发现。
+4. 注册仓库存在时，`codex exec -C` 使用该目录；路径缺失、畸形或服务端尚未升级时，回退 `/home/ubuntu/cloud-codex-now`，不根据 session 名猜路径。
+5. 没有 `session.json`、没有 `projectId` 或引用已移除项目的旧会话都保留为“待归类”；原 URL、轮次、反馈、附件和文档继续可用。
+
+首次上线前先备份 `workspace/`，再在工作台仓库执行：
+
+```bash
+node scripts/migrate-projects-v1.mjs
+```
+
+脚本先确认预期的 24 个会话目录全部存在，再写注册表和会话元数据；不移动、不删除目录，可重复执行。若预检查报缺失，先核对生产数据，不要手工创建空会话冒充历史数据。
+
+### 3.3 当前失败语义
 
 | 故障 | 当前行为 | 缺口 |
 |---|---|---|
@@ -193,7 +210,7 @@ Codex CLI 已提供非交互 `codex exec`。官方也提供实验性的 `codex a
 - 整台主机的 journal 当前占用约 2.3 GiB；这是全机数据，不全属于工作台。
 - journald 没有显式配置 `SystemMaxUse` 或 `MaxRetentionSec`，当前主要依赖发行版默认的磁盘比例上限。
 - rsyslog 的 `/var/log/syslog` 当前按周轮转、保留 4 份；与 journal 存在重复存储。
-- worker 每 5 秒打印一条空轮询结果。当前服务启动后的约 5 小时内产生了 3,334 条完全相同的空闲日志，而真正启动的任务只有 4 个。这类心跳应改成指标，不应逐条写日志。
+- worker 曾经每 5 秒打印一条空轮询结果：一次约 5 小时的观测产生了 3,334 条完全相同的空闲日志，而真正启动的任务只有 4 个。现在已改成本机推送加 60 秒兜底轮询；这类心跳仍应只做指标，不应恢复逐条日志。
 - 仓库主分支已合入“本机事件推送 + 60 秒兜底轮询”，但当前已安装并正在运行的 systemd unit 仍设置 `POLL_MS=5000`，工作台 unit 也尚未配置事件 webhook。也就是说代码已具备新路径，生产配置还未完成切换；应在当前任务结束后做受控部署和健康验证。
 - worker 的任务日志目前只有 session、事件数、退出码、signal 和超时标记；缺少稳定的 `job_id`、attempt、排队时长、执行耗时和结果引用，无法可靠串起一次任务。
 - 工作台没有统一 HTTP 访问日志，也没有 request ID、路由模板、状态码和延迟记录；现有 `/api/health` 只是存活检查，不是依赖就绪检查。
@@ -261,7 +278,7 @@ heartbeat、空轮询和正常 readiness 探测只更新 metrics；仅在状态�
 
 ### 6.5 落地顺序
 
-1. **立即降噪与限额**：取消每 5 秒空轮询日志；明确 journal 为唯一主机日志源，避免工作台日志再复制到 syslog；给 journal 设置大小与时间双限额。以当前 59 GiB 根盘为起点，可评估 `SystemMaxUse=512M`、`SystemKeepFree=8G`、`MaxRetentionSec=30day`，实施前需确认不会影响同机其他服务。
+1. **保持降噪并补限额**：不要恢复每 5 秒空轮询日志；明确 journal 为唯一主机日志源，避免工作台日志再复制到 syslog；给 journal 设置大小与时间双限额。以当前 59 GiB 根盘为起点，可评估 `SystemMaxUse=512M`、`SystemKeepFree=8G`、`MaxRetentionSec=30day`，实施前需确认不会影响同机其他服务。
 2. **补结构化任务日志**：先随 durable job 引入 `job_id`、attempt 和状态机，再记录队列时长、执行时长、退出分类和结果引用。
 3. **补 readiness 与 metrics**：区分 live/ready；监控 pending、dead-letter、auth、磁盘、备份和重复回执，不用日志模拟指标。
 4. **集中告警而非先上重平台**：当前规模可继续用 journald + 轻量指标采集；达到多机 Runner 后，再接 OpenTelemetry Collector 和集中日志/指标后端。

@@ -212,8 +212,30 @@ export function buildTaskBrief({
   events,
   workbenchUrl,
   workerHome,
+  executionContext = null,
 }) {
   const roundText = Number.isSafeInteger(round) && round > 0 ? `第 ${round} 轮` : '未关联具体轮次';
+  const normalizedContext = normalizeExecutionContext(executionContext);
+  const primaryProject = normalizedContext?.primaryProject;
+  const relatedProjects = normalizedContext?.relatedProjects || [];
+  const projectText = primaryProject
+    ? [
+        `- 主项目：${primaryProject.displayName}（${primaryProject.id}）`,
+        primaryProject.repoPath
+          ? `- 目标仓库：\`${primaryProject.repoPath}\``
+          : '- 目标仓库：未配置（本次回退常驻执行目录）',
+        ...(primaryProject.memoryPath ? [`- 项目记忆：\`${primaryProject.memoryPath}\``] : []),
+        ...(primaryProject.memoryPath ? [`- 共享记忆根：\`${path.dirname(primaryProject.memoryPath)}\`（项目记忆优先，跨项目偏好按需读取）`] : []),
+        ...(relatedProjects.length
+          ? [`- 关联项目：${relatedProjects.map((project) => (
+              project.repoPath
+                ? `${project.displayName}（\`${project.repoPath}\`）`
+                : `${project.displayName}（${project.id}）`
+            )).join('、')}`]
+          : []),
+        `- 会话标题：${normalizedContext.session?.title || session}`,
+      ].join('\n')
+    : '- 当前会话尚未归属注册项目；不得据 session 名称猜测或扩大仓库范围。';
   const originals = events.map((event, index) => [
     `### 事件 ${index + 1}：${event.type === 'message' ? '人类消息' : '反馈提交'}`,
     '```json',
@@ -229,8 +251,11 @@ export function buildTaskBrief({
 ## 任务定位
 - session：${session}
 - round：${roundText}
-- 工作目录：${workerHome}
+- 常驻执行目录：${workerHome}
 - 工作台：${workbenchUrl}
+
+## 项目路由
+${projectText}
 
 ## 事件原文
 ${originals}
@@ -238,9 +263,7 @@ ${originals}
 ## 可用工具与仓库
 - 工作台 CLI：\`node /home/ubuntu/apps/vibecoding-workbench/bin/workbench.mjs\`
 - 管理员口令只从环境变量 \`WORKBENCH_TOKEN\` 读取；工作台地址从 \`WORKBENCH_URL\` 读取，绝不在输出中打印口令。
-- 主业务仓库：\`/home/ubuntu/apps/user-vibeloop\`
-- 工作台仓库：\`/home/ubuntu/apps/vibecoding-workbench\`
-- 记忆快照：\`/home/ubuntu/agent-memory/\`
+- 可操作仓库以“项目路由”中的注册路径为准；未注册会话只允许在常驻执行目录中处理。
 - 向对话流写最终回答：POST \`$WORKBENCH_URL/api/stream-events\`，请求头 \`x-workbench-token: $WORKBENCH_TOKEN\`，JSON 为 \`{"session":"${session}","kind":"message","text":"Codex：..."}\`；进度和兜底状态才使用 \`progress\` / \`receipt\`。
 - 发布重要 Markdown 到文档库：\`WORKBENCH_REMOTE_URL="$WORKBENCH_URL" node /home/ubuntu/apps/vibecoding-workbench/bin/workbench.mjs doc-publish ${session} <分类> <slug> <md文件路径> --title <标题>\`。
 
@@ -251,6 +274,60 @@ ${originals}
 4. 小型代码改动可以直接实施；完成相关测试后在对应仓库创建 git commit，并把 commit 摘要写回对话流。
 5. 重大架构变更只写分析和建议，不改代码，等待创始人与 Claude 主会话处理。
 6. 禁止外发、回显或写入任何凭证。`;
+}
+
+function cleanProjectContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  const displayName = typeof value.displayName === 'string' ? value.displayName.trim() : '';
+  if (!id || !displayName) return null;
+  const repoPath = typeof value.repoPath === 'string' && path.isAbsolute(value.repoPath)
+    ? path.normalize(value.repoPath)
+    : '';
+  const memoryPath = typeof value.memoryPath === 'string' && path.isAbsolute(value.memoryPath)
+    ? path.normalize(value.memoryPath)
+    : '';
+  return {
+    id,
+    displayName,
+    ...(repoPath ? { repoPath } : {}),
+    ...(memoryPath ? { memoryPath } : {}),
+  };
+}
+
+function normalizeExecutionContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const primaryProject = cleanProjectContext(value.primaryProject);
+  const relatedProjects = Array.isArray(value.relatedProjects)
+    ? value.relatedProjects.map(cleanProjectContext).filter(Boolean)
+    : [];
+  const sessionTitle = typeof value.session?.title === 'string' && value.session.title.trim()
+    ? value.session.title.trim()
+    : '';
+  return {
+    session: { ...(sessionTitle ? { title: sessionTitle } : {}) },
+    primaryProject,
+    relatedProjects,
+  };
+}
+
+async function loadExecutionContext(task, config, fetchImpl, logger) {
+  try {
+    const payload = await requestJson(config, '/api/session-context', {
+      query: { session: task.session },
+      fetchImpl,
+    });
+    return normalizeExecutionContext(payload?.context);
+  } catch (error) {
+    // 与尚未升级的工作台兼容；未取得注册上下文时保持 workerHome，不猜项目路径。
+    logger.log(`[resident-worker] ${task.session} 未取得项目执行上下文：${error.message}`);
+    return null;
+  }
+}
+
+function isDirectory(value) {
+  if (typeof value !== 'string' || !path.isAbsolute(value)) return false;
+  try { return fs.statSync(value).isDirectory(); } catch { return false; }
 }
 
 function appendTail(current, chunk, maxLength = 32 * 1024) {
@@ -303,6 +380,7 @@ export function parseCodexFinalMessage(stdout) {
 export function runCodex(brief, {
   model = DEFAULT_CODEX_MODEL,
   workerHome,
+  cwd = workerHome,
   timeoutMs = CODEX_TIMEOUT_MS,
   spawnImpl = spawn,
   env = process.env,
@@ -321,13 +399,13 @@ export function runCodex(brief, {
         '--sandbox',
         'danger-full-access',
         '-C',
-        workerHome,
+        cwd,
         '--skip-git-repo-check',
         '-c',
         'model_reasoning_effort="xhigh"',
         brief,
       ], {
-        cwd: workerHome,
+        cwd,
         env,
         detached,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -546,6 +624,7 @@ async function processTask(task, config, {
   spawnImpl,
   logger,
   timeoutMs,
+  executionContext,
 }) {
   const summary = summarizeEvents(task.events);
   const taskStartedAt = new Date().toISOString();
@@ -564,11 +643,22 @@ async function processTask(task, config, {
     events: task.events,
     workbenchUrl: config.workbenchUrl,
     workerHome: config.workerHome,
+    executionContext,
   });
-  logger.log(`[resident-worker] 启动 Codex：session=${task.session} events=${task.events.length}`);
+  const requestedCwd = executionContext?.primaryProject?.repoPath;
+  const executionCwd = isDirectory(requestedCwd)
+    ? executionContext.primaryProject.repoPath
+    : config.workerHome;
+  if (requestedCwd && executionCwd !== requestedCwd) {
+    logger.log(`[resident-worker] ${task.session} 注册仓库不可用，回退常驻目录：${requestedCwd}`);
+  }
+  logger.log(
+    `[resident-worker] 启动 Codex：session=${task.session} events=${task.events.length} cwd=${executionCwd}`,
+  );
   const result = await runCodex(brief, {
     model: config.model,
     workerHome: config.workerHome,
+    cwd: executionCwd,
     timeoutMs,
     spawnImpl,
     logger,
@@ -578,6 +668,9 @@ async function processTask(task, config, {
       WORKBENCH_REMOTE_URL: config.workbenchUrl,
       WORKBENCH_TOKEN: config.token,
       WORKBENCH_SESSION: task.session,
+      ...(executionContext?.primaryProject?.id
+        ? { WORKBENCH_PROJECT: executionContext.primaryProject.id }
+        : {}),
     },
   });
 
@@ -690,6 +783,9 @@ export async function runOnce(config = loadConfig(), {
   for (const task of tasks) {
     // SIGTERM 只等待正在执行的任务；尚未领取的队列留给重启后的进程。
     if (shouldStop()) break;
+    // 路由查询必须发生在持久化游标之前；查询期间若收到 SIGTERM，事件仍留给重启后的进程。
+    const executionContext = await loadExecutionContext(task, config, fetchImpl, logger);
+    if (shouldStop()) break;
     setSessionState(state.perSession, task.session, task.nextState);
     writeState(config.workerHome, state);
     await processTask(task, config, {
@@ -697,6 +793,7 @@ export async function runOnce(config = loadConfig(), {
       spawnImpl,
       logger,
       timeoutMs,
+      executionContext,
     });
     processed += 1;
   }

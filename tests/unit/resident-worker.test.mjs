@@ -489,6 +489,228 @@ test('默认配置使用 60 秒兜底轮询与 127.0.0.1:8097 推送端口', () 
   assert.equal(config.workerLabel, '云端 Codex · sol xhigh');
 });
 
+test('任务简报包含显式项目路由，不再把所有任务固定到主业务仓库', () => {
+  const brief = worker.buildTaskBrief({
+    session: 'paper-session',
+    round: 2,
+    events: [{
+      type: 'message',
+      entry: {
+        id: 'message-1',
+        author: { id: 'owner', name: '管理员', role: 'owner' },
+        kind: 'message',
+        text: '修一下',
+      },
+    }],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/srv/worker',
+    executionContext: {
+      session: { id: 'paper-session', title: '视频剪辑主线' },
+      primaryProject: {
+        id: 'paper-edit-studio',
+        displayName: 'Paper Edit Studio',
+        repoPath: '/srv/paper-edit',
+        memoryPath: '/srv/memory/paper-edit',
+      },
+      relatedProjects: [{
+        id: 'user-vibeloop',
+        displayName: 'User Vibe Loop',
+        repoPath: '/srv/user-vibeloop',
+      }],
+    },
+  });
+
+  assert.match(brief, /paper-edit-studio/);
+  assert.match(brief, /`\/srv\/paper-edit`/);
+  assert.match(brief, /共享记忆根：`\/srv\/memory`/);
+  assert.match(brief, /`\/srv\/user-vibeloop`/);
+  assert.match(brief, /视频剪辑主线/);
+  assert.doesNotMatch(brief, /主业务仓库：`\/home\/ubuntu\/apps\/user-vibeloop`/);
+});
+
+test('项目上下文解析期间收到停止信号时不领取事件也不启动 Codex', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-context-stop-'));
+  let stopping = false;
+  let spawnCount = 0;
+  try {
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      shouldStop: () => stopping,
+      logger: { log() {} },
+      async fetchImpl(target) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['stop-session'] };
+        } else if (url.pathname === '/api/messages') {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'message-before-stop',
+              author: { id: 'owner', name: '管理员', role: 'owner' },
+              kind: 'message',
+              text: '不要丢失我',
+            }],
+          };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/session-context') {
+          stopping = true;
+          payload = { ok: true, context: { session: { id: 'stop-session' }, primaryProject: null } };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl() {
+        spawnCount += 1;
+        throw new Error('停止后不应启动 Codex');
+      },
+    });
+
+    assert.deepEqual(result, { sessions: 1, queued: 1, processed: 0 });
+    assert.equal(spawnCount, 0);
+    assert.equal(
+      worker.readState(workerHome).perSession['stop-session']?.lastStreamId || '',
+      '',
+      '未开始执行的事件必须留给重启后的 worker',
+    );
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
+test('有效项目上下文把 Codex cwd 与项目环境变量路由到注册仓库', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-context-home-'));
+  const projectHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-context-project-'));
+  let spawnCall;
+  try {
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      logger: { log() {} },
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['routed-session'] };
+        } else if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'routed-message',
+              author: { id: 'owner', name: '管理员', role: 'owner' },
+              kind: 'message',
+              text: '执行路由测试',
+            }],
+          };
+        } else if (url.pathname === '/api/messages') {
+          payload = { ok: true, entries: [] };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/session-context') {
+          payload = {
+            ok: true,
+            context: {
+              session: { id: 'routed-session', title: '路由会话' },
+              primaryProject: {
+                id: 'routed-project',
+                displayName: '路由项目',
+                repoPath: projectHome,
+              },
+              relatedProjects: [],
+            },
+          };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          payload = { ok: true, entry: { id: `entry-${event.kind}`, ...event } };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl(command, args, options) {
+        spawnCall = { command, args, options };
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => child.emit('close', 0, null));
+        return child;
+      },
+    });
+
+    assert.equal(result.processed, 1);
+    assert.equal(spawnCall.options.cwd, projectHome);
+    assert.equal(spawnCall.args[spawnCall.args.indexOf('-C') + 1], projectHome);
+    assert.equal(spawnCall.options.env.WORKBENCH_PROJECT, 'routed-project');
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+    fs.rmSync(projectHome, { recursive: true, force: true });
+  }
+});
+
+test('注册仓库不存在时回退常驻目录，畸形上下文不影响接单', async () => {
+  const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-context-fallback-'));
+  let spawnOptions;
+  try {
+    const result = await worker.runOnce(workerConfig(workerHome), {
+      logger: { log() {} },
+      async fetchImpl(target, options = {}) {
+        const url = new URL(target);
+        let payload;
+        if (url.pathname === '/api/sessions') {
+          payload = { ok: true, sessions: ['fallback-session'] };
+        } else if (url.pathname === '/api/messages' && !url.searchParams.has('since')) {
+          payload = {
+            ok: true,
+            entries: [{
+              id: 'fallback-message',
+              author: { id: 'owner', name: '管理员', role: 'owner' },
+              kind: 'message',
+              text: '执行回退测试',
+            }],
+          };
+        } else if (url.pathname === '/api/messages') {
+          payload = { ok: true, entries: [] };
+        } else if (url.pathname === '/api/status') {
+          payload = { ok: true, status: null, display: 'unknown' };
+        } else if (url.pathname === '/api/session-context') {
+          payload = {
+            ok: true,
+            context: {
+              session: { id: 'fallback-session', title: '回退会话' },
+              primaryProject: {
+                id: 'missing-project',
+                displayName: '不存在的仓库',
+                repoPath: path.join(workerHome, 'not-created'),
+              },
+              relatedProjects: [null],
+            },
+          };
+        } else if (url.pathname === '/api/stream-events') {
+          const event = JSON.parse(options.body);
+          payload = { ok: true, entry: { id: `entry-${event.kind}`, ...event } };
+        } else {
+          throw new Error(`未预期的请求：${url.pathname}`);
+        }
+        return new Response(JSON.stringify(payload), { status: 200 });
+      },
+      spawnImpl(_command, _args, options) {
+        spawnOptions = options;
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => true;
+        queueMicrotask(() => child.emit('close', 0, null));
+        return child;
+      },
+    });
+
+    assert.equal(result.processed, 1);
+    assert.equal(spawnOptions.cwd, workerHome);
+  } finally {
+    fs.rmSync(workerHome, { recursive: true, force: true });
+  }
+});
+
 test('同一轮 feedback 的 submittedAt 更新后会再次接单处理', async () => {
   const workerHome = fs.mkdtempSync(path.join(os.tmpdir(), 'resident-feedback-key-'));
   let submittedAt = '2026-07-23T12:32:00.000Z';
