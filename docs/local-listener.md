@@ -27,6 +27,8 @@
 
 映射只接受绝对路径。任务必须显式携带 `payload.projectId`（兼容顶层 `projectId`），监听器不会根据 session 名称猜仓库，也不会把未映射任务放到工作台仓库或其他默认目录执行。
 
+会话事件是例外：`message`、`feedback`、`round`（同时兼容服务端派发的 `message-posted`、`feedback-submitted`、`round-presented`）不要求任务携带 `projectId`。监听器会先执行 macOS 通知，标题包含会话名和事件类型；随后通过 `GET /api/projects` 按 `task.session` 反查项目，并用该项目 ID 查 `LISTENER_REPO_MAP`。会话查不到项目、项目没有本地映射或项目查询失败时，改用工作台仓库目录作为编排 cwd。
+
 ## 支持的任务负载
 
 云端任务的公共字段由收件箱协议负责；下面是本地监听器识别的 `type` 与 `payload`：
@@ -44,13 +46,14 @@
 
 - `codex-task`：执行 `tcd start -p codex --worktree -d <repo> -m <prompt>`，随后轮询 `tcd check <task-id>`。超时上限是 `payload.timeoutMinutes`，未提供时为 45 分钟。
 - `claude-task`：在映射仓库内执行 `claude -p <prompt> --output-format text`，最长 30 分钟；stdout 最多 4000 字作为完成摘要。执行前后会向对应 session 写一条带 `『本地监听器』` 标记的 progress。
+- `message`、`feedback`、`round`：唤醒本地编排者 Claude。监听器以事件原文 JSON、会话名和工作台回写约束组成简报，执行 `claude -p <简报> --output-format text`，环境变量透传并覆盖为当前的 `WORKBENCH_URL`、`WORKBENCH_TOKEN`，最长 30 分钟；成功完成摘要取 stdout 尾部最多 2000 字。Claude 必须把面向用户的回应通过 `POST $WORKBENCH_URL/api/stream-events` 写回当前会话，使用 `x-workbench-token: $WORKBENCH_TOKEN`，正文以 `『Claude：』` 开头，过程使用 `kind=progress`，最终回答使用 `kind=message`；需要重活时可用 `tcd` 派本地 Codex，处理完直接结束。Claude 不存在、非零退出或超时会以 `ok:false` 完成回执并写明原因。
 - `notify`：只执行 macOS 系统通知，不需要 `projectId`。负载可用 `message`、可选 `title`：
 
   ```json
   {"type":"notify","payload":{"title":"工作台","message":"有任务需要处理"}}
   ```
 
-不支持的 type、缺少项目映射、CLI 不存在或启动失败，都会通过 `complete {"ok":false,"summary":"..."}` 回执，不会让监听器进程退出。
+不支持的 type、`codex-task`/`claude-task` 缺少项目映射、CLI 不存在或启动失败，都会通过 `complete {"ok":false,"summary":"..."}` 回执，不会让监听器进程退出；会话事件的项目归属异常则按上面的工作台仓库兜底规则处理。
 
 ## 手动运行
 

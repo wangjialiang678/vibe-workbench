@@ -206,6 +206,190 @@ test('claude-task 写入前后 progress，stdout 截断后 complete', async () =
   assert.deepEqual(calls.filter(({ path }) => path === '/api/stream-events').length, 2);
 });
 
+test('message/feedback/round 会话事件先通知，再按会话项目启动 Claude 编排', async () => {
+  for (const type of ['message', 'feedback', 'round']) {
+    const calls = [];
+    const spawnCalls = [];
+    const current = task(type, { event: type, detail: `${type} 原文` }, {
+      id: `${type}-event-id`,
+      session: 'listener-test',
+    });
+    const fetchImpl = makeFetch([current], {
+      calls,
+      onRequest: ({ url, body }) => {
+        if (url.pathname === '/api/inbox/tasks') return jsonResponse({ ok: true, tasks: [current] });
+        if (url.pathname.endsWith('/claim')) return jsonResponse({ ok: true, task: { ...current, status: 'claimed' } });
+        if (url.pathname === '/api/projects') {
+          return jsonResponse({
+            ok: true,
+            projects: [{ id: 'demo', sessions: ['listener-test'] }],
+          });
+        }
+        if (url.pathname.endsWith('/complete')) {
+          assert.equal(body.ok, true);
+          assert.match(body.summary, new RegExp(type));
+          return jsonResponse({ ok: true, task: { ...current, status: 'done' } });
+        }
+        throw new Error(`不应出现请求：${url.pathname}`);
+      },
+    });
+    const claudeOutput = `开头-${type}-${'x'.repeat(2200)}-尾部-${type}`;
+    const listener = createListener(BASE_CONFIG, {
+      fetchImpl,
+      spawnImpl: makeSpawn([{ stdout: '' }, { stdout: claudeOutput }], spawnCalls),
+      logger: { log() {} },
+    });
+
+    const result = await listener.pollOnce();
+
+    assert.equal(result.ok, true);
+    assert.match(result.summary, new RegExp(`尾部-${type}$`));
+    assert.doesNotMatch(result.summary, new RegExp(`开头-${type}`));
+    assert.deepEqual(spawnCalls.map(({ command }) => command), ['osascript', 'claude']);
+    assert.match(spawnCalls[0].args[1], new RegExp(`listener-test.*${type}|${type}.*listener-test`));
+    assert.equal(spawnCalls[1].options.cwd, '/tmp/demo-repo');
+    assert.deepEqual(spawnCalls[1].args, ['-p', spawnCalls[1].args[1], '--output-format', 'text']);
+    assert.match(spawnCalls[1].args[1], /本地编排者 Claude/);
+    assert.match(spawnCalls[1].args[1], /事件原文 JSON/);
+    assert.match(spawnCalls[1].args[1], /listener-test/);
+    assert.match(spawnCalls[1].args[1], /POST \$WORKBENCH_URL\/api\/stream-events/);
+    assert.match(spawnCalls[1].args[1], /x-workbench-token/);
+    assert.match(spawnCalls[1].args[1], /kind=message/);
+    assert.match(spawnCalls[1].args[1], /kind=progress/);
+    assert.match(spawnCalls[1].args[1], /tcd/);
+    assert.match(spawnCalls[1].args[1], /绝不在任何输出中打印口令/);
+    assert.equal(spawnCalls[1].options.env.WORKBENCH_URL, BASE_CONFIG.workbenchUrl);
+    assert.equal(spawnCalls[1].options.env.WORKBENCH_TOKEN, BASE_CONFIG.token);
+    assert.deepEqual(calls.filter(({ path }) => path === '/api/projects').length, 1);
+  }
+});
+
+test('会话项目查不到时使用工作台仓库目录启动 Claude', async () => {
+  const calls = [];
+  const spawnCalls = [];
+  const current = task('message', { event: 'message' }, {
+    session: 'unmapped-session',
+  });
+  const fetchImpl = makeFetch([current], {
+    calls,
+    onRequest: ({ url }) => {
+      if (url.pathname === '/api/inbox/tasks') return jsonResponse({ ok: true, tasks: [current] });
+      if (url.pathname.endsWith('/claim')) return jsonResponse({ ok: true, task: { ...current, status: 'claimed' } });
+      if (url.pathname === '/api/projects') return jsonResponse({
+        ok: true,
+        projects: [{ id: 'demo', sessions: ['another-session'] }],
+      });
+      if (url.pathname.endsWith('/complete')) return jsonResponse({ ok: true, task: { ...current, status: 'done' } });
+      throw new Error(`不应出现请求：${url.pathname}`);
+    },
+  });
+  const listener = createListener(BASE_CONFIG, {
+    fetchImpl,
+    spawnImpl: makeSpawn([{ stdout: '' }, { stdout: '使用工作台仓库完成' }], spawnCalls),
+    logger: { log() {} },
+  });
+
+  await listener.pollOnce();
+
+  assert.equal(spawnCalls[1].command, 'claude');
+  assert.equal(spawnCalls[1].options.cwd, path.resolve(process.cwd()));
+  assert.equal(calls.filter(({ path: pathname }) => pathname === '/api/projects').length, 1);
+});
+
+test('会话事件 Claude 非零退出时写失败 complete 并说明原因', async () => {
+  const calls = [];
+  const spawnCalls = [];
+  const current = task('feedback', { event: 'feedback' });
+  const fetchImpl = makeFetch([current], {
+    calls,
+    onRequest: ({ url, body }) => {
+      if (url.pathname === '/api/inbox/tasks') return jsonResponse({ ok: true, tasks: [current] });
+      if (url.pathname.endsWith('/claim')) return jsonResponse({ ok: true, task: { ...current, status: 'claimed' } });
+      if (url.pathname === '/api/projects') return jsonResponse({ ok: true, projects: [] });
+      if (url.pathname.endsWith('/complete')) {
+        assert.equal(body.ok, false);
+        assert.match(body.summary, /claude|退出码|编排失败/);
+        return jsonResponse({ ok: true, task: { ...current, status: 'failed' } });
+      }
+      throw new Error(`不应出现请求：${url.pathname}`);
+    },
+  });
+  const listener = createListener(BASE_CONFIG, {
+    fetchImpl,
+    spawnImpl: makeSpawn([{ stdout: '' }, { stderr: 'Claude 编排失败', code: 2 }], spawnCalls),
+    logger: { log() {} },
+  });
+
+  const result = await listener.pollOnce();
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(spawnCalls.map(({ command }) => command), ['osascript', 'claude']);
+  assert.equal(calls.filter(({ path: pathname }) => pathname.endsWith('/complete')).length, 1);
+});
+
+test('会话事件 Claude 不存在时写失败 complete', async () => {
+  const calls = [];
+  const spawnCalls = [];
+  const current = task('round', { event: 'round' });
+  const fetchImpl = makeFetch([current], {
+    calls,
+    onRequest: ({ url, body }) => {
+      if (url.pathname === '/api/inbox/tasks') return jsonResponse({ ok: true, tasks: [current] });
+      if (url.pathname.endsWith('/claim')) return jsonResponse({ ok: true, task: { ...current, status: 'claimed' } });
+      if (url.pathname === '/api/projects') return jsonResponse({ ok: true, projects: [] });
+      if (url.pathname.endsWith('/complete')) {
+        assert.equal(body.ok, false);
+        assert.match(body.summary, /claude.*不存在|未找到 claude/);
+        return jsonResponse({ ok: true, task: { ...current, status: 'failed' } });
+      }
+      throw new Error(`不应出现请求：${url.pathname}`);
+    },
+  });
+  const listener = createListener(BASE_CONFIG, {
+    fetchImpl,
+    spawnImpl: (command, args, options) => {
+      spawnCalls.push({ command, args, options });
+      if (command === 'osascript') return fakeChild();
+      throw Object.assign(new Error('spawn claude ENOENT'), { code: 'ENOENT' });
+    },
+    logger: { log() {} },
+  });
+
+  const result = await listener.pollOnce();
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(spawnCalls.map(({ command }) => command), ['osascript', 'claude']);
+});
+
+test('会话事件 Claude 超时时写失败 complete 并说明超时', async () => {
+  const calls = [];
+  const current = task('message', { event: 'message' });
+  const fetchImpl = makeFetch([current], {
+    calls,
+    onRequest: ({ url, body }) => {
+      if (url.pathname === '/api/inbox/tasks') return jsonResponse({ ok: true, tasks: [current] });
+      if (url.pathname.endsWith('/claim')) return jsonResponse({ ok: true, task: { ...current, status: 'claimed' } });
+      if (url.pathname === '/api/projects') return jsonResponse({ ok: true, projects: [] });
+      if (url.pathname.endsWith('/complete')) {
+        assert.equal(body.ok, false);
+        assert.match(body.summary, /超时/);
+        return jsonResponse({ ok: true, task: { ...current, status: 'failed' } });
+      }
+      throw new Error(`不应出现请求：${url.pathname}`);
+    },
+  });
+  const listener = createListener(BASE_CONFIG, {
+    fetchImpl,
+    spawnImpl: makeSpawn([{ stdout: '' }, { delayMs: 20 }]),
+    claudeTimeoutMs: 1,
+    logger: { log() {} },
+  });
+
+  const result = await listener.pollOnce();
+
+  assert.equal(result.ok, false);
+});
+
 test('长任务执行期间按注入间隔 renew，最后才 complete', async () => {
   const calls = [];
   const current = task('notify', { message: '稍后提醒' });
@@ -369,6 +553,25 @@ test('notify 只调用 osascript display notification 并完成任务', async ()
   assert.equal(spawnCalls[0].command, 'osascript');
   assert.match(spawnCalls[0].args[1], /display notification/);
   assert.match(spawnCalls[0].args[1], /提醒内容/);
+});
+
+test('真正未知的任务类型仍直接失败且不启动子进程', async () => {
+  const calls = [];
+  const spawnCalls = [];
+  const current = task('unknown-task', { message: '未知类型' });
+  const fetchImpl = makeFetch([current], { calls });
+  const listener = createListener(BASE_CONFIG, {
+    fetchImpl,
+    spawnImpl: makeSpawn([], spawnCalls),
+    logger: { log() {} },
+  });
+
+  const result = await listener.pollOnce();
+
+  assert.equal(result.ok, false);
+  assert.match(result.summary, /不支持的本地任务类型/);
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(calls.filter(({ path }) => path.endsWith('/complete')).length, 1);
 });
 
 test('日志启动时超过 5 MiB 会轮转为 .old，并继续追加当前日志', () => {

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn as nodeSpawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const DEFAULT_WORKBENCH_URL = 'http://127.0.0.1:8099';
 export const DEFAULT_POLL_MS = 30 * 1000;
@@ -16,6 +16,7 @@ export const DEFAULT_TCD_POLL_MS = 5 * 1000;
 export const DEFAULT_SHUTDOWN_WAIT_MS = 60 * 1000;
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30 * 1000;
 export const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const WORKBENCH_REPO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 class WorkbenchRequestError extends Error {
   constructor(pathname, status, payload) {
@@ -158,6 +159,16 @@ function truncateCharacters(value, limit) {
   return characters.length <= limit ? characters.join('') : characters.slice(0, limit).join('');
 }
 
+function tailCharacters(value, limit) {
+  const characters = Array.from(String(value ?? ''));
+  return characters.length <= limit ? characters.join('') : characters.slice(-limit).join('');
+}
+
+function redactSecret(value, secret) {
+  const text = String(value ?? '');
+  return secret ? text.replaceAll(secret, '[已隐藏口令]') : text;
+}
+
 function nonEmptySummary(value, fallback) {
   const summary = truncateCharacters(String(value ?? '').trim(), 4000);
   return summary || fallback;
@@ -196,6 +207,7 @@ function terminateChild(child, signal) {
 /** 启动一个不经过 shell 的子进程，统一收集有限长度输出并处理超时/下线。 */
 function runCommand(command, args, {
   cwd,
+  env,
   timeoutMs,
   spawnImpl = nodeSpawn,
   signal,
@@ -246,6 +258,7 @@ function runCommand(command, args, {
     try {
       child = spawnImpl(command, args, {
         cwd,
+        ...(env ? { env } : {}),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {
@@ -431,6 +444,127 @@ async function executeClaudeTask(task, config, deps, signal) {
   return outcome;
 }
 
+function projectIdForSession(catalog, session) {
+  const directSession = Array.isArray(catalog?.sessions)
+    ? catalog.sessions.find((entry) => (
+      typeof entry === 'string' ? entry === session : entry?.id === session
+    ))
+    : null;
+  if (directSession && typeof directSession === 'object' && typeof directSession.projectId === 'string') {
+    return directSession.projectId;
+  }
+
+  const project = Array.isArray(catalog?.projects)
+    ? catalog.projects.find((entry) => (
+      entry?.primarySession === session
+      || (Array.isArray(entry?.sessions) && entry.sessions.some((item) => (
+        typeof item === 'string' ? item === session : item?.id === session
+      )))
+    ))
+    : null;
+  return typeof project?.id === 'string' && project.id.trim() ? project.id.trim() : null;
+}
+
+async function sessionEventRepo(task, config, deps) {
+  try {
+    const catalog = await requestJson(config, '/api/projects', { fetchImpl: deps.fetchImpl });
+    const projectId = projectIdForSession(catalog, task.session);
+    if (projectId && Object.hasOwn(config.repoMap, projectId)) return config.repoMap[projectId];
+    if (projectId) {
+      deps.logger.log(`[local-listener] 会话 ${task.session} 归属项目 ${projectId} 未配置本地仓库，使用工作台仓库目录`);
+    } else {
+      deps.logger.log(`[local-listener] 会话 ${task.session} 未查到项目归属，使用工作台仓库目录`);
+    }
+  } catch (error) {
+    deps.logger.log(`[local-listener] 查询会话 ${task.session} 项目归属失败，使用工作台仓库目录：${error.message}`);
+  }
+  return WORKBENCH_REPO_DIR;
+}
+
+function sessionEventBrief(task, config) {
+  const eventJson = redactSecret(JSON.stringify(task.payload ?? null, null, 2), config.token);
+  return [
+    '你是本地编排者 Claude，负责处理工作台收到的会话事件。',
+    `会话名：${redactSecret(task.session, config.token)}`,
+    `事件类型：${redactSecret(task.type, config.token)}`,
+    '事件原文 JSON：',
+    eventJson,
+    '',
+    '工作要求：',
+    '所有面向用户的回应必须经 POST $WORKBENCH_URL/api/stream-events 写回该会话对话流；header x-workbench-token 取环境变量 WORKBENCH_TOKEN，正文以『Claude：』开头；最终回答 kind=message，过程 kind=progress。',
+    '需要重活时可用 tcd 派本地 Codex 处理。',
+    '绝不在任何输出中打印口令。',
+    '处理完直接结束。',
+  ].join('\n');
+}
+
+async function executeSessionEvent(task, config, deps, signal) {
+  const notificationTask = {
+    ...task,
+    payload: {
+      ...task.payload,
+      title: redactSecret(`工作台会话事件：${task.session} / ${task.type}`, config.token),
+      message: redactSecret(`会话 ${task.session} 收到事件 ${task.type}`, config.token),
+    },
+  };
+  try {
+    const notification = await executeNotifyTask(notificationTask, config, deps, signal);
+    if (!notification.ok) {
+      deps.logger.log(`[local-listener] 会话事件 macOS 通知失败：${notification.summary}`);
+    }
+  } catch (error) {
+    if (error instanceof AbortTaskError) throw error;
+    deps.logger.log(`[local-listener] 会话事件 macOS 通知异常：${error.message}`);
+  }
+
+  const repo = await sessionEventRepo(task, config, deps);
+  const result = await runCommand('claude', [
+    '-p', sessionEventBrief(task, config), '--output-format', 'text',
+  ], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      WORKBENCH_URL: config.workbenchUrl,
+      WORKBENCH_TOKEN: config.token,
+    },
+    timeoutMs: deps.claudeTimeoutMs,
+    spawnImpl: deps.spawnImpl,
+    signal,
+  });
+  abortIfNeeded(signal);
+  if (result.aborted) throw new AbortTaskError();
+
+  const stdoutTail = redactSecret(tailCharacters(result.stdout.trim(), 2000), config.token);
+  const stderrTail = redactSecret(tailCharacters(result.stderr.trim(), 2000), config.token);
+  const errorText = redactSecret(result.error?.message, config.token);
+  if (result.timedOut) {
+    return {
+      ok: false,
+      summary: nonEmptySummary(
+        `claude 执行超过 30 分钟超时${stdoutTail ? `：${stdoutTail}` : ''}`,
+        'claude 执行超过 30 分钟超时',
+      ),
+    };
+  }
+  if (result.error?.code === 'ENOENT' || /\bENOENT\b/.test(errorText)) {
+    return { ok: false, summary: 'claude 不存在或无法启动：未找到 claude CLI' };
+  }
+  if (result.exitCode !== 0) {
+    const detail = stderrTail || stdoutTail || errorText;
+    return {
+      ok: false,
+      summary: nonEmptySummary(
+        `claude 非零退出（退出码 ${result.exitCode ?? '未知'}）${detail ? `：${detail}` : ''}`,
+        `claude 非零退出（退出码 ${result.exitCode ?? '未知'}）`,
+      ),
+    };
+  }
+  return {
+    ok: true,
+    summary: nonEmptySummary(stdoutTail, 'claude 已完成，但没有返回输出'),
+  };
+}
+
 function appleScriptString(value) {
   return `"${String(value ?? '')
     .replaceAll('\\', '\\\\')
@@ -460,6 +594,13 @@ async function executeTask(task, config, deps, signal) {
       return executeClaudeTask(task, config, deps, signal);
     case 'notify':
       return executeNotifyTask(task, config, deps, signal);
+    case 'message':
+    case 'message-posted':
+    case 'feedback':
+    case 'feedback-submitted':
+    case 'round':
+    case 'round-presented':
+      return executeSessionEvent(task, config, deps, signal);
     default:
       return { ok: false, summary: `不支持的本地任务类型：${task.type}` };
   }
@@ -528,8 +669,9 @@ export function createListener(config, {
   logger = console,
   renewIntervalMs = DEFAULT_RENEW_INTERVAL_MS,
   tcdPollMs = DEFAULT_TCD_POLL_MS,
+  claudeTimeoutMs = DEFAULT_CLAUDE_TIMEOUT_MS,
 } = {}) {
-  const deps = { fetchImpl, spawnImpl, logger, renewIntervalMs, tcdPollMs };
+  const deps = { fetchImpl, spawnImpl, logger, renewIntervalMs, tcdPollMs, claudeTimeoutMs };
   let started = false;
   let stopping = false;
   let loopPromise = null;
