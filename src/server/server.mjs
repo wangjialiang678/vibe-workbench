@@ -50,12 +50,24 @@ import {
   readDocument,
 } from '../documents.mjs';
 import {
+  DEFAULT_EXECUTOR_ID,
   executionContextForSession,
+  executorById,
   projectCatalog,
   registeredProjectForSession,
   sessionExists,
   updateSessionMetadata,
 } from '../projects.mjs';
+import {
+  DEFAULT_CLAIM_TIMEOUT_MS,
+  INBOX_PAYLOAD_LIMIT,
+  claimInboxTask,
+  completeInboxTask,
+  enqueueInboxTask,
+  listInboxTasks,
+  renewInboxTask,
+  resetExpiredInboxClaims,
+} from '../executor-inbox.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
@@ -67,6 +79,7 @@ const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 const DOCUMENT_REQUEST_LIMIT = (DOCUMENT_BODY_LIMIT * 6) + (64 * 1024);
 const WEBHOOK_TIMEOUT_MS = 5000;
 const WORKER_HEARTBEAT_BODY_LIMIT = 8 * 1024;
+const INBOX_REQUEST_LIMIT = (INBOX_PAYLOAD_LIMIT * 6) + (64 * 1024);
 const UNCLASSIFIED_SESSION_WARNING = '未归属项目的新会话，建议先在项目下创建或使用规范命名';
 export const WORKER_HEARTBEAT_STALE_MS = 90 * 1000;
 const AI_IDENTITY = Object.freeze({ id: 'ai', name: 'AI', role: 'ai' });
@@ -483,6 +496,91 @@ function emitWebhook(webhookUrl, payload) {
   setImmediate(() => { void postWebhookEvent(webhookUrl, payload); });
 }
 
+function configuredClaimTimeoutMs(value) {
+  if (!/^[1-9]\d*$/.test(String(value || ''))) return DEFAULT_CLAIM_TIMEOUT_MS;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : DEFAULT_CLAIM_TIMEOUT_MS;
+}
+
+function inboxSweepIntervalMs(claimTimeoutMs) {
+  return Math.max(10, Math.min(60 * 1000, Math.floor(claimTimeoutMs / 2)));
+}
+
+function inboxTaskTitle(payload) {
+  if (payload.event === 'round-presented') {
+    return payload.title
+      ? `第 ${payload.round} 轮已呈现：${payload.title}`
+      : `第 ${payload.round} 轮已呈现`;
+  }
+  if (payload.event === 'feedback-submitted') return `第 ${payload.round} 轮反馈已提交`;
+  if (payload.event === 'message-posted') return '会话新消息';
+  return `会话事件：${payload.event || 'unknown'}`;
+}
+
+// resident 保持既有 webhook；pull 落本地持久化收件箱。路由异常一律回退云端链路。
+function dispatchExecutorEvent(webhookUrl, payload) {
+  let executor;
+  try {
+    const project = registeredProjectForSession(payload.session);
+    executor = executorById(project?.executor || DEFAULT_EXECUTOR_ID);
+  } catch (error) {
+    console.error('[workbench:dispatch] 执行面解析失败，回退 resident webhook：', error.message);
+    emitWebhook(webhookUrl, payload);
+    return;
+  }
+
+  if (!executor || executor.kind === 'resident') {
+    emitWebhook(webhookUrl, payload);
+    return;
+  }
+
+  try {
+    const task = enqueueInboxTask({
+      executor: executor.id,
+      session: payload.session,
+      type: payload.event,
+      title: inboxTaskTitle(payload),
+      payload,
+    });
+    appendStreamEntry(payload.session, {
+      author: AI_IDENTITY,
+      kind: 'progress',
+      text: `已入队待本地执行：${task.title}`,
+    }, { exactSession: true });
+    console.error('[workbench:dispatch] pull 任务已入队：', {
+      id: task.id,
+      executor: task.executor,
+      session: task.session,
+      type: task.type,
+    });
+  } catch (error) {
+    console.error('[workbench:dispatch] pull 任务入队失败：', {
+      session: payload.session,
+      event: payload.event,
+      error: error.message,
+    });
+  }
+}
+
+function inboxErrorStatus(error) {
+  if (error?.code === 'INBOX_PAYLOAD_TOO_LARGE') return 413;
+  if (error?.code === 'INVALID_INBOX_TASK') return 400;
+  if (error?.code === 'INBOX_NOT_FOUND') return 404;
+  if (error?.code === 'INBOX_CONFLICT') return 409;
+  return 500;
+}
+
+function respondInboxError(res, error, action) {
+  const status = inboxErrorStatus(error);
+  if (status === 500) {
+    console.error(`[workbench:inbox] ${action}失败：`, error);
+  }
+  json(res, status, {
+    ok: false,
+    error: status === 500 ? `收件箱${action}失败` : error.message,
+  });
+}
+
 // Feedback → human-readable markdown
 function feedbackToMd(fb) {
   const lines = [
@@ -622,6 +720,120 @@ function handleRequest(
   // --- API routes ---
   if (urlPath === '/api/health') {
     json(res, 200, { ok: true, ts: Date.now() });
+    return;
+  }
+
+  if (urlPath.startsWith('/api/inbox/')) {
+    // 拉取执行器必须显式持有管理员口令；本地无口令的兼容 owner 不获得队列权限。
+    if (!expectedToken || identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '仅管理员执行器可访问收件箱' });
+      return;
+    }
+    const inboxOptions = { claimTimeoutMs: runtimeState.inboxClaimTimeoutMs };
+
+    if (urlPath === '/api/inbox/tasks' && method === 'GET') {
+      const executor = requestUrl.searchParams.get('executor');
+      const status = requestUrl.searchParams.has('status')
+        ? requestUrl.searchParams.get('status')
+        : undefined;
+      try {
+        const tasks = listInboxTasks({ executor, status, ...inboxOptions });
+        json(res, 200, { ok: true, tasks });
+      } catch (error) {
+        respondInboxError(res, error, '列表读取');
+      }
+      return;
+    }
+
+    if (urlPath === '/api/inbox/tasks' && method === 'POST') {
+      readBody(req, INBOX_REQUEST_LIMIT).then((body) => {
+        try {
+          const task = enqueueInboxTask(body);
+          console.error('[workbench:inbox] 任务入队：', {
+            id: task.id,
+            executor: task.executor,
+            session: task.session,
+            type: task.type,
+          });
+          json(res, 201, { ok: true, task });
+        } catch (error) {
+          respondInboxError(res, error, '入队');
+        }
+      }).catch((error) => {
+        if (error?.code === 'BODY_TOO_LARGE') {
+          json(res, 413, { ok: false, error: '收件箱请求体过大' });
+          return;
+        }
+        json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+      });
+      return;
+    }
+
+    const taskAction = urlPath.match(
+      /^\/api\/inbox\/tasks\/([^/]+)\/(claim|renew|complete)$/,
+    );
+    if (taskAction && method === 'POST') {
+      const [, id, action] = taskAction;
+      readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
+        try {
+          if (action === 'claim') {
+            const task = claimInboxTask(id, body?.claimedBy, inboxOptions);
+            console.error('[workbench:inbox] 租约已领取：', {
+              id: task.id,
+              claimedBy: task.claimedBy,
+              leaseExpiresAt: task.leaseExpiresAt,
+            });
+            json(res, 200, { ok: true, task });
+            return;
+          }
+          if (action === 'renew') {
+            const task = renewInboxTask(id, body?.claimedBy, inboxOptions);
+            console.error('[workbench:inbox] 租约已续期：', {
+              id: task.id,
+              claimedBy: task.claimedBy,
+              leaseExpiresAt: task.leaseExpiresAt,
+            });
+            json(res, 200, { ok: true, task });
+            return;
+          }
+
+          const completed = completeInboxTask(id, body, inboxOptions);
+          if (!completed.idempotent) {
+            appendStreamEntry(completed.task.session, {
+              author: AI_IDENTITY,
+              kind: completed.task.result.ok ? 'receipt' : 'message',
+              text: completed.task.result.ok
+                ? `任务执行完成：${completed.task.result.summary}`
+                : `任务执行失败：${completed.task.result.summary}`,
+            }, { exactSession: true });
+            console.error('[workbench:inbox] 任务已完成：', {
+              id: completed.task.id,
+              status: completed.task.status,
+              session: completed.task.session,
+            });
+          }
+          json(res, 200, {
+            ok: true,
+            task: completed.task,
+            idempotent: completed.idempotent,
+          });
+        } catch (error) {
+          respondInboxError(res, error, action);
+        }
+      }).catch((error) => {
+        if (error?.code === 'BODY_TOO_LARGE') {
+          json(res, 413, { ok: false, error: '收件箱请求体过大' });
+          return;
+        }
+        json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
+      });
+      return;
+    }
+
+    json(res, taskAction ? 405 : 404, {
+      ok: false,
+      error: taskAction ? 'method not allowed' : 'not found',
+    });
     return;
   }
 
@@ -791,7 +1003,7 @@ function handleRequest(
               text: body.text,
             }, { exactSession: true });
         json(res, 200, { ok: true, entry });
-        emitWebhook(eventWebhook, {
+        dispatchExecutorEvent(eventWebhook, {
           event: 'message-posted',
           session: body.session,
           id: entry.id,
@@ -1081,7 +1293,7 @@ function handleRequest(
           response.warning = UNCLASSIFIED_SESSION_WARNING;
         }
         json(res, 200, response);
-        emitWebhook(eventWebhook, {
+        dispatchExecutorEvent(eventWebhook, {
           event: 'round-presented',
           session: saved.session,
           round: saved.round,
@@ -1250,7 +1462,7 @@ function handleRequest(
         refs: { round },
       }, pathOptions);
       json(res, 200, { ok: true, count: (fb.items || []).length });
-      emitWebhook(eventWebhook, {
+      dispatchExecutorEvent(eventWebhook, {
         event: 'feedback-submitted',
         session,
         round,
@@ -1417,7 +1629,10 @@ export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAU
   const listenHost = host || '127.0.0.1';
   const token = process.env.WORKBENCH_TOKEN || '';
   const eventWebhook = process.env.WORKBENCH_EVENT_WEBHOOK || '';
-  const runtimeState = { workerHeartbeat: null };
+  const inboxClaimTimeoutMs = configuredClaimTimeoutMs(
+    process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS,
+  );
+  const runtimeState = { workerHeartbeat: null, inboxClaimTimeoutMs };
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
     throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   }
@@ -1429,6 +1644,16 @@ export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAU
     participantsFile,
     runtimeState,
   ));
+  const inboxTimer = setInterval(() => {
+    try {
+      const reset = resetExpiredInboxClaims({ claimTimeoutMs: inboxClaimTimeoutMs });
+      if (reset > 0) console.error(`[workbench:inbox] 已回退 ${reset} 个超时租约`);
+    } catch (error) {
+      console.error('[workbench:inbox] 超时租约扫描失败：', error.message);
+    }
+  }, inboxSweepIntervalMs(inboxClaimTimeoutMs));
+  inboxTimer.unref?.();
+  server.once('close', () => clearInterval(inboxTimer));
   const listenPort = port != null ? port : (parseInt(process.env.PORT, 10) || 8099);
   server.listen(listenPort, listenHost);
   return server;

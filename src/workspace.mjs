@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(__dirname, '..');
 export const SESSION_NAME_RE = /^[A-Za-z0-9._-]+$/;
 export const SESSION_NAME_MAX_LENGTH = 80;
+const RESERVED_WORKSPACE_DIRS = new Set(['inbox']);
 
 export function workspaceDir() { return process.env.WB_WORKSPACE || path.join(ROOT, 'workspace'); }
 // 旧版路径规则必须保留，否则本地已有 foo.bar 会突然从 foo_bar 改读 foo.bar。
@@ -18,7 +19,8 @@ export function isValidSessionName(value) {
     && value.length <= SESSION_NAME_MAX_LENGTH
     && SESSION_NAME_RE.test(value)
     && value !== '.'
-    && value !== '..';
+    && value !== '..'
+    && !RESERVED_WORKSPACE_DIRS.has(value);
 }
 export function sessionDir(s, { exactSession = false } = {}) {
   const value = String(s || '');
@@ -60,7 +62,7 @@ export function writeStatus(s, patch, nowISO, options) {
 }
 
 export function listSessions() {
-  try { return fs.readdirSync(workspaceDir()).filter((d) => { try { return fs.statSync(path.join(workspaceDir(), d)).isDirectory(); } catch { return false; } }); }
+  try { return fs.readdirSync(workspaceDir()).filter((d) => { try { return !RESERVED_WORKSPACE_DIRS.has(d) && fs.statSync(path.join(workspaceDir(), d)).isDirectory(); } catch { return false; } }); }
   catch { return []; }
 }
 export function listRounds(s, options) {

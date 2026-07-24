@@ -34,6 +34,14 @@ test('listSessions / listRounds / latestRound + removeFile', async () => {
   assert.equal(ws.exists(ws.paths.ack('s2', 1)), false);
 });
 
+test('inbox 是系统保留目录，不能作为 session 且不进入会话枚举', async () => {
+  const ws = await import('../../src/workspace.mjs');
+  fs.mkdirSync(path.join(tmp, 'inbox'), { recursive: true });
+
+  assert.equal(ws.isValidSessionName('inbox'), false);
+  assert.equal(ws.listSessions().includes('inbox'), false);
+});
+
 test('writeRound: 共享完成自动编号、双轨落盘与独占冲突保护', async () => {
   const ws = await import('../../src/workspace.mjs');
   const session = 'shared.round-1';

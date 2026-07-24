@@ -38,6 +38,33 @@ test('项目注册表严格校验 kebab-case、重复 ID 与绝对仓库路径',
   }), /绝对路径/);
 });
 
+test('执行面目录固定，项目 executor 缺省为 cloud-codex 并拒绝未知值', () => {
+  assert.deepEqual(
+    projects.EXECUTORS?.map(({ id, kind }) => ({ id, kind })),
+    [
+      { id: 'cloud-codex', kind: 'resident' },
+      { id: 'local-mac', kind: 'pull' },
+    ],
+  );
+
+  const normalized = projects.normalizeProjectRegistry({
+    version: 1,
+    projects: [
+      { id: 'default-project', displayName: '默认项目' },
+      { id: 'local-project', displayName: '本地项目', executor: 'local-mac' },
+    ],
+  });
+  assert.equal(normalized.projects[0].executor, 'cloud-codex');
+  assert.equal(normalized.projects[1].executor, 'local-mac');
+  assert.equal(projects.executorById('local-mac').displayName, '创始人 Mac');
+  assert.equal(projects.executorById('missing'), null);
+
+  assert.throws(() => projects.normalizeProjectRegistry({
+    version: 1,
+    projects: [{ id: 'bad-executor', displayName: '坏执行面', executor: '../local' }],
+  }), /executor/);
+});
+
 test('会话元数据迁移只追加字段，保留旧执行器 session/cwd', () => {
   workspace.writeJSON(workspace.paths.session('legacy-session', { exactSession: true }), {
     claudeSessionId: 'ses_old',

@@ -15,6 +15,7 @@
 - [backend] 异步唤醒 listener 对账 + ack 幂等 + error 不拖垮 + 心跳异步
 - [backend] 常驻 worker 管理员心跳 + 90 秒在线判定、本机 webhook 即时唤醒、60 秒轮询兜底、同轮重新提交、Codex 中断 Git 快照
 - [backend] 多项目注册表 + 旧会话待归类兼容 + owner-only 执行上下文 + worker 仓库路由回退 + v1 迁移幂等
+- [backend] 执行面注册 + 原子 inbox 任务 + rename-first claim + 管理员入队/领取/续租/幂等完成 API + 超时回退 + resident/pull 派发分流
 - [frontend] blockHtml 各类型、md→HTML、注意力分区、diff 徽章+只看变更、状态徽章+重试
 - [frontend] 桌面会话流可拖分栏、决策/文档切换、手机对话/决策/文档三标签与未读角标
 - [frontend] 消息分侧、receipt/progress、增量轮询、附件 Markdown、最新轮决策芯片、pin 浮层边缘翻转
@@ -52,4 +53,5 @@
 | FR-4/6 回路 | tests/e2e/loop.test.mjs | 对账/幂等/error/心跳 | [scenario] |
 | 云端常驻 worker | tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs、tests/unit/status-bar.test.mjs | 心跳鉴权/过期、在线横幅、推送唤醒、兜底轮询、同轮二次提交、超时/非零退出快照、非 Git/保护路径/失败兜底 | [backend]/[frontend] |
 | 多项目路由 | tests/unit/projects.test.mjs、tests/unit/migrate-projects.test.mjs、tests/unit/projects-view.test.mjs、tests/e2e/server.test.mjs、tests/unit/resident-worker.test.mjs | 注册表校验、24 个旧会话兼容、迁移幂等、目录渲染、管理员路径权限、停止/失效路径回退 | [backend]/[frontend] |
+| 执行面收件箱 | tests/unit/projects.test.mjs、tests/unit/workspace.test.mjs、tests/e2e/executor-inbox.test.mjs | executor 缺省/校验、inbox 保留目录、入队/列表/并发原子领取/续租/幂等完成与单次回执/64 KiB/管理员鉴权/超时与中断恢复/resident 与 pull 分流 | [backend] |
 | CLI | tests/e2e/bin.test.mjs | render/help | [CLI] |

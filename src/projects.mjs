@@ -18,6 +18,16 @@ export const PROJECT_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const PROJECT_STATUSES = new Set(['active', 'archived']);
 export const SESSION_KINDS = new Set(['work', 'review', 'decision', 'test']);
 export const SESSION_STATUSES = new Set(['active', 'closed', 'unclassified', 'archived']);
+export const DEFAULT_EXECUTOR_ID = 'cloud-codex';
+export const EXECUTORS = Object.freeze([
+  Object.freeze({ id: DEFAULT_EXECUTOR_ID, displayName: '云端常驻 Codex', kind: 'resident' }),
+  Object.freeze({ id: 'local-mac', displayName: '创始人 Mac', kind: 'pull' }),
+]);
+const EXECUTOR_BY_ID = new Map(EXECUTORS.map((executor) => [executor.id, executor]));
+
+export function executorById(id) {
+  return EXECUTOR_BY_ID.get(id) || null;
+}
 
 export function projectRegistryPath() {
   return path.join(workspaceDir(), 'projects.json');
@@ -76,12 +86,17 @@ function cleanProject(input, index = 0) {
   if (!['live', 'evidence', 'hybrid'].includes(previewMode)) {
     throw new Error(`项目 ${id} 的 previewMode 无效`);
   }
+  const executor = input.executor == null
+    ? DEFAULT_EXECUTOR_ID
+    : optionalString(input.executor, `项目 ${id} 的 executor`, { maxLength: 80 });
+  if (!executorById(executor)) throw new Error(`项目 ${id} 的 executor 无效`);
 
   return {
     id,
     displayName,
     status,
     previewMode,
+    executor,
     ...(optionalString(input.description, `项目 ${id} 的 description`, { maxLength: 500 })
       ? { description: input.description.trim() }
       : {}),
@@ -282,6 +297,7 @@ function publicProject(project) {
     displayName: project.displayName,
     status: project.status,
     previewMode: project.previewMode,
+    executor: project.executor,
     ...(project.description ? { description: project.description } : {}),
     ...(project.primarySession ? { primarySession: project.primarySession } : {}),
     ...(project.aliases?.length ? { aliases: project.aliases } : {}),
