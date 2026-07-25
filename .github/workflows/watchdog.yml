@@ -37,7 +37,8 @@ jobs:
               curl_rc=$?
             fi
 
-            if (( curl_rc != 0 )) || [[ ! "$status" =~ ^[23][0-9][0-9]$ ]]; then
+            # 2xx/3xx=正常；401/403=口令门在岗（服务器活着）；连不上/超时/5xx 才算挂
+            if (( curl_rc != 0 )) || [[ ! "$status" =~ ^([23][0-9][0-9]|401|403)$ ]]; then
               failures+=("$url — HTTP ${status:-000}（curl exit ${curl_rc}）")
             fi
           }
