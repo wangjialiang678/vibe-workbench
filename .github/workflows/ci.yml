@@ -1,0 +1,36 @@
+# 用途：在 main push 和 pull request 的干净 Ubuntu 环境中运行 Node 22 全量测试。
+# 出处：docs/13 评审面 P1（评审面基础设施）。
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装依赖
+        shell: bash
+        run: |
+          if [[ ! -f package-lock.json && ! -f npm-shrinkwrap.json ]]; then
+            # 当前仓库没有 lockfile；只在 runner 临时生成，随后仍执行 npm ci。
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: 运行全量测试
+        run: npm test
