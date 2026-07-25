@@ -1,0 +1,84 @@
+# 用途：每 15 分钟从场外检查生产服务可达性，并维护固定的 GitHub 告警 issue。
+# 出处：docs/13 评审面 P1（评审面基础设施）。
+name: 生产服务场外看门狗
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: 检查生产地址并维护告警
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          title='🚨 生产服务不可达告警'
+          timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          failures=()
+
+          check_url() {
+            local url="$1"
+            local status='000'
+            local curl_rc=0
+
+            if status="$(curl --max-time 15 --silent --output /dev/null --write-out '%{http_code}' "$url" 2>/dev/null)"; then
+              curl_rc=0
+            else
+              curl_rc=$?
+            fi
+
+            if (( curl_rc != 0 )) || [[ ! "$status" =~ ^[23][0-9][0-9]$ ]]; then
+              failures+=("$url — HTTP ${status:-000}（curl exit ${curl_rc}）")
+            fi
+          }
+
+          check_url 'https://workbench.superbrain-ai.com/'
+          check_url 'https://paperedit-feedback.superbrain-ai.com/'
+
+          issue_number="$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "$title in:title" \
+            --limit 100 \
+            --json number,title \
+            --jq 'map(select(.title == "🚨 生产服务不可达告警")) | .[0].number // empty')"
+
+          if (( ${#failures[@]} > 0 )); then
+            details="$(printf '%s\n' "${failures[@]}")"
+            body=$'检查时间（UTC）：'"${timestamp}"$'\n失败详情：\n'"${details}"
+
+            if [[ -n "$issue_number" ]]; then
+              gh issue comment "$issue_number" \
+                --repo "$GITHUB_REPOSITORY" \
+                --body "$body" \
+                >/dev/null
+            else
+              gh issue create \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "$title" \
+                --body "$body" \
+                >/dev/null
+            fi
+            exit 1
+          fi
+
+          if [[ -n "$issue_number" ]]; then
+            body=$'✅ 已恢复\n\n检查时间（UTC）：'"${timestamp}"
+            gh issue comment "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "$body" \
+              >/dev/null
+            gh issue close "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              >/dev/null
+          fi
