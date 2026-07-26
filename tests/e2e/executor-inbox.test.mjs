@@ -25,6 +25,7 @@ let tmpDir;
 let participantsFile;
 let startServer;
 let projects;
+let inbox;
 let server;
 let baseUrl;
 const savedEnv = {};
@@ -132,6 +133,7 @@ before(async () => {
 
   ({ startServer } = await import('../../src/server/server.mjs'));
   projects = await import('../../src/projects.mjs');
+  inbox = await import('../../src/executor-inbox.mjs');
   server = startServer(0, '127.0.0.1', { participantsFile });
   await waitForListening(server);
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -198,6 +200,86 @@ test('入队按原子 JSON 文件保存，列表可按执行面和状态筛选',
   const sessions = await getJson('/api/sessions');
   assert.equal(sessions.status, 200);
   assert.equal((await sessions.json()).sessions.includes('inbox'), false);
+});
+
+test('external-review 只接受 review-request，不可由 pull 监听 claim，且只由服务端回传完成', async () => {
+  const reviewInput = taskInput({
+    executor: 'github-actions',
+    session: 'paper-edit-review',
+    type: 'review-request',
+    title: 'GitHub PR 评审',
+    payload: {
+      repo: 'wangjialiang678/ai-video-paper-edit',
+      branch: 'vibeloop/ticket-42',
+      pr: 42,
+    },
+  });
+  const task = await enqueue(reviewInput);
+  assert.equal(task.executor, 'github-actions');
+  assert.equal(task.type, 'review-request');
+  assert.deepEqual(task.payload, reviewInput.payload);
+
+  const malformed = await postJson('/api/inbox/tasks', taskInput({
+    executor: 'github-actions',
+    session: 'paper-edit-invalid-review',
+    type: 'message-posted',
+  }));
+  assert.equal(malformed.status, 400);
+  assert.match((await malformed.json()).error, /review-request/);
+
+  const missingPr = await postJson('/api/inbox/tasks', taskInput({
+    executor: 'github-actions',
+    session: 'paper-edit-missing-pr',
+    type: 'review-request',
+    payload: { repo: 'owner/repo', branch: 'review-branch' },
+  }));
+  assert.equal(missingPr.status, 400);
+  assert.match((await missingPr.json()).error, /payload\.pr/);
+
+  const claimed = await postJson(`/api/inbox/tasks/${task.id}/claim`, {
+    claimedBy: 'pull-listener',
+  });
+  assert.equal(claimed.status, 409);
+  assert.match((await claimed.json()).error, /external-review/);
+  assert.equal(readTask('github-actions', task.id).status, 'pending');
+
+  const publicComplete = await postJson(`/api/inbox/tasks/${task.id}/complete`, {
+    ok: true,
+    summary: '外部执行面不得自行完成',
+  });
+  assert.equal(publicComplete.status, 409);
+  assert.match((await publicComplete.json()).error, /external-review/);
+
+  const completed = inbox.completeExternalReviewInboxTask(task.id, {
+    ok: true,
+    summary: 'Codex 未发现 P0/P1，CI 全绿',
+    verdict: 'approved',
+    ciStatus: 'success',
+    changes: [{ file: '不得保存的代码改动' }],
+  });
+  assert.equal(completed.idempotent, false);
+  assert.equal(completed.task.status, 'done');
+  assert.deepEqual(completed.task.result, {
+    ok: true,
+    summary: 'Codex 未发现 P0/P1，CI 全绿',
+    verdict: 'approved',
+    ciStatus: 'success',
+  });
+  assert.equal(Object.hasOwn(completed.task.result, 'changes'), false);
+
+  const ordinary = await enqueue(taskInput({
+    session: 'ordinary-completion-boundary',
+    title: '普通任务不得使用评审回传完成',
+  }));
+  assert.equal((await postJson(`/api/inbox/tasks/${ordinary.id}/claim`, {
+    claimedBy: 'local-worker',
+  })).status, 200);
+  assert.throws(() => inbox.completeExternalReviewInboxTask(ordinary.id, {
+    ok: true,
+    summary: '不应完成普通任务',
+    verdict: 'approved',
+    ciStatus: 'success',
+  }), /external-review/);
 });
 
 test('领取只允许 pending，完成幂等且不重复写回执', async () => {

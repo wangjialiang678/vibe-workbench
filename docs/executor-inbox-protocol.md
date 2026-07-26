@@ -6,10 +6,11 @@
 
 `src/projects.mjs` 导出固定目录 `EXECUTORS`：
 
-| id | displayName | kind | 派发方式 |
-|---|---|---|---|
-| `cloud-codex` | 云端常驻 Codex | `resident` | 继续投递 `WORKBENCH_EVENT_WEBHOOK` |
-| `local-mac` | 创始人 Mac | `pull` | 写入执行面收件箱，由本地监听器拉取 |
+| id | displayName | kind | transport | 派发方式 |
+|---|---|---|---|---|
+| `cloud-codex` | 云端常驻 Codex | `resident` | — | 继续投递 `WORKBENCH_EVENT_WEBHOOK` |
+| `local-mac` | 创始人 Mac | `pull` | — | 写入执行面收件箱，由本地监听器拉取 |
+| `github-actions` | GitHub Actions 评审面 | `external-review` | `pr` | 仅接收评审请求并回传评审信号，不执行代码任务 |
 
 项目注册表 `workspace/projects.json` 的每个项目条目新增 `executor`：
 
@@ -17,12 +18,15 @@
 {
   "id": "example-project",
   "displayName": "示例项目",
-  "executor": "local-mac"
+  "executor": "local-mac",
+  "reviewPlane": { "executor": "github-actions" }
 }
 ```
 
 - 缺省值固定为 `cloud-codex`，兼容已有注册表。
 - `executor` 必须命中 `EXECUTORS`，未知值会使注册表校验失败。
+- `reviewPlane` 可选；存在时必须声明 `{ "executor": "<external-review executor>" }`。它独立于代码执行的 `executor`，只标记该项目使用的评审面。
+- `/api/projects` 公开 `reviewPlane.executor`，但和 `repoPath`、`memoryPath` 一样不会公开任何服务器路径。
 - 会话无项目归属、项目未声明 `executor`，或派发时无法安全解析归属时，一律回退 `cloud-codex`。
 
 ## 2. 文件数据
@@ -111,6 +115,7 @@ X-Workbench-Token: <admin-token>
 - `session` 使用工作台既有 session 白名单。
 - `type`、`title` 必须是非空字符串。
 - 必须显式提供 `payload`，且序列化后不超过 64 KiB。
+- `external-review` 执行面只接受 `type: "review-request"`，且 `payload` 必须包含非空字符串 `repo`、`branch` 和正整数 `pr`。
 
 成功返回 `201`：
 
@@ -147,6 +152,7 @@ X-Workbench-Token: <admin-token>
 - `claimedBy` 必须是非空字符串。
 - 只有 `pending` 可以领取。
 - `claimed`、`done`、`failed` 均返回 `409`。
+- `external-review` 任务永远不可领取；pull 型监听器必须只拉取 `kind: "pull"` 的执行面，尝试领取外部评审任务返回 `409`。
 - server 必须先把 canonical 任务文件原子 rename 为本次领取的唯一临时名，rename 成功后才允许读取和解析任务内容。rename 失败的竞争者返回 `409`，不得读取、完成或写失败结果。
 - 成功后写入 `status: "claimed"`、`claimedAt`、`claimedBy`、`leaseExpiresAt`，返回完整任务。
 
@@ -182,6 +188,7 @@ X-Workbench-Token: <admin-token>
 - 成功任务向对应 session 追加 AI `receipt`：`任务执行完成：<summary>`。
 - 失败任务向对应 session 追加 AI `message`：`任务执行失败：<summary>`。
 - `complete` 幂等：任务已经是 `done` 或 `failed` 时返回 `200` 和当前任务状态，并标记 `idempotent: true`；不得覆盖首次 `result`，也不得重复写会话流回执。
+- 此公开完成接口不能完成 `external-review` 任务；该类任务只能由服务端评审回传接收器代为完成，详见 §8。
 
 ## 5. 领取超时
 
@@ -204,7 +211,8 @@ X-Workbench-Token: <admin-token>
 1. 根据 `payload.session` 查 session 元数据与项目注册表。
 2. `resident`：保持原事件体，异步投递 `WORKBENCH_EVENT_WEBHOOK`。
 3. `pull`：不投递 webhook；把原事件体作为任务 `payload` 入队，`type` 等于事件名，并向 session 流追加 AI `progress`：`已入队待本地执行：<任务标题>`。
-4. 无归属、缺省 executor 或路由解析异常：继续走 webhook，保证云端链路兼容。
+4. `external-review` 不消费这三类普通会话事件；评审面只通过显式的 `review-request` 入队。
+5. 无归属、缺省 executor 或路由解析异常：继续走 webhook，保证云端链路兼容。
 
 事件动作的主业务写入已经成功后才执行派发；派发失败只记服务端错误日志，不回滚已经完成的消息、轮次或反馈写入。
 
@@ -215,3 +223,11 @@ X-Workbench-Token: <admin-token>
 这条边界让未来 macOS、Windows 或其他 worker 的文件系统语义与队列正确性彻底解耦，也规避了 NFS/SMB 网络盘以及 Windows 默认 rename 覆盖不原子的已知坑。相关依据包括 [claytonia 的真实 claim race 修复](https://github.com/lentago/claytonia/pull/62)、[AWS SQS visibility timeout/续租语义](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html) 和 [Windows rename 原子性差异](https://stackoverflow.com/questions/167414/is-an-atomic-file-rename-with-overwrite-possible-on-windows)。
 
 如果未来有人提出“让 worker 直接访问共享任务目录”，必须视为架构变更重新评审，不能作为监听器实现捷径。
+
+## 8. external-review 评审面
+
+`github-actions` 的 `kind` 为 `external-review`、`transport` 为 `pr`。它是评审面的注册表入口，**只产生信号，不产生代码事实**：评审任务表示开 PR 或触发 workflow，GitHub 回传的评审结论只供后续 judge 作为软信号使用；合并、发布和代码写入仍由权威服务器的执行面负责。
+
+外部评审任务的状态机是受限特例：可由服务端创建为 `pending`，但没有 `claimed` 租约，也不能被本地/远程 pull 监听器领取或续租。服务器收到并验证 GitHub review / CI 回传后，才会代为将该任务从 `pending` 标记为 `done` 或 `failed`。公开的 `/api/inbox/tasks/:id/complete` 对该类任务一律返回冲突，避免评审执行面直接写入完成状态。
+
+回传结果固定为信号字段：`{ ok, summary, verdict, ciStatus }`。其中 `summary` 是审查意见摘要，`verdict` 是评审结论，`ciStatus` 是 CI 状态；结果对象不接受、也不保存 patch、文件内容、代码变更或合并信息。服务端评审回传接收器是唯一可调用内部完成路径的组件。

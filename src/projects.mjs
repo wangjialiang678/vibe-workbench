@@ -22,6 +22,7 @@ export const DEFAULT_EXECUTOR_ID = 'cloud-codex';
 export const EXECUTORS = Object.freeze([
   Object.freeze({ id: DEFAULT_EXECUTOR_ID, displayName: '云端常驻 Codex', kind: 'resident' }),
   Object.freeze({ id: 'local-mac', displayName: '创始人 Mac', kind: 'pull' }),
+  Object.freeze({ id: 'github-actions', displayName: 'GitHub Actions 评审面', kind: 'external-review', transport: 'pr' }),
 ]);
 const EXECUTOR_BY_ID = new Map(EXECUTORS.map((executor) => [executor.id, executor]));
 
@@ -64,6 +65,23 @@ function stringList(value, name, validator = () => true) {
   return clean;
 }
 
+function optionalReviewPlane(value, projectId) {
+  if (value == null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`项目 ${projectId} 的 reviewPlane 必须是对象`);
+  }
+  const executor = optionalString(
+    value.executor,
+    `项目 ${projectId} 的 reviewPlane.executor`,
+    { maxLength: 80 },
+  );
+  const executorConfig = executorById(executor);
+  if (!executorConfig || executorConfig.kind !== 'external-review') {
+    throw new Error(`项目 ${projectId} 的 reviewPlane.executor 必须引用 external-review 执行面`);
+  }
+  return { executor };
+}
+
 function cleanProject(input, index = 0) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error(`项目注册表第 ${index + 1} 项必须是对象`);
@@ -90,6 +108,7 @@ function cleanProject(input, index = 0) {
     ? DEFAULT_EXECUTOR_ID
     : optionalString(input.executor, `项目 ${id} 的 executor`, { maxLength: 80 });
   if (!executorById(executor)) throw new Error(`项目 ${id} 的 executor 无效`);
+  const reviewPlane = optionalReviewPlane(input.reviewPlane, id);
 
   return {
     id,
@@ -108,6 +127,7 @@ function cleanProject(input, index = 0) {
       : {}),
     ...(primarySession ? { primarySession } : {}),
     ...(aliases.length ? { aliases } : {}),
+    ...(reviewPlane ? { reviewPlane } : {}),
   };
 }
 
@@ -298,6 +318,7 @@ function publicProject(project) {
     status: project.status,
     previewMode: project.previewMode,
     executor: project.executor,
+    ...(project.reviewPlane ? { reviewPlane: project.reviewPlane } : {}),
     ...(project.description ? { description: project.description } : {}),
     ...(project.primarySession ? { primarySession: project.primarySession } : {}),
     ...(project.aliases?.length ? { aliases: project.aliases } : {}),

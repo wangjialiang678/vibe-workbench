@@ -1,4 +1,4 @@
-# 用途：在 main push 和 pull request 的干净 Ubuntu 环境中运行 Node 22 全量测试。
+# 用途：在 main push 和 pull request 的三种干净 runner 环境中运行 Node 22 全量测试。
 # 出处：docs/13 评审面 P1（评审面基础设施）。
 name: CI
 
@@ -13,7 +13,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4

@@ -119,6 +119,7 @@ test('GET /api/projects 返回项目目录并隐藏服务器仓库路径', async
       repoPath: '/srv/private/project',
       primarySession: 'server-project-main',
       previewMode: 'live',
+      reviewPlane: { executor: 'github-actions' },
     }],
   });
   writeJSON(paths.content('server-project-main', 1, { exactSession: true }), {
@@ -138,6 +139,7 @@ test('GET /api/projects 返回项目目录并隐藏服务器仓库路径', async
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.projects[0].id, 'server-project');
+  assert.deepEqual(body.projects[0].reviewPlane, { executor: 'github-actions' });
   assert.equal(body.sessions.find((item) => item.id === 'server-project-main').projectId, 'server-project');
   assert.doesNotMatch(JSON.stringify(body), /\/srv\/private/);
 });

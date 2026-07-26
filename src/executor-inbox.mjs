@@ -67,6 +67,25 @@ function payloadBytes(payload) {
   return Buffer.byteLength(serialized, 'utf8');
 }
 
+function isExternalReviewExecutor(executor) {
+  return executorById(executor)?.kind === 'external-review';
+}
+
+function validateExternalReviewTask(executor, type, payload) {
+  if (!isExternalReviewExecutor(executor)) return;
+  if (type !== 'review-request') {
+    throw invalid('external-review 执行面只接受 review-request 任务');
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw invalid('external-review 的 payload 必须是对象');
+  }
+  cleanRequiredString(payload.repo, 'payload.repo', 300);
+  cleanRequiredString(payload.branch, 'payload.branch', 300);
+  if (!Number.isSafeInteger(payload.pr) || payload.pr <= 0) {
+    throw invalid('payload.pr 必须是正整数');
+  }
+}
+
 export function inboxRoot() {
   return path.join(workspaceDir(), 'inbox');
 }
@@ -126,6 +145,11 @@ function parseStoredTask(target, expected = {}) {
     || (expected.id && task.id.toLowerCase() !== expected.id)
     || (expected.executor && task.executor !== expected.executor)) {
     throw inboxError('INBOX_CORRUPT', '任务文件结构损坏');
+  }
+  try {
+    validateExternalReviewTask(task.executor, task.type, task.payload);
+  } catch {
+    throw inboxError('INBOX_CORRUPT', '外部评审任务文件结构损坏');
   }
   return task;
 }
@@ -308,6 +332,7 @@ export function enqueueInboxTask(input, { now } = {}) {
   if (payloadBytes(input.payload) > INBOX_PAYLOAD_LIMIT) {
     throw inboxError('INBOX_PAYLOAD_TOO_LARGE', 'payload 不能超过 64 KiB');
   }
+  validateExternalReviewTask(executor, type, input.payload);
 
   const createdAt = dateFor(now).toISOString();
   const task = {
@@ -384,6 +409,9 @@ export function claimInboxTask(id, claimedBy, {
   const timeout = cleanClaimTimeout(claimTimeoutMs);
   resetExpiredInboxClaims({ now: current, claimTimeoutMs: timeout });
   return withLockedTask(id, current.getTime(), (task) => {
+    if (isExternalReviewExecutor(task.executor)) {
+      throw inboxError('INBOX_CONFLICT', 'external-review 执行面不可被 pull 监听领取');
+    }
     if (task.status !== 'pending') {
       throw inboxError('INBOX_CONFLICT', `任务当前状态为 ${task.status}，不能领取`);
     }
@@ -409,6 +437,9 @@ export function renewInboxTask(id, claimedBy, {
   const timeout = cleanClaimTimeout(claimTimeoutMs);
   resetExpiredInboxClaims({ now: current, claimTimeoutMs: timeout });
   return withLockedTask(id, current.getTime(), (task) => {
+    if (isExternalReviewExecutor(task.executor)) {
+      throw inboxError('INBOX_CONFLICT', 'external-review 执行面不可续租');
+    }
     if (task.status !== 'claimed' || task.claimedBy !== worker) {
       throw inboxError('INBOX_CONFLICT', '任务租约不存在或 claimedBy 不匹配');
     }
@@ -421,23 +452,38 @@ export function renewInboxTask(id, claimedBy, {
   }).task;
 }
 
-export function completeInboxTask(id, result, {
-  now,
-  claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS,
-} = {}) {
+function cleanCompletionResult(result) {
   if (!result || typeof result !== 'object' || Array.isArray(result)
     || typeof result.ok !== 'boolean') {
     throw invalid('ok 必须是布尔值');
   }
-  const summary = cleanRequiredString(result.summary, 'summary', 4000);
+  return {
+    ok: result.ok,
+    summary: cleanRequiredString(result.summary, 'summary', 4000),
+  };
+}
+
+function completeInboxTaskInternal(id, result, {
+  now,
+  claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS,
+  allowExternalReview = false,
+  onlyExternalReview = false,
+} = {}) {
   const current = dateFor(now);
   const timeout = cleanClaimTimeout(claimTimeoutMs);
   resetExpiredInboxClaims({ now: current, claimTimeoutMs: timeout });
   return withLockedTask(id, current.getTime(), (task) => {
+    const externalReview = isExternalReviewExecutor(task.executor);
+    if (onlyExternalReview && !externalReview) {
+      throw inboxError('INBOX_CONFLICT', '该完成路径只允许 external-review 任务');
+    }
+    if (externalReview && !allowExternalReview) {
+      throw inboxError('INBOX_CONFLICT', 'external-review 任务只能由服务端评审回传完成');
+    }
     if (task.status === 'done' || task.status === 'failed') {
       return { task, idempotent: true };
     }
-    if (task.status !== 'claimed') {
+    if (task.status !== 'claimed' && !(externalReview && task.status === 'pending')) {
       throw inboxError('INBOX_CONFLICT', `任务当前状态为 ${task.status}，不能完成`);
     }
     return {
@@ -446,9 +492,29 @@ export function completeInboxTask(id, result, {
         status: result.ok ? 'done' : 'failed',
         leaseExpiresAt: null,
         completedAt: current.toISOString(),
-        result: { ok: result.ok, summary },
+        result,
       },
       idempotent: false,
     };
+  });
+}
+
+export function completeInboxTask(id, result, options = {}) {
+  return completeInboxTaskInternal(id, cleanCompletionResult(result), options);
+}
+
+// 仅供服务端的 GitHub 回传接收器调用；公开 /complete 不会进入此函数。
+export function completeExternalReviewInboxTask(id, result, options = {}) {
+  const completion = cleanCompletionResult(result);
+  const verdict = cleanRequiredString(result?.verdict, 'verdict', 100);
+  const ciStatus = cleanRequiredString(result?.ciStatus, 'ciStatus', 100);
+  return completeInboxTaskInternal(id, {
+    ...completion,
+    verdict,
+    ciStatus,
+  }, {
+    ...options,
+    allowExternalReview: true,
+    onlyExternalReview: true,
   });
 }

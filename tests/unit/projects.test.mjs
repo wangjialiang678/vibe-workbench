@@ -38,12 +38,13 @@ test('项目注册表严格校验 kebab-case、重复 ID 与绝对仓库路径',
   }), /绝对路径/);
 });
 
-test('执行面目录固定，项目 executor 缺省为 cloud-codex 并拒绝未知值', () => {
+test('执行面目录包含外部评审面，项目 executor 缺省为 cloud-codex 并拒绝未知值', () => {
   assert.deepEqual(
-    projects.EXECUTORS?.map(({ id, kind }) => ({ id, kind })),
+    projects.EXECUTORS?.map(({ id, kind, transport }) => ({ id, kind, transport })),
     [
-      { id: 'cloud-codex', kind: 'resident' },
-      { id: 'local-mac', kind: 'pull' },
+      { id: 'cloud-codex', kind: 'resident', transport: undefined },
+      { id: 'local-mac', kind: 'pull', transport: undefined },
+      { id: 'github-actions', kind: 'external-review', transport: 'pr' },
     ],
   );
 
@@ -52,17 +53,32 @@ test('执行面目录固定，项目 executor 缺省为 cloud-codex 并拒绝未
     projects: [
       { id: 'default-project', displayName: '默认项目' },
       { id: 'local-project', displayName: '本地项目', executor: 'local-mac' },
+      {
+        id: 'paper-edit',
+        displayName: '论文编辑',
+        reviewPlane: { executor: 'github-actions' },
+      },
     ],
   });
   assert.equal(normalized.projects[0].executor, 'cloud-codex');
   assert.equal(normalized.projects[1].executor, 'local-mac');
+  assert.deepEqual(normalized.projects[2].reviewPlane, { executor: 'github-actions' });
   assert.equal(projects.executorById('local-mac').displayName, '创始人 Mac');
+  assert.equal(projects.executorById('github-actions').kind, 'external-review');
   assert.equal(projects.executorById('missing'), null);
 
   assert.throws(() => projects.normalizeProjectRegistry({
     version: 1,
     projects: [{ id: 'bad-executor', displayName: '坏执行面', executor: '../local' }],
   }), /executor/);
+  assert.throws(() => projects.normalizeProjectRegistry({
+    version: 1,
+    projects: [{
+      id: 'bad-review-plane',
+      displayName: '坏评审面',
+      reviewPlane: { executor: 'local-mac' },
+    }],
+  }), /reviewPlane/);
 });
 
 test('会话元数据迁移只追加字段，保留旧执行器 session/cwd', () => {
@@ -116,6 +132,7 @@ test('项目目录把已注册、待归类、已归档会话分开且不暴露�
       memoryPath: '/srv/memory/project-one',
       primarySession: 'active-session',
       previewMode: 'live',
+      reviewPlane: { executor: 'github-actions' },
     }],
   });
   workspace.writeJSON(workspace.paths.content('active-session', 1, { exactSession: true }), {
@@ -152,6 +169,7 @@ test('项目目录把已注册、待归类、已归档会话分开且不暴露�
   assert.equal(catalog.projects.length, 1);
   assert.ok(catalog.projects[0].sessions.includes('active-session'));
   assert.ok(catalog.projects[0].sessions.includes('legacy-session'));
+  assert.deepEqual(catalog.projects[0].reviewPlane, { executor: 'github-actions' });
   assert.equal(catalog.sessions.find((item) => item.id === 'unclassified-session').status, 'unclassified');
   assert.equal(catalog.sessions.find((item) => item.id === 'archived-session').status, 'archived');
   assert.doesNotMatch(JSON.stringify(catalog), /\/srv\/project-one|\/srv\/memory/);
