@@ -59,6 +59,10 @@ function normalizeUrl(value) {
   return url.href.replace(/\/$/, '');
 }
 
+function isPortableAbsolutePath(value) {
+  return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
 function parseRepoMap(value) {
   if (value == null || value.trim() === '') return {};
   let parsed;
@@ -72,10 +76,11 @@ function parseRepoMap(value) {
   }
   const repoMap = {};
   for (const [projectId, repoPath] of Object.entries(parsed)) {
-    if (!projectId.trim() || typeof repoPath !== 'string' || !path.isAbsolute(repoPath)) {
+    const cleanRepoPath = typeof repoPath === 'string' ? repoPath.trim() : '';
+    if (!projectId.trim() || !isPortableAbsolutePath(cleanRepoPath)) {
       throw new Error(`LISTENER_REPO_MAP.${projectId} 必须是绝对路径`);
     }
-    repoMap[projectId] = path.normalize(repoPath);
+    repoMap[projectId] = cleanRepoPath;
   }
   return repoMap;
 }

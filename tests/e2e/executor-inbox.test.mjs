@@ -184,7 +184,9 @@ test('入队按原子 JSON 文件保存，列表可按执行面和状态筛选',
 
   const target = taskFile(task.executor, task.id);
   assert.equal(fs.existsSync(target), true);
-  assert.equal(fs.statSync(target).mode & 0o777, 0o600);
+  const mode = fs.statSync(target).mode & 0o777;
+  assert.equal(mode & 0o600, 0o600, '任务文件必须保留所有者读写位');
+  assert.equal(mode & 0o111, 0, '任务文件不能带可执行位');
   assert.deepEqual(readTask(task.executor, task.id), task);
   assert.deepEqual(
     fs.readdirSync(path.dirname(target)).filter((name) => name.endsWith('.tmp')),
@@ -442,7 +444,7 @@ test('payload 按 JSON UTF-8 字节允许恰好 64 KiB，超过一字节返回 4
 
 test('短时限 server 会自动把超时 claimed 回退 pending，并记录任务历史', async () => {
   const previousTimeout = process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS;
-  process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS = '30';
+  process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS = '250';
   const shortServer = startServer(0, '127.0.0.1', { participantsFile });
   process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS = previousTimeout;
   await waitForListening(shortServer);
@@ -461,7 +463,9 @@ test('短时限 server 会自动把超时 claimed 回退 pending，并记录任�
     );
     assert.equal(claimed.status, 200);
 
-    await delay(180);
+    await waitUntil(() => {
+      try { return readTask('local-mac', task.id).status === 'pending'; } catch { return false; }
+    }, 2000);
 
     const saved = readTask('local-mac', task.id);
     assert.equal(saved.status, 'pending');
@@ -483,7 +487,7 @@ test('短时限 server 会自动把超时 claimed 回退 pending，并记录任�
         `${interrupted.id}.claim-${Date.now() - 1000}-deadbeef.json`,
       ),
     );
-    await delay(80);
+    await waitUntil(() => fs.existsSync(interruptedPath), 2000);
     const recoveredPending = readTask('local-mac', interrupted.id);
     assert.equal(recoveredPending.status, 'pending');
     assert.equal(recoveredPending.history.at(-1).event, 'claim-expired');
@@ -512,7 +516,7 @@ test('短时限 server 会自动把超时 claimed 回退 pending，并记录任�
         `${terminal.id}.claim-${Date.now() - 1000}-cafebabe.json`,
       ),
     );
-    await delay(80);
+    await waitUntil(() => fs.existsSync(terminalPath), 2000);
     const recoveredTerminal = readTask('local-mac', terminal.id);
     assert.equal(recoveredTerminal.status, 'done');
     assert.deepEqual(recoveredTerminal.result, { ok: true, summary: '终态不得回退' });

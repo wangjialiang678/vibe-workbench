@@ -38,6 +38,28 @@ test('项目注册表严格校验 kebab-case、重复 ID 与绝对仓库路径',
   }), /绝对路径/);
 });
 
+test('项目注册表保留跨平台绝对路径文本', () => {
+  const registry = projects.normalizeProjectRegistry({
+    version: 1,
+    projects: [{
+      id: 'cross-platform-paths',
+      displayName: '跨平台路径',
+      repoPath: 'C:\\Users\\founder\\project',
+      memoryPath: '/srv/memory/project',
+    }],
+  });
+
+  assert.deepEqual(registry.projects[0], {
+    id: 'cross-platform-paths',
+    displayName: '跨平台路径',
+    status: 'active',
+    previewMode: 'evidence',
+    executor: 'cloud-codex',
+    repoPath: 'C:\\Users\\founder\\project',
+    memoryPath: '/srv/memory/project',
+  });
+});
+
 test('执行面目录包含外部评审面，项目 executor 缺省为 cloud-codex 并拒绝未知值', () => {
   assert.deepEqual(
     projects.EXECUTORS?.map(({ id, kind, transport }) => ({ id, kind, transport })),

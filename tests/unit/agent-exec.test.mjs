@@ -17,6 +17,18 @@ function requireExport(value, name) {
   assert.equal(typeof value, 'function', `${name} 应导出为函数`);
 }
 
+test('WorkBuddy 查找接受 Windows 约定的 Path 环境变量名', () => {
+  requireExport(resolveWorkBuddyBinary, 'resolveWorkBuddyBinary');
+  const binary = resolveWorkBuddyBinary({
+    env: { Path: '/cross-platform/bin' },
+    isExecutable(candidate) {
+      return candidate === '/cross-platform/bin/codebuddy';
+    },
+  });
+
+  assert.equal(binary, 'codebuddy');
+});
+
 function streamResult(sessionId, text) {
   return `${JSON.stringify({ type: 'result', session_id: sessionId, result: text })}\n`;
 }

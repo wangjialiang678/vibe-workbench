@@ -99,6 +99,13 @@ function isExecutable(candidate) {
   }
 }
 
+function environmentValue(env, key) {
+  const direct = env[key];
+  if (typeof direct === 'string') return direct;
+  const entry = Object.entries(env).find(([name]) => name.toLowerCase() === key.toLowerCase());
+  return typeof entry?.[1] === 'string' ? entry[1] : '';
+}
+
 /**
  * 判断命令是否存在于 PATH。Windows 同时检查 PATHEXT。
  * @param {string} command
@@ -107,11 +114,11 @@ function isExecutable(candidate) {
  * @returns {boolean}
  */
 function commandAvailableOnPath(command, env = process.env, isExecutableImpl = isExecutable) {
-  const pathValue = typeof env.PATH === 'string' ? env.PATH : '';
+  const pathValue = environmentValue(env, 'PATH');
   if (!pathValue) return false;
 
   const extensions = process.platform === 'win32'
-    ? String(env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';')
+    ? String(environmentValue(env, 'PATHEXT') || '.EXE;.CMD;.BAT;.COM').split(';')
     : [''];
 
   for (const directory of pathValue.split(path.delimiter)) {

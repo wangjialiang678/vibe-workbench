@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,14 +28,14 @@ before(async () => {
 
   // 动态 import bin（运行时需用 WB_WORKSPACE）
   // 注意：ESM 模块缓存 — 先设好环境变量再 import
-  const bin = await import(BIN);
+  const bin = await import(pathToFileURL(BIN).href);
   cmdRender = bin.cmdRender;
   cmdParticipantAdd = bin.cmdParticipantAdd;
   cmdParticipantList = bin.cmdParticipantList;
   cmdParticipantRevoke = bin.cmdParticipantRevoke;
 
   // 同时 import workspace 工具用于断言
-  const ws = await import(`${ROOT}/src/workspace.mjs`);
+  const ws = await import(pathToFileURL(path.join(ROOT, 'src', 'workspace.mjs')).href);
   paths = ws.paths;
   readStatus = ws.readStatus;
 });
@@ -79,7 +79,7 @@ describe('cmdRender', () => {
     assert.equal(result.round, 1);
 
     // content.json 存在
-    const { readJSON } = await import(`${ROOT}/src/workspace.mjs`);
+    const { readJSON } = await import(pathToFileURL(path.join(ROOT, 'src', 'workspace.mjs')).href);
     const stored = readJSON(paths.content('s1', 1));
     assert.ok(stored, 'content.json should exist');
     assert.equal(stored.session, 's1');
@@ -102,7 +102,7 @@ describe('cmdRender', () => {
 
     await cmdRender('s2', content);
 
-    const { readText } = await import(`${ROOT}/src/workspace.mjs`);
+    const { readText } = await import(pathToFileURL(path.join(ROOT, 'src', 'workspace.mjs')).href);
     const md = readText(paths.contentMd('s2', 1));
     assert.ok(md, 'content.md should exist');
     assert.ok(md.includes('内容文本'), 'content.md should contain block body');

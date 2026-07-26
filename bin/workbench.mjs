@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
+const ROOT_URL = new URL('../', import.meta.url);
+const importRootModule = (relativePath) => import(new URL(relativePath, ROOT_URL).href);
 
 // ─── 导入工作区契约 ──────────────────────────────────────────────────────────
 const {
@@ -16,32 +16,32 @@ const {
   writeStatus,
   exists,
   writeRound,
-} = await import(`${ROOT}/src/workspace.mjs`);
+} = await importRootModule('src/workspace.mjs');
 
 const {
   lintContent,
   formatLint,
   findIncompleteDecisions,
   formatIncompleteDecisions,
-} = await import(`${ROOT}/src/protocol/lint.mjs`);
+} = await importRootModule('src/protocol/lint.mjs');
 
 const {
   DEFAULT_PARTICIPANTS_FILE,
   addParticipant,
   listParticipants,
   revokeParticipant,
-} = await import(`${ROOT}/src/participants.mjs`);
+} = await importRootModule('src/participants.mjs');
 
 const {
   appendStreamEntry,
   migrateSessionComments,
   readStreamEntries,
-} = await import(`${ROOT}/src/stream.mjs`);
+} = await importRootModule('src/stream.mjs');
 
 const {
   parseMarkdownSource,
   publishDocument,
-} = await import(`${ROOT}/src/documents.mjs`);
+} = await importRootModule('src/documents.mjs');
 
 // ─── cmdRender ───────────────────────────────────────────────────────────────
 /**
@@ -535,7 +535,7 @@ async function cmdWatch({ maxRestarts = 5, session = null } = {}) {
   let restarts = 0;
 
   async function startListener() {
-    const { startListener: start } = await import(`${ROOT}/src/loop/listener.mjs`);
+    const { startListener: start } = await importRootModule('src/loop/listener.mjs');
     return start();
   }
 
@@ -552,7 +552,7 @@ async function cmdWatch({ maxRestarts = 5, session = null } = {}) {
           writeStatus(session, { supervisorState: 'dead' });
         } else {
           // 扫描所有 session
-          const { listSessions } = await import(`${ROOT}/src/workspace.mjs`);
+          const { listSessions } = await importRootModule('src/workspace.mjs');
           for (const s of listSessions()) {
             writeStatus(s, { supervisorState: 'dead' });
           }
@@ -693,7 +693,7 @@ async function main() {
     case 'serve': {
       const port = parsePort(rest);
       const host = parseHost(rest);
-      const { startServer } = await import(`${ROOT}/src/server/server.mjs`);
+      const { startServer } = await importRootModule('src/server/server.mjs');
       startServer(port, host); // 同步校验 host/token 后监听，server 保活进程
       console.log(`workbench serve → http://${host}:${port}/render/  (Ctrl+C 退出)`);
       break;
@@ -709,8 +709,8 @@ async function main() {
       const host = parseHost(rest);
       // 并行启动 server + listener（watch 模式）
       const [{ startServer }, { startListener }] = await Promise.all([
-        import(`${ROOT}/src/server/server.mjs`),
-        import(`${ROOT}/src/loop/listener.mjs`),
+        importRootModule('src/server/server.mjs'),
+        importRootModule('src/loop/listener.mjs'),
       ]);
       // server 在同进程启动（同步返回，非阻塞），listener 监管自愈
       startServer(port, host);

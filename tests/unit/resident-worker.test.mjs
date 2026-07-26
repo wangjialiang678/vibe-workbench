@@ -636,10 +636,11 @@ test('Codex 超时后终止子进程', async () => {
   ]);
   assert.equal(calls[0].args.includes('--skip-git-repo-check'), true);
   assert.equal(calls[0].args.includes('model_reasoning_effort="xhigh"'), true);
-  assert.equal(calls[0].options.detached, true);
+  const usesProcessGroup = process.platform !== 'win32';
+  assert.equal(calls[0].options.detached, usesProcessGroup);
   assert.equal(result.timedOut, true);
-  assert.deepEqual(groupKills, [[-43210, 'SIGTERM']]);
-  assert.deepEqual(child.killedWith, []);
+  assert.deepEqual(groupKills, usesProcessGroup ? [[-43210, 'SIGTERM']] : []);
+  assert.deepEqual(child.killedWith, usesProcessGroup ? [] : ['SIGTERM']);
 });
 
 test('Codex 中断快照提交全部改动并恢复原分支干净状态', async () => {
@@ -1130,6 +1131,30 @@ test('任务简报包含显式项目路由，不再把所有任务固定到主�
   assert.match(brief, /`\/srv\/user-vibeloop`/);
   assert.match(brief, /视频剪辑主线/);
   assert.doesNotMatch(brief, /主业务仓库：`\/home\/ubuntu\/apps\/user-vibeloop`/);
+});
+
+test('任务简报保留 Windows 项目路径并按其路径语法计算共享记忆根', () => {
+  const brief = worker.buildTaskBrief({
+    session: 'windows-project-session',
+    round: 1,
+    events: [],
+    workbenchUrl: 'http://127.0.0.1:8099',
+    workerHome: '/srv/worker',
+    executionContext: {
+      session: { id: 'windows-project-session', title: 'Windows 项目' },
+      primaryProject: {
+        id: 'windows-project',
+        displayName: 'Windows Project',
+        repoPath: 'C:\\work\\project',
+        memoryPath: 'C:\\memory\\project',
+      },
+      relatedProjects: [],
+    },
+  });
+
+  assert.match(brief, /`C:\\work\\project`/);
+  assert.match(brief, /项目记忆：`C:\\memory\\project`/);
+  assert.match(brief, /共享记忆根：`C:\\memory`/);
 });
 
 test('项目上下文解析期间收到停止信号时不领取事件也不启动 Codex', async () => {

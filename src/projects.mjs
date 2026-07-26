@@ -42,11 +42,15 @@ function optionalString(value, name, { maxLength = 500 } = {}) {
   return clean;
 }
 
+function isPortableAbsolutePath(value) {
+  return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
 function optionalAbsolutePath(value, name) {
   const clean = optionalString(value, name, { maxLength: 1000 });
   if (clean == null) return undefined;
-  if (!path.isAbsolute(clean)) throw new Error(`${name} 必须是绝对路径`);
-  return path.normalize(clean);
+  if (!isPortableAbsolutePath(clean)) throw new Error(`${name} 必须是绝对路径`);
+  return clean;
 }
 
 function stringList(value, name, validator = () => true) {
@@ -109,6 +113,8 @@ function cleanProject(input, index = 0) {
     : optionalString(input.executor, `项目 ${id} 的 executor`, { maxLength: 80 });
   if (!executorById(executor)) throw new Error(`项目 ${id} 的 executor 无效`);
   const reviewPlane = optionalReviewPlane(input.reviewPlane, id);
+  const repoPath = optionalAbsolutePath(input.repoPath, `项目 ${id} 的 repoPath`);
+  const memoryPath = optionalAbsolutePath(input.memoryPath, `项目 ${id} 的 memoryPath`);
 
   return {
     id,
@@ -119,11 +125,11 @@ function cleanProject(input, index = 0) {
     ...(optionalString(input.description, `项目 ${id} 的 description`, { maxLength: 500 })
       ? { description: input.description.trim() }
       : {}),
-    ...(optionalAbsolutePath(input.repoPath, `项目 ${id} 的 repoPath`)
-      ? { repoPath: path.normalize(input.repoPath.trim()) }
+    ...(repoPath
+      ? { repoPath }
       : {}),
-    ...(optionalAbsolutePath(input.memoryPath, `项目 ${id} 的 memoryPath`)
-      ? { memoryPath: path.normalize(input.memoryPath.trim()) }
+    ...(memoryPath
+      ? { memoryPath }
       : {}),
     ...(primarySession ? { primarySession } : {}),
     ...(aliases.length ? { aliases } : {}),

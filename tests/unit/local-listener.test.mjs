@@ -95,6 +95,21 @@ test('loadConfig 解析默认值、仓库映射和唯一 claimedBy 所需配置'
   });
 });
 
+test('loadConfig 保留跨平台绝对仓库路径，不按当前宿主改写', () => {
+  const config = loadConfig({
+    WORKBENCH_TOKEN: 'secret',
+    LISTENER_REPO_MAP: JSON.stringify({
+      mac: '/Users/founder/demo',
+      windows: 'C:\\Users\\founder\\demo',
+    }),
+  }, { hostname: () => 'macbook', pid: 42 });
+
+  assert.deepEqual(config.repoMap, {
+    mac: '/Users/founder/demo',
+    windows: 'C:\\Users\\founder\\demo',
+  });
+});
+
 test('codex-task 使用 tcd start/check，并按 GET→claim→complete 完成', async () => {
   const calls = [];
   const spawnCalls = [];

@@ -329,7 +329,7 @@ export function buildTaskBrief({
           ? `- 目标仓库：\`${primaryProject.repoPath}\``
           : '- 目标仓库：未配置（本次回退常驻执行目录）',
         ...(primaryProject.memoryPath ? [`- 项目记忆：\`${primaryProject.memoryPath}\``] : []),
-        ...(primaryProject.memoryPath ? [`- 共享记忆根：\`${path.dirname(primaryProject.memoryPath)}\`（项目记忆优先，跨项目偏好按需读取）`] : []),
+        ...(primaryProject.memoryPath ? [`- 共享记忆根：\`${projectPathDirname(primaryProject.memoryPath)}\`（项目记忆优先，跨项目偏好按需读取）`] : []),
         ...(relatedProjects.length
           ? [`- 关联项目：${relatedProjects.map((project) => (
               project.repoPath
@@ -388,16 +388,24 @@ ${originals}
 8. 禁止外发、回显或写入任何凭证。`;
 }
 
+function isPortableAbsolutePath(value) {
+  return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
+
+function projectPathDirname(value) {
+  return path.win32.isAbsolute(value) ? path.win32.dirname(value) : path.posix.dirname(value);
+}
+
 function cleanProjectContext(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const id = typeof value.id === 'string' ? value.id.trim() : '';
   const displayName = typeof value.displayName === 'string' ? value.displayName.trim() : '';
   if (!id || !displayName) return null;
-  const repoPath = typeof value.repoPath === 'string' && path.isAbsolute(value.repoPath)
-    ? path.normalize(value.repoPath)
+  const repoPath = typeof value.repoPath === 'string' && isPortableAbsolutePath(value.repoPath.trim())
+    ? value.repoPath.trim()
     : '';
-  const memoryPath = typeof value.memoryPath === 'string' && path.isAbsolute(value.memoryPath)
-    ? path.normalize(value.memoryPath)
+  const memoryPath = typeof value.memoryPath === 'string' && isPortableAbsolutePath(value.memoryPath.trim())
+    ? value.memoryPath.trim()
     : '';
   return {
     id,
@@ -449,9 +457,17 @@ function pathIsWithin(candidate, parent) {
     && !path.isAbsolute(relative));
 }
 
+function sameFilesystemPath(left, right) {
+  return path.relative(left, right) === '' && path.relative(right, left) === '';
+}
+
+function realPath(value) {
+  return fs.realpathSync.native?.(value) ?? fs.realpathSync(value);
+}
+
 function realOrResolvedPath(value) {
   const resolved = path.resolve(value);
-  try { return fs.realpathSync(resolved); } catch { return resolved; }
+  try { return realPath(resolved); } catch { return resolved; }
 }
 
 function protectedWorkspacePaths(env = process.env) {
@@ -495,7 +511,7 @@ export async function snapshotInterruptedWorktree(repoPath, {
   gitImpl = executeGit,
 } = {}) {
   if (!isDirectory(repoPath)) return { status: 'skipped', reason: 'not-git' };
-  const candidate = fs.realpathSync(repoPath);
+  const candidate = realPath(repoPath);
   const normalizedProtectedPaths = protectedPaths.map(realOrResolvedPath);
   if (normalizedProtectedPaths.some((item) => pathIsWithin(candidate, item))) {
     return { status: 'skipped', reason: 'protected-path' };
@@ -504,7 +520,7 @@ export async function snapshotInterruptedWorktree(repoPath, {
   let topLevel;
   try {
     const result = await gitImpl(candidate, ['rev-parse', '--show-toplevel'], { env });
-    topLevel = fs.realpathSync(String(result.stdout || '').trim());
+    topLevel = realPath(String(result.stdout || '').trim());
   } catch (error) {
     if (error?.code === 'ENOENT') {
       return { status: 'failed', error: gitFailureMessage(error) };
@@ -512,7 +528,7 @@ export async function snapshotInterruptedWorktree(repoPath, {
     return { status: 'skipped', reason: 'not-git' };
   }
   // 不允许从仓库内的普通目录向上命中父仓库，尤其不能误操作 workbench/workspace。
-  if (topLevel !== candidate) return { status: 'skipped', reason: 'not-git' };
+  if (!sameFilesystemPath(topLevel, candidate)) return { status: 'skipped', reason: 'not-git' };
 
   try {
     const status = await gitImpl(candidate, ['status', '--porcelain=v1', '--untracked-files=all'], { env });
