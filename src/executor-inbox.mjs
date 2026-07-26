@@ -400,6 +400,18 @@ export function listInboxTasks({
     ));
 }
 
+// 监控、审计等只读调用不能顺带回收超时任务；它们只如实读取当前落盘状态。
+export function listInboxTasksReadOnly({ executor, status } = {}) {
+  if (!executorById(executor)) throw invalid('executor 未注册');
+  if (status != null && !INBOX_STATUSES.has(status)) throw invalid('status 参数无效');
+  return taskIds(executor)
+    .map((id) => parseStoredTask(canonicalTaskPath(executor, id), { id, executor }))
+    .filter((task) => status == null || task.status === status)
+    .sort((left, right) => (
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
+    ));
+}
+
 export function claimInboxTask(id, claimedBy, {
   now,
   claimTimeoutMs = DEFAULT_CLAIM_TIMEOUT_MS,

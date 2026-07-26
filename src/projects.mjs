@@ -18,6 +18,7 @@ export const PROJECT_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const PROJECT_STATUSES = new Set(['active', 'archived']);
 export const SESSION_KINDS = new Set(['work', 'review', 'decision', 'test']);
 export const SESSION_STATUSES = new Set(['active', 'closed', 'unclassified', 'archived']);
+export const CONTROL_TOWER_LEVELS = new Set([0, 1, 2, 3, 4]);
 export const DEFAULT_EXECUTOR_ID = 'cloud-codex';
 export const EXECUTORS = Object.freeze([
   Object.freeze({ id: DEFAULT_EXECUTOR_ID, displayName: '云端常驻 Codex', kind: 'resident' }),
@@ -51,6 +52,80 @@ function optionalAbsolutePath(value, name) {
   if (clean == null) return undefined;
   if (!isPortableAbsolutePath(clean)) throw new Error(`${name} 必须是绝对路径`);
   return clean;
+}
+
+function requiredHttpUrl(value, name, { statusEndpoint = false } = {}) {
+  const raw = optionalString(value, name, { maxLength: 2000 });
+  if (raw == null) return undefined;
+  let parsed;
+  try { parsed = new URL(raw); }
+  catch { throw new Error(`${name} 必须是 http(s) URL`); }
+  if (!['http:', 'https:'].includes(parsed.protocol)
+    || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${name} 必须是不含口令、查询参数或片段的 http(s) URL`);
+  }
+  if (statusEndpoint && parsed.pathname !== '/api/status') {
+    throw new Error(`${name} 必须指向 /api/status`);
+  }
+  return parsed.toString();
+}
+
+function optionalControlLink(value, name) {
+  const raw = optionalString(value, name, { maxLength: 2000 });
+  if (raw == null) return undefined;
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  return requiredHttpUrl(raw, name);
+}
+
+function optionalControlTower(value, projectId) {
+  if (value == null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`项目 ${projectId} 的 controlTower 必须是对象`);
+  }
+  const level = value.level == null ? 0 : value.level;
+  if (!CONTROL_TOWER_LEVELS.has(level)) {
+    throw new Error(`项目 ${projectId} 的 controlTower.level 必须是 0—4 的整数`);
+  }
+  const statusUrl = requiredHttpUrl(
+    value.statusUrl,
+    `项目 ${projectId} 的 controlTower.statusUrl`,
+    { statusEndpoint: true },
+  );
+  if (level > 0 && !statusUrl) {
+    throw new Error(`项目 ${projectId} 接入 L${level} 时必须配置 controlTower.statusUrl`);
+  }
+  if (level === 0 && statusUrl) {
+    throw new Error(`项目 ${projectId} 为 L0 时不能配置 controlTower.statusUrl`);
+  }
+  const tokenEnv = optionalString(
+    value.tokenEnv,
+    `项目 ${projectId} 的 controlTower.tokenEnv`,
+    { maxLength: 160 },
+  );
+  if (tokenEnv && !/^[A-Z_][A-Z0-9_]*$/.test(tokenEnv)) {
+    throw new Error(`项目 ${projectId} 的 controlTower.tokenEnv 必须是大写环境变量名`);
+  }
+  const rawLinks = value.links == null ? {} : value.links;
+  if (!rawLinks || typeof rawLinks !== 'object' || Array.isArray(rawLinks)) {
+    throw new Error(`项目 ${projectId} 的 controlTower.links 必须是对象`);
+  }
+  const links = {};
+  for (const key of ['feedback', 'tickets', 'session']) {
+    const link = optionalControlLink(rawLinks[key], `项目 ${projectId} 的 controlTower.links.${key}`);
+    if (link) links[key] = link;
+  }
+  const serviceUnits = stringList(
+    value.serviceUnits,
+    `项目 ${projectId} 的 controlTower.serviceUnits`,
+    (item) => /^[A-Za-z0-9_.@-]+$/.test(item),
+  );
+  return {
+    level,
+    ...(statusUrl ? { statusUrl } : {}),
+    ...(tokenEnv ? { tokenEnv } : {}),
+    ...(Object.keys(links).length ? { links } : {}),
+    ...(serviceUnits.length ? { serviceUnits } : {}),
+  };
 }
 
 function stringList(value, name, validator = () => true) {
@@ -113,6 +188,7 @@ function cleanProject(input, index = 0) {
     : optionalString(input.executor, `项目 ${id} 的 executor`, { maxLength: 80 });
   if (!executorById(executor)) throw new Error(`项目 ${id} 的 executor 无效`);
   const reviewPlane = optionalReviewPlane(input.reviewPlane, id);
+  const controlTower = optionalControlTower(input.controlTower, id);
   const repoPath = optionalAbsolutePath(input.repoPath, `项目 ${id} 的 repoPath`);
   const memoryPath = optionalAbsolutePath(input.memoryPath, `项目 ${id} 的 memoryPath`);
 
@@ -134,6 +210,7 @@ function cleanProject(input, index = 0) {
     ...(primarySession ? { primarySession } : {}),
     ...(aliases.length ? { aliases } : {}),
     ...(reviewPlane ? { reviewPlane } : {}),
+    ...(controlTower ? { controlTower } : {}),
   };
 }
 
