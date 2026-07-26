@@ -136,8 +136,9 @@ function commandAvailableOnPath(command, env = process.env, isExecutableImpl = i
   const pathValue = environmentValue(env, 'PATH');
   if (!pathValue) return false;
 
+  // Windows 也要探测无扩展名候选：npm/跨平台 CLI 常同时落 codebuddy 与 codebuddy.cmd
   const extensions = process.platform === 'win32'
-    ? String(environmentValue(env, 'PATHEXT') || '.EXE;.CMD;.BAT;.COM').split(';')
+    ? ['', ...String(environmentValue(env, 'PATHEXT') || '.EXE;.CMD;.BAT;.COM').split(';')]
     : [''];
 
   for (const directory of pathValue.split(path.delimiter)) {
