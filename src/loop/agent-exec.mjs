@@ -107,6 +107,25 @@ function environmentValue(env, key) {
 }
 
 /**
+ * process.env 在 Windows 上按大小写无关方式读取，但展开成普通对象后会丢失该语义。
+ * 子进程环境统一用 PATH，避免宿主的 Path 键在展开后不可见。
+ * @param {NodeJS.ProcessEnv|Record<string, string|undefined>} env
+ * @returns {Record<string, string|undefined>}
+ */
+function copyEnvironment(env) {
+  const copiedEnv = { ...env };
+  const hasPath = Object.keys(copiedEnv).some((key) => key.toLowerCase() === 'path');
+  if (!hasPath) return copiedEnv;
+
+  const pathValue = environmentValue(env, 'PATH');
+  for (const key of Object.keys(copiedEnv)) {
+    if (key.toLowerCase() === 'path') delete copiedEnv[key];
+  }
+  copiedEnv.PATH = pathValue;
+  return copiedEnv;
+}
+
+/**
  * 判断命令是否存在于 PATH。Windows 同时检查 PATHEXT。
  * @param {string} command
  * @param {NodeJS.ProcessEnv|Record<string, string|undefined>} [env]
@@ -354,7 +373,7 @@ export async function runClaude({
   spawnImpl = nodeSpawn,
 }) {
   const argv = buildArgv(prompt, sessionId);
-  const inheritedEnv = { ...process.env };
+  const inheritedEnv = copyEnvironment(process.env);
   const apiKey = inheritedEnv.ANTHROPIC_API_KEY;
   const hasApiKey = typeof apiKey === 'string' && apiKey.trim().length > 0;
   const subscriptionEnv = { ...inheritedEnv };

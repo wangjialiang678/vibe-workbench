@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import path from 'node:path';
 
 const agentModule = await import('../../src/loop/agent-exec.mjs').catch(() => ({}));
 const {
@@ -22,7 +23,7 @@ test('WorkBuddy 查找接受 Windows 约定的 Path 环境变量名', () => {
   const binary = resolveWorkBuddyBinary({
     env: { Path: '/cross-platform/bin' },
     isExecutable(candidate) {
-      return candidate === '/cross-platform/bin/codebuddy';
+      return candidate === path.join('/cross-platform/bin', 'codebuddy');
     },
   });
 

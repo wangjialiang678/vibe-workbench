@@ -114,6 +114,25 @@ async function withApiKey(value, fn) {
   }
 }
 
+async function withWindowsPathAlias(fn) {
+  const hadPATH = Object.hasOwn(process.env, 'PATH');
+  const previousPATH = process.env.PATH;
+  const hadPath = Object.hasOwn(process.env, 'Path');
+  const previousPath = process.env.Path;
+  const pathValue = previousPATH ?? previousPath;
+
+  delete process.env.PATH;
+  process.env.Path = pathValue;
+
+  try {
+    return await fn(pathValue);
+  } finally {
+    delete process.env.PATH;
+    if (hadPath) process.env.Path = previousPath;
+    else if (hadPATH) process.env.PATH = previousPATH;
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 describe('buildArgv', () => {
   it('无 sessionId 时不含 --resume', () => {
@@ -209,18 +228,20 @@ describe('redactSecrets', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 describe('runClaude — 订阅优先与 SDK 单次托底', () => {
   it('首跑移除 API key，成功时标记 subscription 且不重试', async () => {
-    await withApiKey('sk-test-subscription', async () => {
-      const { spawnImpl, calls } = scriptedSpawn([
-        { code: 0, stdout: streamResult('ses_SUB', '订阅成功') },
-      ]);
+    await withWindowsPathAlias(async (pathValue) => {
+      await withApiKey('sk-test-subscription', async () => {
+        const { spawnImpl, calls } = scriptedSpawn([
+          { code: 0, stdout: streamResult('ses_SUB', '订阅成功') },
+        ]);
 
-      const result = await runClaude({ prompt: 'hello', spawnImpl });
+        const result = await runClaude({ prompt: 'hello', spawnImpl });
 
-      assert.equal(calls.length, 1);
-      assert.equal(Object.hasOwn(calls[0].options.env, 'ANTHROPIC_API_KEY'), false);
-      assert.equal(calls[0].options.env.PATH, process.env.PATH);
-      assert.equal(result.driverSource, 'subscription');
-      assert.equal(result.text, '订阅成功');
+        assert.equal(calls.length, 1);
+        assert.equal(Object.hasOwn(calls[0].options.env, 'ANTHROPIC_API_KEY'), false);
+        assert.equal(calls[0].options.env.PATH, pathValue);
+        assert.equal(result.driverSource, 'subscription');
+        assert.equal(result.text, '订阅成功');
+      });
     });
   });
 
