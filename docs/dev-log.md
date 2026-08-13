@@ -134,3 +134,9 @@
 - 根治：`/api/status` 每次带 `assetsVersion`（渲染资产最新 mtime）；`pollStatus()` 播种+比对，变了 toast + `location.reload()`（草稿在 localStorage 无损）。自愈时延 ≤3.9s。
 - 端到端实测：页面打标记 → `touch app.css` → 6 秒后标记消失（页面自刷新）、新版本号已播种、mermaid 图 `data-wb-mermaid="ok"`。
 - 教训：**就地推进的长寿命页必须配版本握手**，否则每次前端修 bug 都会收到"复发"误报——修复不可达的页面等于没修。
+
+## present 自动打开浏览器（2026-08-13，创始人重复反馈落地）
+
+- 创始人两次反馈"present 后要自动打开页面"未被执行——根因：此前只存在于对话记忆，未落到代码/skill。本次落为 CLI 内建：`bin/workbench.mjs` present 成功后 autoOpen(url)（darwin=open / win32=start / 其余 xdg-open），`--no-open` 或 `WORKBENCH_NO_OPEN=1` 关闭，失败静默。
+- SKILL.md 同步两条硬规则：①present 已自动开页，别再让用户点链接；②对话里 URL 裸写独立成行、前后不加任何符号（加粗/反引号/标点都会破坏可点击性，创始人两次反馈）。
+- 教训：**用户说"反馈过但没被记住"= 上次落点不够硬**。行为类反馈的正确落点是代码 > skill 硬规则 > 记忆，能上移就上移。

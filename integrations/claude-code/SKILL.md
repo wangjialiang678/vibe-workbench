@@ -36,7 +36,9 @@ WB="/Users/michael/projects/AI 工作流/vibecoding 工作台"
 # 2) 一键渲染：确保 server + 写这一轮 + 返回 URL（输出 JSON 含 round/url）
 node "$WB/bin/workbench.mjs" present <session> /path/to/content.json
 #    → {"ok":true,"session":"...","round":N,"url":"http://127.0.0.1:8099/render/?session=...", "urlPinned":"...&round=N", ...}
-#    把 url（**不带 round**）发给用户——它跟随最新轮，你出新一轮时用户页面自动推进、无需换链接。
+#    present 会**自动在默认浏览器打开页面**（2026-08-13 起内建；--no-open 或 WORKBENCH_NO_OPEN=1 关闭）——不要再让用户自己点链接。
+#    对话里提到 url 时（**不带 round**）：**裸写、独立成行、前后不加任何符号**（不加粗、不加反引号、不接标点）——
+#    创始人已两次反馈"链接紧跟其他字符会不可点击"，这是硬规则。url 跟随最新轮，出新一轮页面自动推进、无需换链接。
 #    仅当要用户回看某一固定轮时才用 urlPinned。round 字段留给下一步 wait 用。
 ```
 

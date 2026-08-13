@@ -5,6 +5,21 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+
+// present 后自动在默认浏览器打开页面（创始人反馈 2026-08-13：打印 URL 让人手动点不可接受）。
+// 关闭方式：--no-open 或 WORKBENCH_NO_OPEN=1（无头/CI 环境用）。失败静默——打开浏览器是锦上添花，不该让 present 报错。
+function autoOpen(url) {
+  if (!url || process.env.WORKBENCH_NO_OPEN === '1') return;
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'start'
+      : 'xdg-open';
+  try {
+    const child = spawn(cmd, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' });
+    child.on('error', () => { /* 静默 */ });
+    child.unref();
+  } catch { /* 静默 */ }
+}
 
 const ROOT_URL = new URL('../', import.meta.url);
 const importRootModule = (relativePath) => import(new URL(relativePath, ROOT_URL).href);
@@ -507,6 +522,7 @@ vibecoding workbench — CLI 编排
   --port N                         指定端口号
   --host HOST                      指定监听地址（默认 127.0.0.1；非本机地址须设置 WORKBENCH_TOKEN）
   --allow-incomplete-decisions     present 临时跳过决策完整性硬校验（仍输出 lint）
+  --no-open                        present 后不自动打开浏览器（默认自动打开；亦可 WORKBENCH_NO_OPEN=1）
   --events                         wait 同时监听 feedback 与会话流新事件
   --title 标题                     doc-publish 显式标题（默认取 frontmatter title 或文件名）
 
@@ -632,6 +648,7 @@ async function main() {
       const contentObj = JSON.parse(await readSource(rest[1]));
       const r = await cmdPresent(session, contentObj, { port, allowIncompleteDecisions });
       console.log(JSON.stringify(r));
+      if (r && r.ok && !rest.includes('--no-open')) autoOpen(r.url);
       break;
     }
 
