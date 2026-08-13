@@ -119,3 +119,11 @@
 - 原型 pin 批注浮层改为按视口固定锚定，右/下空间不足时向左/上翻转，滚动和缩放时重新定位。
 - 为消息分侧补充 GET `/api/messages` 的公开 `identity` 字段，不含 token。
 - 验证：render/CSS 定向 **100 pass**，会话流 API 定向 **12 pass**，Playwright 桌面/手机/pin 冒烟通过；`npm test` **387 pass / 0 fail**。
+
+## mermaid 渲染双故障修复（2026-08-13）
+
+- 病根一（炸弹图）：`mermaid.run()` 就地渲染 + tab 分面把图藏进 `display:none` 容器 → 零尺寸下边标签定位崩溃，mermaid 统一显示误导性 "Syntax error in text"（源码实际能过 parse）。真实报错：`Could not find a suitable point for the given distance`。
+- 病根二（图裸奔）：vendor 脚本异步加载竞态，内容先就绪时 `window.mermaid` 不存在，旧代码静默跳过且无补渲染。
+- 修法：`renderMermaidDiagrams()` 用 `mermaid.render(id, src)` 脱离容器渲染；源码取 `textContent`；单图隔离，失败降级为真实错误+源码；`index.html` onload 补渲染钩子 `__renderMermaidDiagrams`。
+- 诊断路径（Chrome DevTools 实测）：`mermaid.parse(src)` OK → `mermaid.render()` OK → `mermaid.run({nodes})` FAIL → 查容器 `offsetParent === null`，锁定隐藏 tab。
+- 验证：真实会话 tms-decisions 页面隐藏 tab 内 4 节点图正常渲染；回归锁 3 条契约测试进 `render.test.mjs`；`npm test` 558 pass / 0 fail（后补：本条提交时为 555+3）。

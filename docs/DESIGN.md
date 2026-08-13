@@ -209,6 +209,20 @@ workspace/<session>/
 - 🟢 在线（监听中）/ 🟡 处理中（claimed）/ 🔵 已回复（responded，提示"已生成新一轮，点击查看"）/ 🔴 AI 离线（提交已保存，恢复后自动处理）/ ⚠️ 出错（显示 error.message + 「重试」）
 - **重试按钮**：`POST /api/retry?session=&round=` → 删除该轮 ack.json/error.json、状态回 submitted → listener（或重启后对账）重新处理。用户全程不需回 IDE。
 
+### 6.5 mermaid 渲染容错（2026-08-13，线上双故障修复后的固定契约）
+
+**病史**（两个真实线上故障，长期被误读为"图语法错"）：
+1. **炸弹图**：旧实现 `mermaid.run()` 在元素内**就地渲染**。图块带 `section` 被分进非默认 tab 时，容器 `display:none`（零尺寸），mermaid 的边标签定位算法崩溃（真实错误 `Could not find a suitable point for the given distance`）——但 mermaid 把一切错误统一显示为 **"Syntax error in text"** 炸弹图。图源码本身能过 `mermaid.parse`，作者按"语法错误"排查必然南辕北辙。
+2. **图裸奔**：`vendor/mermaid.min.js` 异步加载。内容先渲染完时 `window.mermaid` 不存在，旧代码 `if (window.mermaid)` 静默跳过且无人补渲染。
+
+**修复契约**（`app.mjs` 的 `renderMermaidDiagrams()`，回归锁在 `tests/unit/render.test.mjs`）：
+- 用 `mermaid.render(id, src)` **脱离容器渲染**，隐藏/零尺寸不影响；禁止回退到裸 `mermaid.run()`
+- 源码从 `pre.textContent` 取（`run()` 走 `innerHTML`+entityDecode，多一次实体往返）
+- 单图隔离 try/catch；失败时降级为 `.mermaid-fallback`：**真实错误一行 + 原始源码**，绝不让 mermaid 写入误导性炸弹
+- `index.html` 的 vendor onload 调 `window.__renderMermaidDiagrams()` 补渲染，双向覆盖脚本/内容的加载顺序
+
+**排查口诀**：看到"Syntax error in text"先跑 `mermaid.parse(src)`——parse 能过就是**渲染期/环境问题**（容器尺寸、加载竞态），不是图的语法。
+
 ---
 
 ## 7. 异步唤醒回路（FR-4 · D7）

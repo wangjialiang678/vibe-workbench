@@ -1326,3 +1326,27 @@ test('mdToHtml 未闭合围栏不吞掉后续内容为不可见', () => {
   const html = mdToHtml('```\n孤行围栏');
   assert.equal(html.includes('孤行围栏') || html.includes('md-fence'), true);
 });
+
+// ---------- mermaid 渲染契约（2026-08-13 线上双故障回归锁）----------
+// 病史：mermaid.run() 在元素内就地渲染，图块被 tab 分面藏进 display:none 容器时
+// 零尺寸导致边标签定位崩溃（"Could not find a suitable point for the given distance"），
+// mermaid 又把一切错误统一显示为 "Syntax error in text" 炸弹图，纯误导；
+// 另有 vendor 脚本异步加载竞态——内容先渲染完则图裸奔且无人补渲染。
+// 修法契约如下，任何一条被改掉都会让线上炸弹图/裸奔复发：
+
+test('mermaid 必须用脱离容器的 render() 而非就地 run()（隐藏 tab 零尺寸会崩）', () => {
+  assert.match(renderApp, /function renderMermaidDiagrams/, '渲染入口 renderMermaidDiagrams 不可删');
+  assert.match(renderApp, /mermaid\.render\(/, '必须走 mermaid.render(id, src) 脱离容器渲染');
+  assert.doesNotMatch(renderApp, /window\.mermaid\.run\(\)/, '禁止回退到裸 mermaid.run()');
+});
+
+test('mermaid 源码从 textContent 取，失败时诚实降级（真实错误 + 源码，不放炸弹）', () => {
+  assert.match(renderApp, /renderMermaidDiagrams[\s\S]{0,600}textContent/, '取源必须走 textContent，绕开 innerHTML 实体往返');
+  assert.match(renderApp, /mermaid-fallback/, '失败降级容器 .mermaid-fallback 不可删');
+  assert.match(renderApp, /图渲染失败/, '降级文案必须展示真实错误而非 mermaid 的误导性 Syntax error');
+});
+
+test('mermaid 脚本加载竞态有补渲染钩子（内容先就绪时不再裸奔）', () => {
+  assert.match(renderApp, /window\.__renderMermaidDiagrams\s*=/, 'app.mjs 必须暴露补渲染钩子');
+  assert.match(renderIndex, /__renderMermaidDiagrams/, 'index.html 的 vendor onload 必须调用补渲染钩子');
+});
