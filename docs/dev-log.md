@@ -140,3 +140,9 @@
 - 创始人两次反馈"present 后要自动打开页面"未被执行——根因：此前只存在于对话记忆，未落到代码/skill。本次落为 CLI 内建：`bin/workbench.mjs` present 成功后 autoOpen(url)（darwin=open / win32=start / 其余 xdg-open），`--no-open` 或 `WORKBENCH_NO_OPEN=1` 关闭，失败静默。
 - SKILL.md 同步两条硬规则：①present 已自动开页，别再让用户点链接；②对话里 URL 裸写独立成行、前后不加任何符号（加粗/反引号/标点都会破坏可点击性，创始人两次反馈）。
 - 教训：**用户说"反馈过但没被记住"= 上次落点不够硬**。行为类反馈的正确落点是代码 > skill 硬规则 > 记忆，能上移就上移。
+
+## 资产版本注入（2026-08-13，mermaid 事故三连修终章）
+
+- 用户新开页面仍见 10.9.1 炸弹 → git 考古发现 no-store 系后补（239f22f 自述"之前无缓存头"）→ headerless 时代的启发式缓存条目不询问服务器，前两修永远送不达。用户 F5 后自愈（reload 强制核对+no-store 顶掉旧条目）。
+- 根治：index.html 服务端模板化（版本注入+import map 覆盖 render/*.mjs 与 ../protocol/*.mjs）+ 全资源 ?v= + Clear-Site-Data。浏览器实测 unversionedAssets=[]，560 测试全绿。
+- 教训入 DESIGN §6.7：客户端修复的第一问是"它怎么到达用户"。

@@ -165,7 +165,7 @@ process.stdout.write(JSON.stringify({session:"ses1",round:1,title:"X",blocks}));
   `(nohup python3 -m http.server 8200 --bind 127.0.0.1 --directory <目录> >/tmp/st.log 2>&1 & disown)`），
   再把 `http://127.0.0.1:8200/xxx.html` 放进 embed。
 - **mermaid 图显示"Syntax error in text"炸弹 ≠ 语法错误**（2026-08-13 已修，见 DESIGN §6.5）。mermaid 把渲染期错误也标成"Syntax error"，历史病根是就地渲染在隐藏 tab 的零尺寸容器里崩掉 + vendor 脚本加载竞态。现在渲染端已改为脱离容器渲染 + 失败时展示真实错误和图源码。若复发：先在浏览器控制台跑 `mermaid.parse(源码)`——parse 能过就是渲染环境问题，去查 `data-wb-mermaid` 属性和容器可见性，别改图源码；作者侧无需为此规避 `<br/>`、子图、边标签或 tab 分面。
-- **修了 bug 用户却说"还是坏的"→ 先看用户页面上的版本号/表现是不是旧代码**（DESIGN §6.6）。渲染页是长寿命页（只就地换内容、从不重载 JS），旧标签页永远跑老代码。2026-08-13 起已有版本握手：`/api/status` 带 `assetsVersion`，页面发现前端更新会在 ~4 秒内自动整页刷新（草稿无损）。唯一例外是握手上线前就开着的旧标签页——让用户强刷一次（Cmd+Shift+R）即永久解决。改了 `src/render/` 或 `src/server/` 记得重启 serve 进程（server.mjs 是常驻进程，不会热加载）。
+- **修了 bug 用户却说"还是坏的"→ 先看用户页面上的版本号/表现是不是旧代码**（DESIGN §6.6/§6.7）。已有三层防护：①版本握手（页面每 3s 比对 assetsVersion，变了自动整页刷新）②HTML 服务端注入版本+import map，所有 JS/CSS 带 ?v= 加载（击穿 headerless 时代的启发式历史缓存——那类缓存不询问服务器，响应头清不掉，只有改 URL 能绕开）③Clear-Site-Data 清本源缓存。若仍复发：查用户资源请求里有没有不带 ?v= 的（`performance.getEntriesByType('resource')`），以及是否还开着 2026-08-13 之前的僵尸标签页（关掉即可）。改了 `src/render/` 或 `src/server/` 记得重启 serve 进程（server.mjs 是常驻进程，不会热加载）。**通用教训：客户端修复的第一问是"它怎么到达用户"。**
 
 ## 备注
 - 默认端口 8099；`present` 会自动确保 server 在跑（不在则后台拉起）。

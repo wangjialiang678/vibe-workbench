@@ -1363,3 +1363,18 @@ test('版本握手：/api/status 必须带 assetsVersion，页面比对后自动
   assert.match(renderApp, /__wbAssetsVersion/, '页面必须记录并比对资产版本');
   assert.match(renderApp, /location\.reload/, '版本变化必须触发整页刷新（草稿在 localStorage，无损）');
 });
+
+// ---------- 资产版本注入（2026-08-13 三连修之三：击穿历史启发式缓存）----------
+// 病史：no-store 是后加的，headerless 时代浏览器按启发式规则缓存了旧 app.mjs/mermaid，
+// 此类缓存不再询问服务器，响应头无法追溯清除——用户新开标签页仍拿到旧代码，
+// 前两次修复（脱离容器渲染、版本握手）因此全部无法送达。根治=改 URL。
+test('资产版本注入：HTML 模板化 + import map + Clear-Site-Data，资源全部带 ?v= 加载', () => {
+  assert.match(renderIndex, /__WB_ASSETS_V__/, 'index.html 必须带版本占位符');
+  assert.match(renderIndex, /__WB_IMPORTMAP__/, 'index.html 必须带 import map 占位符（子模块也要版本化）');
+  assert.match(renderIndex, /app\.css\?v=/, 'CSS 必须带版本参数');
+  assert.match(renderIndex, /mermaid\.min\.js\?v=/, 'vendor 必须带版本参数');
+  assert.match(renderIndex, /import\('\.\/app\.mjs\?v='/, 'app.mjs 必须以版本化动态 import 加载');
+  assert.doesNotMatch(renderIndex, /src="app\.mjs"/, '禁止回退到无版本的静态 script 标签');
+  assert.match(serverSrc, /replaceAll\('__WB_ASSETS_V__'/, '服务端必须注入真实版本');
+  assert.match(serverSrc, /Clear-Site-Data/, '服务端必须在 HTML 响应发 Clear-Site-Data 清历史缓存');
+});

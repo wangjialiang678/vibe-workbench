@@ -4,7 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Vibe Coding工作台</title>
-  <link rel="stylesheet" href="app.css">
+  <!-- 资产版本注入（DESIGN §6.7）：服务端把 __WB_ASSETS_V__ 替换为当前资产版本。
+       HTML 本身 no-store 永远新鲜，资源全部带 ?v= 加载——从 URL 层面绕开任何历史缓存
+       （headerless 时代的启发式缓存条目对新 URL 永不命中）。直接开文件未经服务端时回退 Date.now()。-->
+  <script>window.__WB_ASSETS_V = '__WB_ASSETS_V__';
+    if (window.__WB_ASSETS_V.indexOf('__') === 0) window.__WB_ASSETS_V = String(Date.now());</script>
+  <!--__WB_IMPORTMAP__-->
+  <link rel="stylesheet" href="app.css?v=__WB_ASSETS_V__">
 </head>
 <body>
   <header id="top-bar" class="top-bar">
@@ -98,7 +104,7 @@
   <script>
     (function () {
       var s = document.createElement('script');
-      s.src = 'vendor/mermaid.min.js';
+      s.src = 'vendor/mermaid.min.js?v=' + window.__WB_ASSETS_V;
       s.onload = function () {
         if (window.mermaid) {
           window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
@@ -111,6 +117,6 @@
     })();
   </script>
 
-  <script type="module" src="app.mjs"></script>
+  <script type="module">import('./app.mjs?v=' + window.__WB_ASSETS_V);</script>
 </body>
 </html>
