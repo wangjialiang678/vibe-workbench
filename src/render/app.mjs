@@ -506,16 +506,53 @@ async function loadAndRender() {
   // tab 分面：按草稿选默认激活面（第一个含未确认必须决策的非空面）
   activateDefaultFacet();
 
-  // 激活 mermaid
-  if (window.mermaid) {
-    try { window.mermaid.run(); } catch { /* 降级 */ }
-  }
+  // 激活 mermaid（脱离容器渲染，见 renderMermaidDiagrams 注释）
+  renderMermaidDiagrams();
 
   // 绑定互动事件
   bindInteractions();
   await loadParticipantFeedback();
   updateMobileBadges();
 }
+
+// ---------- mermaid 渲染（2026-08-13 重写，修两个线上故障） ----------
+// 故障 1（炸弹图）：mermaid.run() 在元素内就地渲染。图块若带 section 被分进
+//   非默认 tab（.facet display:none，零尺寸），边标签定位算距离时崩掉，抛
+//   "Could not find a suitable point for the given distance"——而 mermaid 把一切
+//   错误统一显示成 "Syntax error in text" 的炸弹图，纯误导（图源码其实能过 parse）。
+//   → 改用 mermaid.render(id, src) 脱离容器渲染，不受隐藏/零尺寸影响。
+// 故障 2（图裸奔）：vendor/mermaid.min.js 异步加载，内容先渲染完时 window.mermaid
+//   还不存在，旧代码直接跳过且之后无人补渲染。
+//   → window.__onMermaidReady 钩子：脚本就绪后补跑一次。
+// 附带修正：源码从 textContent 取（旧的 run() 读 innerHTML 再 entityDecode，多一次
+//   实体往返）；单图隔离 try/catch，失败时诚实展示真实错误 + 原始源码，不再放炸弹。
+let _mermaidSeq = 0;
+async function renderMermaidDiagrams() {
+  if (!window.mermaid) { window.__wantMermaid = true; return; }
+  const nodes = document.querySelectorAll('pre.mermaid:not([data-wb-mermaid])');
+  for (const pre of nodes) {
+    pre.setAttribute('data-wb-mermaid', 'pending');
+    const src = (pre.textContent ?? '').trim();
+    if (!src) { pre.setAttribute('data-wb-mermaid', 'empty'); continue; }
+    try {
+      const { svg, bindFunctions } = await window.mermaid.render(`wb-mmd-${Date.now()}-${_mermaidSeq++}`, src);
+      pre.innerHTML = svg;
+      if (bindFunctions) bindFunctions(pre);
+      pre.setAttribute('data-wb-mermaid', 'ok');
+    } catch (err) {
+      // 诚实降级：真实错误一行 + 可读源码，绝不显示误导性的"Syntax error"炸弹
+      const msg = String((err && err.message) || err);
+      pre.setAttribute('data-wb-mermaid', 'error');
+      pre.innerHTML = `<div class="mermaid-fallback">`
+        + `<p class="load-error">图渲染失败（${escapeHtml(msg.slice(0, 160))}），以下为图源码：</p>`
+        + `<code style="display:block;white-space:pre-wrap;font-size:12px;line-height:1.5">${escapeHtml(src)}</code>`
+        + `</div>`;
+      // 渲染库自身的问题不该拦截整页，记日志便于排查
+      console.warn('[workbench] mermaid render failed:', msg, { src });
+    }
+  }
+}
+window.__renderMermaidDiagrams = renderMermaidDiagrams;
 
 async function loadParticipantFeedback() {
   if (!SESSION || currentRound == null) return;

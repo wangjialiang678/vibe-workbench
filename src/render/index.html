@@ -102,6 +102,8 @@
       s.onload = function () {
         if (window.mermaid) {
           window.mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+          // 补渲染：内容常常先于本脚本就绪（竞态），app.mjs 会置 __wantMermaid 标记
+          if (window.__renderMermaidDiagrams) window.__renderMermaidDiagrams();
         }
       };
       s.onerror = function () { /* 降级：mermaid 不可用，静默 */ };
