@@ -73,6 +73,24 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
 const SRC_ROOT = path.resolve(__dirname, '..');
+
+// 前端资产版本（长寿命页自愈，DESIGN §6.6）：关键渲染资产的最新 mtime。
+// 渲染页只就地换内容、从不重载 JS——老标签页会永远跑老代码（已修故障会"复发"）。
+// 页面每 3s 轮询 /api/status 比对此版本，变了就整页自刷新（草稿在 localStorage，无损）。
+const ASSET_VERSION_FILES = [
+  'render/index.html', 'render/app.mjs', 'render/app.css',
+  'render/blocks.mjs', 'render/vendor/mermaid.min.js',
+];
+export function assetsVersion() {
+  let latest = 0;
+  for (const rel of ASSET_VERSION_FILES) {
+    try {
+      const t = fs.statSync(path.join(SRC_ROOT, rel)).mtimeMs;
+      if (t > latest) latest = t;
+    } catch { /* 允许个别文件缺省 */ }
+  }
+  return String(Math.round(latest));
+}
 const ROUND_BODY_LIMIT = 2 * 1024 * 1024;
 const MESSAGE_BODY_LIMIT = 32 * 1024;
 const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
@@ -1715,6 +1733,7 @@ function handleRequest(
         ok: true,
         status: null,
         display: 'unknown',
+        assetsVersion: assetsVersion(),
         ...worker,
       });
       return;
@@ -1733,6 +1752,7 @@ function handleRequest(
       status: responseStatus,
       display,
       stale,
+      assetsVersion: assetsVersion(),
       ...worker,
     });
     return;

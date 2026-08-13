@@ -1350,3 +1350,16 @@ test('mermaid 脚本加载竞态有补渲染钩子（内容先就绪时不再裸
   assert.match(renderApp, /window\.__renderMermaidDiagrams\s*=/, 'app.mjs 必须暴露补渲染钩子');
   assert.match(renderIndex, /__renderMermaidDiagrams/, 'index.html 的 vendor onload 必须调用补渲染钩子');
 });
+
+// ---------- 长寿命页版本握手（2026-08-13 二次故障回归锁）----------
+// 病史：渲染页只就地换内容、从不重载 JS——用户几天前打开的旧标签页永远跑老代码，
+// 已修故障（mermaid 炸弹图）在旧页面"复发"（页面显示 mermaid 10.9.1，磁盘已是 11.15.0）。
+// 修法：/api/status 带 assetsVersion（关键渲染资产最新 mtime），页面轮询比对，变了自刷新。
+const serverSrc = readFileSync(path.resolve(__dirname, '../../src/server/server.mjs'), 'utf8');
+
+test('版本握手：/api/status 必须带 assetsVersion，页面比对后自动整页刷新', () => {
+  assert.match(serverSrc, /export function assetsVersion/, '服务端 assetsVersion 计算函数不可删');
+  assert.match(serverSrc, /assetsVersion: assetsVersion\(\)/, '/api/status 响应必须包含 assetsVersion');
+  assert.match(renderApp, /__wbAssetsVersion/, '页面必须记录并比对资产版本');
+  assert.match(renderApp, /location\.reload/, '版本变化必须触发整页刷新（草稿在 localStorage，无损）');
+});

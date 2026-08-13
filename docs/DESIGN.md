@@ -223,6 +223,17 @@ workspace/<session>/
 
 **排查口诀**：看到"Syntax error in text"先跑 `mermaid.parse(src)`——parse 能过就是**渲染期/环境问题**（容器尺寸、加载竞态），不是图的语法。
 
+### 6.6 长寿命页版本握手（2026-08-13，§6.5 修复"复发"的真因与根治）
+
+**病史**：§6.5 修复上线后用户页面炸弹图"复发"，且显示 **mermaid 10.9.1**（磁盘已是 11.15.0）——渲染页是**长寿命页**：每 3s 轮询新轮次、`advanceToRound()` 就地换内容，**从不重载 JS**。用户几天前打开的标签页永远跑老代码，服务端的 `Cache-Control: no-store` 帮不上忙（页面根本不发起 JS 请求）。**任何前端修复对已打开的旧标签页都不生效**——这是就地推进架构的固有代价。
+
+**根治（版本握手）**：
+- 服务端：`assetsVersion()` = 关键渲染资产（index.html/app.mjs/app.css/blocks.mjs/vendor mermaid）的最新 mtime，随 `GET /api/status` 每次返回
+- 页面：`pollStatus()` 首次播种版本号，之后比对——版本变了 → toast「工作台前端已更新，正在自动刷新」→ `location.reload()`（草稿全在 localStorage，刷新无损）
+- 自愈时延 ≤ 一个轮询周期（3s）+900ms
+- 回归锁：`tests/unit/render.test.mjs`「版本握手」契约测试
+- **边界**：本机制上线**之前**就已打开的旧标签页没有比对逻辑，无法自愈，需手动强刷一次；此后所有页面自愈
+
 ---
 
 ## 7. 异步唤醒回路（FR-4 · D7）

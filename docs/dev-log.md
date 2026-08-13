@@ -127,3 +127,10 @@
 - 修法：`renderMermaidDiagrams()` 用 `mermaid.render(id, src)` 脱离容器渲染；源码取 `textContent`；单图隔离，失败降级为真实错误+源码；`index.html` onload 补渲染钩子 `__renderMermaidDiagrams`。
 - 诊断路径（Chrome DevTools 实测）：`mermaid.parse(src)` OK → `mermaid.render()` OK → `mermaid.run({nodes})` FAIL → 查容器 `offsetParent === null`，锁定隐藏 tab。
 - 验证：真实会话 tms-decisions 页面隐藏 tab 内 4 节点图正常渲染；回归锁 3 条契约测试进 `render.test.mjs`；`npm test` 558 pass / 0 fail（后补：本条提交时为 555+3）。
+
+## 长寿命页版本握手（2026-08-13，同日二连修）
+
+- mermaid 修复上线后用户报"复发"，页面显示 mermaid **10.9.1**（磁盘 11.15.0）→ 版本号泄底：用户标签页是几天前打开的**长寿命页**，只就地换内容从不重载 JS，前端修复永远到不了旧标签页；`no-store` 无用（页面不再请求 JS）。
+- 根治：`/api/status` 每次带 `assetsVersion`（渲染资产最新 mtime）；`pollStatus()` 播种+比对，变了 toast + `location.reload()`（草稿在 localStorage 无损）。自愈时延 ≤3.9s。
+- 端到端实测：页面打标记 → `touch app.css` → 6 秒后标记消失（页面自刷新）、新版本号已播种、mermaid 图 `data-wb-mermaid="ok"`。
+- 教训：**就地推进的长寿命页必须配版本握手**，否则每次前端修 bug 都会收到"复发"误报——修复不可达的页面等于没修。

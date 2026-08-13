@@ -163,6 +163,7 @@ process.stdout.write(JSON.stringify({session:"ses1",round:1,title:"X",blocks}));
   `(nohup python3 -m http.server 8200 --bind 127.0.0.1 --directory <目录> >/tmp/st.log 2>&1 & disown)`），
   再把 `http://127.0.0.1:8200/xxx.html` 放进 embed。
 - **mermaid 图显示"Syntax error in text"炸弹 ≠ 语法错误**（2026-08-13 已修，见 DESIGN §6.5）。mermaid 把渲染期错误也标成"Syntax error"，历史病根是就地渲染在隐藏 tab 的零尺寸容器里崩掉 + vendor 脚本加载竞态。现在渲染端已改为脱离容器渲染 + 失败时展示真实错误和图源码。若复发：先在浏览器控制台跑 `mermaid.parse(源码)`——parse 能过就是渲染环境问题，去查 `data-wb-mermaid` 属性和容器可见性，别改图源码；作者侧无需为此规避 `<br/>`、子图、边标签或 tab 分面。
+- **修了 bug 用户却说"还是坏的"→ 先看用户页面上的版本号/表现是不是旧代码**（DESIGN §6.6）。渲染页是长寿命页（只就地换内容、从不重载 JS），旧标签页永远跑老代码。2026-08-13 起已有版本握手：`/api/status` 带 `assetsVersion`，页面发现前端更新会在 ~4 秒内自动整页刷新（草稿无损）。唯一例外是握手上线前就开着的旧标签页——让用户强刷一次（Cmd+Shift+R）即永久解决。改了 `src/render/` 或 `src/server/` 记得重启 serve 进程（server.mjs 是常驻进程，不会热加载）。
 
 ## 备注
 - 默认端口 8099；`present` 会自动确保 server 在跑（不在则后台拉起）。

@@ -2079,6 +2079,20 @@ async function pollStatus() {
     if (!resp.ok) return;
     const status = await resp.json();
 
+    // 前端版本握手（DESIGN §6.6）：本页是长寿命页——只就地换内容，从不重载 JS，
+    // 老标签页会永远跑老代码，已修故障（如 mermaid 炸弹图）看起来"复发"。
+    // 服务端在 status 里带渲染资产版本，变了就整页自刷新；草稿在 localStorage，无损。
+    const av = status?.assetsVersion;
+    if (av) {
+      if (!window.__wbAssetsVersion) {
+        window.__wbAssetsVersion = av;
+      } else if (window.__wbAssetsVersion !== av) {
+        showToast('工作台前端已更新，正在自动刷新…');
+        setTimeout(() => location.reload(), 900);
+        return;
+      }
+    }
+
     // 自动推进：仅在"跟随最新轮"模式（URL 未锁定 round）下，服务端出现更高轮次才就地载入
     const latest = status?.status?.round;
     const latestChanged = Number.isInteger(latest) && latest !== _latestRound;
