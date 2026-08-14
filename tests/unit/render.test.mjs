@@ -1378,3 +1378,18 @@ test('资产版本注入：HTML 模板化 + import map + Clear-Site-Data，资�
   assert.match(serverSrc, /replaceAll\('__WB_ASSETS_V__'/, '服务端必须注入真实版本');
   assert.match(serverSrc, /Clear-Site-Data/, '服务端必须在 HTML 响应发 Clear-Site-Data 清历史缓存');
 });
+
+// ---------- embed 同源直连 + 客户门户标题（2026-08-14 sirui round1 独立验证回归锁）----------
+test('embed 同源相对路径直连 iframe，仅外站绝对 URL 走代理（相对路径进 proxy 会 400）', () => {
+  const local = renderEmbed({ id: 'b-e1', url: '/assets/sirui/x.html' });
+  assert.ok(local.includes('src="/assets/sirui/x.html"'), '同源相对路径应直接作为 iframe src');
+  assert.ok(!local.includes('/api/proxy'), '同源不该绕代理');
+  const remote = renderEmbed({ id: 'b-e2', url: 'https://example.com/a.html' });
+  assert.ok(remote.includes('/api/proxy?url='), '外站绝对 URL 仍走代理');
+});
+
+test('页面标题可由 WORKBENCH_TITLE 注入（客户门户不得显示内部工具名）', () => {
+  assert.match(renderIndex, /__WB_TITLE__/, 'index.html 必须带标题占位符');
+  assert.match(serverSrc, /WORKBENCH_TITLE/, '服务端必须支持标题环境变量注入');
+  assert.match(renderApp, /__WB_TITLE/, 'app.mjs 动态标题必须使用注入值');
+});

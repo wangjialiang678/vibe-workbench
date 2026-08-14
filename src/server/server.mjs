@@ -2107,6 +2107,7 @@ function handleRequest(
       }
       const html = fs.readFileSync(filePath, 'utf8')
         .replaceAll('__WB_ASSETS_V__', v)
+        .replaceAll('__WB_TITLE__', process.env.WORKBENCH_TITLE || 'Vibe Coding工作台')
         .replace('<!--__WB_IMPORTMAP__-->', `<script type="importmap">${JSON.stringify({ imports })}</script>`);
       res.writeHead(200, {
         'Content-Type': mime,
