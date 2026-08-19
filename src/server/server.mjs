@@ -108,6 +108,11 @@ const ATTACHMENT_TYPES = new Map([
   ['image/webp', '.webp'],
   ['image/gif', '.gif'],
   ['application/pdf', '.pdf'],
+  // 办公文档：客户评审场景常需回传 Excel/Word 原件（2026-08-20 思锐门户实际反馈）
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'],
+  ['application/vnd.ms-excel', '.xls'],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'],
+  ['text/csv', '.csv'],
 ]);
 
 // ---- MIME ----

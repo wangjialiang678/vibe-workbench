@@ -827,11 +827,27 @@ $streamInput?.addEventListener('input', () => {
   $streamInput.style.height = `${Math.min(144, $streamInput.scrollHeight)}px`;
 });
 
+const ATTACHMENT_DOC_TYPES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'text/csv',
+]);
+
 async function uploadAndSendFiles(files) {
-  const accepted = [...files].filter((file) => file && (
-    file.type.startsWith('image/') || file.type === 'application/pdf'
+  const all = [...files].filter(Boolean);
+  const accepted = all.filter((file) => (
+    file.type.startsWith('image/') || ATTACHMENT_DOC_TYPES.has(file.type)
   ));
-  if (!accepted.length) return;
+  // 被拒的文件必须给出可见反馈——静默丢弃会让用户以为"提交不上去"（2026-08-20 思锐门户实际反馈）
+  const rejectedNote = accepted.length < all.length
+    ? `不支持的附件类型已跳过：${all.filter((f) => !accepted.includes(f)).map((f) => f.name || '未命名').join('、')}（支持图片/PDF/Excel/Word/CSV）`
+    : '';
+  if (!accepted.length) {
+    setComposerBusy(false, rejectedNote);
+    return;
+  }
   setComposerBusy(true, `上传 0/${accepted.length}`);
   try {
     for (let index = 0; index < accepted.length; index += 1) {
@@ -853,7 +869,7 @@ async function uploadAndSendFiles(files) {
         type: file.type,
       }));
     }
-    setComposerBusy(false, '');
+    setComposerBusy(false, rejectedNote);
     _documentsCacheKey = '';
   } catch (error) {
     setComposerBusy(false, `上传失败：${error.message}`);

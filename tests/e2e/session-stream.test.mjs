@@ -626,6 +626,24 @@ test('POST /api/attachments 允许恰好 5 MiB，超过 5 MiB 返回 413', async
   assert.equal(fs.existsSync(path.join(tmpDir, 'attachment-too-large', 'assets', 'uploads')), false);
 });
 
+test('POST /api/attachments 允许 Excel/Word/CSV 办公文档（2026-08-20 思锐门户回归）', async () => {
+  const session = 'attachment-office';
+  const cases = [
+    // 中文文件名与前端一致走 encodeURIComponent（HTTP header 只能承载 ByteString）
+    ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', encodeURIComponent('车队台账.xlsx'), '.xlsx', Buffer.from('PKxlsx')],
+    ['application/vnd.ms-excel', 'legacy.xls', '.xls', Buffer.from([0xd0, 0xcf, 0x11, 0xe0])],
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', encodeURIComponent('纪要.docx'), '.docx', Buffer.from('PKdocx')],
+    ['text/csv', 'drivers.csv', '.csv', Buffer.from('name,phone\n')],
+  ];
+  for (const [mime, filename, extension, bytes] of cases) {
+    const response = await upload({ session, mime, filename, bytes });
+    assert.equal(response.status, 200, mime);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.url.includes(extension), true, `${mime} 应以 ${extension} 落盘`);
+  }
+});
+
 test('POST /api/attachments 对不支持的 MIME 返回 415，缺 token 返回 403', async () => {
   const unsupported = await upload({
     session: 'attachment-unsupported',
