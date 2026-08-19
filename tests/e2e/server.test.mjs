@@ -1634,3 +1634,42 @@ test('WORKBENCH_EVENT_WEBHOOK：轮次呈现与反馈提交后异步发送两个
     await new Promise((resolve) => webhookServer.close(resolve));
   }
 });
+
+// ---- POST feedback: 历史件留痕（2026-08-19 覆盖丢失事故的回归测试）----
+test('POST /api/feedback 每笔提交落 feedback-history 历史件，后提交不覆盖前提交', async () => {
+  const s = 'ses_fbhist01';
+  const r = 1;
+  writeJSON(paths.content(s, r), { session: s, round: r, prevRound: 0, blocks: [] });
+  writeStatus(s, { state: 'rendered', round: r });
+
+  const mk = (comment) => ({
+    session: s,
+    round: r,
+    items: [{ blockId: 'b-x', type: 'comment', value: null, comment }],
+    summary: '',
+  });
+
+  for (const comment of ['第一个人的答复', '第二个人的答复']) {
+    const res = await fetch(url('/api/feedback'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mk(comment)),
+    });
+    assert.equal(res.status, 200);
+  }
+
+  // 主文件保持"最新一笔"语义
+  const primary = JSON.parse(fs.readFileSync(paths.feedback(s, r), 'utf8'));
+  assert.equal(primary.items[0].comment, '第二个人的答复');
+
+  // 历史目录必须两笔俱在，先提交的那笔没有丢
+  const histDir = path.join(path.dirname(paths.feedback(s, r)), 'feedback-history');
+  const files = fs.readdirSync(histDir).sort();
+  assert.equal(files.length, 2);
+  const comments = files.map((f) => JSON.parse(fs.readFileSync(path.join(histDir, f), 'utf8')).items[0].comment);
+  assert.deepEqual(comments.sort(), ['第一个人的答复', '第二个人的答复']);
+
+  // 历史目录不得被轮次聚合的 participant 正则误读（目录名不匹配 feedback-*.json）
+  const resGet = await fetch(url(`/api/feedback?session=${s}&round=${r}`));
+  assert.equal(resGet.status, 200);
+});

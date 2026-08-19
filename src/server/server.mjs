@@ -618,6 +618,7 @@ function renderUrl(req, session) {
 
 const OWNER_IDENTITY = Object.freeze({ id: 'owner', name: '管理员', role: 'owner' });
 const TERMINAL_OR_PROCESSING_STATES = new Set(['claimed', 'responded', 'error']);
+let feedbackHistorySeq = 0; // 同毫秒双提交的历史件文件名防碰撞
 
 // block.assignee 是通用的责任人 ID：未设置/null/空串表示公共块。
 export function isBlockVisibleTo(block, identity) {
@@ -1873,6 +1874,9 @@ function handleRequest(
       const submittedBy = { id: identity.id, name: identity.name };
       // submittedBy 永远由服务端覆盖，不能信任客户端自报身份。
       const saved = { ...fb, submittedAt: now, submittedBy };
+      // 每笔提交无条件先落历史件：共享 owner 链接多人先后提交曾互相覆盖，
+      // 2026-08-19 思锐门户因此永久丢失两笔客户反馈——主文件仍保持"最新一笔"语义，历史件保证零丢失。
+      writeJSON(paths.feedbackHistory(session, round, `${now.replace(/[:.]/g, '-')}-${(feedbackHistorySeq += 1).toString(36)}`, identity.id, pathOptions), saved);
       const primaryPath = paths.feedback(session, round, pathOptions);
       if (identity.role === 'participant') {
         writeJSON(paths.participantFeedback(session, round, identity.id, pathOptions), saved);
