@@ -62,3 +62,14 @@ WORKBENCH_AGENT=codex node "$WB/bin/workbench.mjs" up --port 8099
 ```
 
 `WORKBENCH_AGENT` 取值 `codex` | `workbuddy` | `claude`，不设则自动探测。人提交后 listener 会自动叫醒你续跑，结果写回 `workspace/<session>/`。
+
+## 提交时推送外部通知（可选）
+
+给 server 设 `WORKBENCH_EVENT_WEBHOOK=<接收端点>`，**反馈提交 / 用户留言 / 新轮发布**三类事件会 POST 出去（AI 自己发的消息不触发，不会自我提醒）——适合人不守在电脑前、需要 IM 提醒的场景。开箱即用的飞书中继见 `$WB/integrations/notify-relay/`（事件格式、部署、e2e 验证都在里面）。
+
+⚠️ 通知只是"提醒有新东西"，**权威数据始终是 `workspace/<session>/` 下的文件**——收到通知后按上面第三条命令读回全量再处理。
+
+## 改了工作台源码之后
+
+`server.mjs` 是常驻进程、**不会热加载**：改完必须重启 serve，再确认人的页面加载的是新资源（页面每 3s 比对 assetsVersion 会自动刷新；实在可疑就查 `performance.getEntriesByType('resource')` 里有没有不带 `?v=` 的旧资源）。
+**通用原则**：测试证明的是仓库里那份代码，**人实际跑的那份要单独验一次**——远端部署尤其注意 `rsync` 只覆盖 `src/`，`scripts/` 下的外围件与 env/服务配置要单独同步再重启。
