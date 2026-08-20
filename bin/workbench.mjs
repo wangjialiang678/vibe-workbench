@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 // present 后自动在默认浏览器打开页面（创始人反馈 2026-08-13：打印 URL 让人手动点不可接受）。
 // 关闭方式：--no-open 或 WORKBENCH_NO_OPEN=1（无头/CI 环境用）。失败静默——打开浏览器是锦上添花，不该让 present 报错。
 function autoOpen(url) {
-  if (!url || process.env.WORKBENCH_NO_OPEN === '1') return;
+  if (!url || process.env.WORKBENCH_NO_OPEN === '1' || process.env.NODE_TEST_CONTEXT) return; // 测试环境永不弹窗（2026-08-20：跑测试套件反复弹出夹具页面）
   const cmd = process.platform === 'darwin' ? 'open'
     : process.platform === 'win32' ? 'start'
       : 'xdg-open';
