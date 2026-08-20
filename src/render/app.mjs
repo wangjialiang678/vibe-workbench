@@ -30,6 +30,7 @@ import {
   submitStateAfterFailure,
   submitStateAfterSuccess,
 } from './submit-state.mjs';
+import { resolveSelfReportSelection } from './self-report-state.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -61,7 +62,7 @@ const $submitBtn    = document.getElementById('submit-btn');
 const $selfReportControl = document.getElementById('self-report-control');
 const $selfReportSelect = document.getElementById('self-report-select');
 const $selfReportOther = document.getElementById('self-report-other');
-const $selfReportDialog = document.getElementById('self-report-dialog');
+const $selfReportSummary = document.getElementById('self-report-summary');
 const $sessionLabel = document.getElementById('session-label');
 const $sessionNav   = document.getElementById('session-nav');
 const $docsLink     = document.getElementById('docs-link');
@@ -76,6 +77,7 @@ const $streamInput = document.getElementById('stream-input');
 const $streamFileInput = document.getElementById('stream-file-input');
 const $streamSendBtn = document.getElementById('stream-send-btn');
 const $streamSendStatus = document.getElementById('stream-send-status');
+const $streamSelfReportPrompt = document.getElementById('stream-self-report-prompt');
 const $documentsMount = document.getElementById('documents-mount');
 const $historyRoundsMount = document.getElementById('history-rounds-mount');
 const $streamUnreadBadge = document.getElementById('stream-unread-badge');
@@ -89,7 +91,6 @@ let _viewerRole = '';
 let _selfReportEnabled = false;
 let _selfReportParticipants = [];
 let _selfReportInitialized = false;
-const SELF_REPORT_CANCELLED = Object.freeze({ cancelled: true });
 
 // CSS 选择器防守（id 含特殊字符时不失效）
 function cssEsc(v) {
@@ -107,31 +108,47 @@ function saveSelfReportSelection(value) {
   } catch { /* 忽略 */ }
 }
 
-function selectedSelfReport() {
-  if (!_selfReportEnabled) return undefined;
-  const selected = $selfReportSelect?.value || '';
-  if (selected.startsWith('participant:')) {
-    const id = selected.slice('participant:'.length);
-    const participant = _selfReportParticipants.find((item) => item.id === id);
-    return participant ? { id: participant.id, name: participant.name } : undefined;
+function currentSelfReportSelection() {
+  if (!_selfReportEnabled) {
+    return { explicit: true, mode: '', label: '', report: undefined };
   }
-  if (selected === 'other') {
-    const name = $selfReportOther?.value.trim() || '';
-    return name ? { name } : undefined;
-  }
-  return undefined;
+  return resolveSelfReportSelection(
+    $selfReportSelect?.value,
+    $selfReportOther?.value,
+    _selfReportParticipants,
+  );
 }
 
 function persistCurrentSelfReportSelection() {
   const selected = $selfReportSelect?.value || '';
   if (selected.startsWith('participant:')) {
-    const report = selectedSelfReport();
+    const report = currentSelfReportSelection().report;
     saveSelfReportSelection(report ? { mode: 'participant', ...report } : null);
   } else if (selected === 'other') {
     saveSelfReportSelection({ mode: 'other', name: $selfReportOther?.value || '' });
+  } else if (selected === 'anonymous') {
+    saveSelfReportSelection({ mode: 'anonymous' });
   } else {
     saveSelfReportSelection(null);
   }
+}
+
+function updateSelfReportUi({ keepEditor = false } = {}) {
+  if (!_selfReportEnabled) return;
+  const selection = currentSelfReportSelection();
+  $selfReportControl.classList.toggle('is-unselected', !selection.explicit);
+  $selfReportControl.classList.toggle('is-editing', keepEditor && selection.explicit);
+  $selfReportSummary.hidden = !selection.explicit || keepEditor;
+  if (selection.explicit) {
+    $selfReportSummary.textContent = `提交人：${selection.label} ✎`;
+  }
+  if ($streamSelfReportPrompt) $streamSelfReportPrompt.hidden = selection.explicit;
+}
+
+function focusSelfReportSelector() {
+  $selfReportControl?.classList.add('is-editing');
+  $selfReportSummary.hidden = true;
+  $selfReportSelect?.focus();
 }
 
 async function initializeSelfReport(identity) {
@@ -142,17 +159,17 @@ async function initializeSelfReport(identity) {
     const response = await fetch(apiUrl(`/api/participants-public?session=${encodeURIComponent(SESSION)}`));
     if (!response.ok) return;
     const participants = await response.json();
-    if (!Array.isArray(participants) || participants.length === 0) return;
+    if (!Array.isArray(participants)) return;
     _selfReportParticipants = participants.filter((item) => (
       item && typeof item.id === 'string' && typeof item.name === 'string'
     ));
-    if (!_selfReportParticipants.length) return;
 
     $selfReportSelect.replaceChildren(new Option('请选择', ''));
     for (const participant of _selfReportParticipants) {
       $selfReportSelect.add(new Option(participant.name, `participant:${participant.id}`));
     }
     $selfReportSelect.add(new Option('其他…', 'other'));
+    $selfReportSelect.add(new Option('匿名提交', 'anonymous'));
 
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(selfReportKey()) || 'null'); } catch { /* 忽略 */ }
@@ -163,9 +180,12 @@ async function initializeSelfReport(identity) {
       $selfReportSelect.value = 'other';
       $selfReportOther.value = typeof saved.name === 'string' ? saved.name.slice(0, 40) : '';
       $selfReportOther.hidden = false;
+    } else if (saved?.mode === 'anonymous') {
+      $selfReportSelect.value = 'anonymous';
     }
     _selfReportEnabled = true;
     $selfReportControl.hidden = false;
+    updateSelfReportUi();
   } catch {
     _selfReportInitialized = false;
     /* 身份选择器加载失败不阻断原有匿名流程，下一次消息轮询会重试。 */
@@ -177,46 +197,21 @@ $selfReportSelect?.addEventListener('change', () => {
   $selfReportOther.hidden = !other;
   if (other) $selfReportOther.focus();
   persistCurrentSelfReportSelection();
+  updateSelfReportUi({ keepEditor: other });
 });
-$selfReportOther?.addEventListener('input', persistCurrentSelfReportSelection);
-
-function promptForSelfReport() {
-  if (!$selfReportDialog || typeof $selfReportDialog.showModal !== 'function') {
-    const anonymous = confirm('尚未选择提交人。确定匿名提交吗？\n取消后请先选择提交人。');
-    if (!anonymous) $selfReportSelect?.focus();
-    return Promise.resolve(anonymous ? { cancelled: false, report: undefined } : SELF_REPORT_CANCELLED);
+$selfReportOther?.addEventListener('input', () => {
+  persistCurrentSelfReportSelection();
+  updateSelfReportUi({ keepEditor: true });
+});
+$selfReportOther?.addEventListener('blur', () => updateSelfReportUi());
+$selfReportOther?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $selfReportOther.blur();
   }
-  return new Promise((resolve) => {
-    let settled = false;
-    const onCancel = (event) => {
-      event.preventDefault();
-      finish(SELF_REPORT_CANCELLED);
-      $selfReportSelect?.focus();
-    };
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      $selfReportDialog.removeEventListener('cancel', onCancel);
-      if ($selfReportDialog.open) $selfReportDialog.close();
-      resolve(result);
-    };
-    $selfReportDialog.addEventListener('cancel', onCancel);
-    $selfReportDialog.querySelector('[data-self-report-action="choose"]').onclick = () => {
-      finish(SELF_REPORT_CANCELLED);
-      $selfReportSelect?.focus();
-    };
-    $selfReportDialog.querySelector('[data-self-report-action="anonymous"]').onclick = () => {
-      finish({ cancelled: false, report: undefined });
-    };
-    $selfReportDialog.showModal();
-  });
-}
-
-async function selfReportDecision() {
-  const report = selectedSelfReport();
-  if (report || !_selfReportEnabled) return { cancelled: false, report };
-  return promptForSelfReport();
-}
+});
+$selfReportSummary?.addEventListener('click', focusSelfReportSelector);
+$streamSelfReportPrompt?.addEventListener('click', focusSelfReportSelector);
 
 function contentLink(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -886,8 +881,7 @@ function setComposerBusy(busy, label = '') {
 }
 
 async function postStreamMessage(text, extra = {}, decision = null) {
-  const resolvedDecision = decision || await selfReportDecision();
-  if (resolvedDecision.cancelled) return null;
+  const resolvedDecision = decision || currentSelfReportSelection();
   const response = await fetch(apiUrl('/api/messages'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -986,11 +980,7 @@ async function uploadAndSendFiles(files) {
     setComposerBusy(false, rejectedNote);
     return;
   }
-  const decision = await selfReportDecision();
-  if (decision.cancelled) {
-    if ($streamFileInput) $streamFileInput.value = '';
-    return;
-  }
+  const decision = currentSelfReportSelection();
   setComposerBusy(true, `上传 0/${accepted.length}`);
   try {
     for (let index = 0; index < accepted.length; index += 1) {
@@ -1892,13 +1882,18 @@ $submitBtn.addEventListener('click', () => {
   const answeredIds = Object.keys(draft);
   const unanswered = unansweredDecisions(_blocks, answeredIds);
   const model = confirmModel(_blocks, answeredIds);
-  openConfirmDialog(model, () => doSubmit(draft, answeredIds, unanswered));
+  openConfirmDialog(model, (selection) => doSubmit(draft, answeredIds, unanswered, selection));
 });
 
 // 提交前确认模态（DESIGN §13 P0-1）：可就地展开未表态/重要默认项并跳转补填
 function openConfirmDialog(model, onConfirm) {
-  // 降级：环境无 <dialog> 支持 → 退回原生 confirm，绝不阻断提交
+  // 降级：环境无 <dialog> 支持时，未选提交人先回到顶部选择；不再弹匿名二次确认。
   if (!$confirmDialog || typeof $confirmDialog.showModal !== 'function') {
+    const selection = currentSelfReportSelection();
+    if (_selfReportEnabled && !selection.explicit) {
+      focusSelfReportSelector();
+      return;
+    }
     const mustN = (model.unansweredMust || []).length;
     const lines = [
       '你将：',
@@ -1907,19 +1902,92 @@ function openConfirmDialog(model, onConfirm) {
       mustN > 0 ? `⚠️ 还有 ${mustN} 个必须决策的点没确定` : '',
       '\n确认提交？',
     ].filter(Boolean).join('\n');
-    if (confirm(lines)) onConfirm();
+    if (confirm(lines)) onConfirm(selection);
     return;
   }
   $confirmDialog.innerHTML = confirmDialogHtml(model);
   $confirmDialog.querySelector('[data-act="cancel"]')?.addEventListener('click', () => $confirmDialog.close());
   $confirmDialog.querySelector('[data-act="confirm"]')?.addEventListener('click', () => {
+    const selection = confirmDialogSelfReportSelection();
+    if (_selfReportEnabled && !selection.explicit) return;
+    applyConfirmDialogSelfReportSelection(selection);
     $confirmDialog.close();
-    onConfirm();
+    onConfirm(selection);
   });
+  const confirmSelect = $confirmDialog.querySelector('#confirm-self-report-select');
+  const confirmOther = $confirmDialog.querySelector('#confirm-self-report-other');
+  confirmSelect?.addEventListener('change', () => {
+    confirmOther.hidden = confirmSelect.value !== 'other';
+    if (!confirmOther.hidden) confirmOther.focus();
+    syncConfirmSelfReportState();
+  });
+  confirmOther?.addEventListener('input', syncConfirmSelfReportState);
   $confirmDialog.querySelectorAll('[data-jump]').forEach((el) => {
     el.addEventListener('click', () => { $confirmDialog.close(); jumpToBlock(el.dataset.jump); });
   });
   $confirmDialog.showModal();
+}
+
+function confirmDialogSelfReportSelection() {
+  if (!_selfReportEnabled) return currentSelfReportSelection();
+  return resolveSelfReportSelection(
+    $confirmDialog.querySelector('#confirm-self-report-select')?.value,
+    $confirmDialog.querySelector('#confirm-self-report-other')?.value,
+    _selfReportParticipants,
+  );
+}
+
+function syncConfirmSelfReportState() {
+  const selection = confirmDialogSelfReportSelection();
+  const confirmButton = $confirmDialog.querySelector('[data-act="confirm"]');
+  const hint = $confirmDialog.querySelector('#confirm-self-report-hint');
+  if (confirmButton) confirmButton.disabled = !selection.explicit;
+  if (hint) hint.hidden = selection.explicit;
+}
+
+function applyConfirmDialogSelfReportSelection(selection) {
+  if (!_selfReportEnabled || !selection.explicit) return;
+  if (selection.mode === 'participant') {
+    $selfReportSelect.value = `participant:${selection.report.id}`;
+    $selfReportOther.value = '';
+    $selfReportOther.hidden = true;
+  } else if (selection.mode === 'other') {
+    $selfReportSelect.value = 'other';
+    $selfReportOther.value = selection.report.name;
+    $selfReportOther.hidden = false;
+  } else {
+    $selfReportSelect.value = 'anonymous';
+    $selfReportOther.value = '';
+    $selfReportOther.hidden = true;
+  }
+  persistCurrentSelfReportSelection();
+  updateSelfReportUi();
+}
+
+function confirmSelfReportHtml() {
+  if (!_selfReportEnabled) return '';
+  const selection = currentSelfReportSelection();
+  const selectedValue = selection.mode === 'participant'
+    ? `participant:${selection.report.id}`
+    : selection.mode;
+  const option = (label, value) => (
+    `<option value="${escapeAttr(value)}"${selectedValue === value ? ' selected' : ''}>${escapeHtml(label)}</option>`
+  );
+  const options = [option('请选择', '')]
+    .concat(_selfReportParticipants.map((participant) => (
+      option(participant.name, `participant:${participant.id}`)
+    )))
+    .concat([option('其他…', 'other'), option('匿名提交', 'anonymous')])
+    .join('');
+  const otherName = selection.mode === 'other' ? selection.label : '';
+  return `<div class="confirm-self-report">
+    <label for="confirm-self-report-select">提交人</label>
+    <div class="confirm-self-report-fields">
+      <select id="confirm-self-report-select" aria-describedby="confirm-self-report-hint">${options}</select>
+      <input id="confirm-self-report-other" type="text" maxlength="40" value="${escapeAttr(otherName)}" placeholder="输入姓名" aria-label="输入提交人姓名"${selection.mode === 'other' ? '' : ' hidden'}>
+    </div>
+    <p id="confirm-self-report-hint" class="confirm-self-report-hint"${selection.explicit ? ' hidden' : ''}>请先选择提交人</p>
+  </div>`;
 }
 
 function confirmDialogHtml(model) {
@@ -1949,15 +2017,17 @@ function confirmDialogHtml(model) {
     : `<div class="confirm-line">接受 <strong>${model.acceptedDefaults}</strong> 项默认</div>`;
 
   const okLabel = must.length > 0 ? '仍要提交' : '确认提交';
+  const selection = currentSelfReportSelection();
   return `<div class="confirm-form">
   <h2 class="confirm-title">确认提交</h2>
+  ${confirmSelfReportHtml()}
   <div class="confirm-line">已决策 <strong>${model.decided}</strong> 项</div>
   ${mustWarn}
   ${optBlock}
   ${importantBlock}
   <div class="confirm-actions">
     <button type="button" class="confirm-btn confirm-cancel" data-act="cancel">返回补填</button>
-    <button type="button" class="confirm-btn confirm-ok${must.length > 0 ? ' confirm-ok-warn' : ''}" data-act="confirm">${okLabel}</button>
+    <button type="button" class="confirm-btn confirm-ok${must.length > 0 ? ' confirm-ok-warn' : ''}" data-act="confirm"${_selfReportEnabled && !selection.explicit ? ' disabled' : ''}>${okLabel}</button>
   </div>
 </div>`;
 }
@@ -2053,9 +2123,7 @@ function updateFacetBadges() {
   });
 }
 
-async function doSubmit(draft, answeredIds, unanswered) {
-  const decision = await selfReportDecision();
-  if (decision.cancelled) return;
+async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfReportSelection()) {
   // 构造 items
   const items = Object.entries(draft).map(([blockId, item]) => {
     const entries = [];

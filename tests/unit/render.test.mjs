@@ -24,6 +24,7 @@ import {
   streamEntryHtml,
   streamEntriesHtml,
 } from '../../src/render/stream-view.mjs';
+import { resolveSelfReportSelection } from '../../src/render/self-report-state.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const renderIndex = readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
@@ -45,6 +46,50 @@ test('render 页面包含桌面分栏、右区双切换与手机底部三标签'
   assert.match(renderIndex, /class="mobile-tab[^"]*"[^>]*data-view="documents"/);
   assert.match(renderIndex, /id="stream-unread-badge"/);
   assert.match(renderIndex, /id="decision-unread-badge"/);
+});
+
+test('共享 owner 的提交确认内嵌提交人控件，且位于决策统计上方', () => {
+  assert.match(renderApp, /id="confirm-self-report-select"/);
+  assert.match(renderApp, /id="confirm-self-report-other"/);
+  assert.match(renderApp, /option\('匿名提交', 'anonymous'\)/);
+  assert.ok(
+    renderApp.indexOf('${confirmSelfReportHtml()}') < renderApp.indexOf('已决策 <strong>${model.decided}'),
+    '提交人控件应位于“已决策 N 项”上方',
+  );
+  assert.doesNotMatch(renderIndex, /id="self-report-dialog"/);
+  assert.doesNotMatch(renderApp, /确定匿名提交吗/);
+});
+
+test('共享 owner 未选择提交人时确认按钮禁用并显示提示', () => {
+  const empty = resolveSelfReportSelection('', '', []);
+  assert.equal(empty.explicit, false);
+  assert.match(renderApp, /data-act="confirm"[^>]*\$\{_selfReportEnabled && !selection\.explicit \? ' disabled'/);
+  assert.match(renderApp, />请先选择提交人<\/p>/);
+});
+
+test('共享 owner 明确选匿名可提交且 payload 不带 selfReport', () => {
+  const anonymous = resolveSelfReportSelection('anonymous', '', []);
+  assert.equal(anonymous.explicit, true);
+  assert.equal(anonymous.mode, 'anonymous');
+  assert.equal(anonymous.report, undefined);
+  assert.match(renderApp, /\.\.\.\(decision\.report \? \{ selfReport: decision\.report \} : \{\}\)/);
+});
+
+test('共享 owner 选名册参与人时提交携带 selfReport', () => {
+  const person = resolveSelfReportSelection('participant:alice', '', [
+    { id: 'alice', name: '小艾' },
+  ]);
+  assert.equal(person.explicit, true);
+  assert.deepEqual(person.report, { id: 'alice', name: '小艾' });
+});
+
+test('顶部未选状态醒目、选定后可点修改，留言仅轻提示且不阻断匿名发送', () => {
+  assert.match(renderIndex, /class="self-report-dot"/);
+  assert.match(renderIndex, /class="self-report-prompt">请选择提交人/);
+  assert.match(renderApp, /`提交人：\$\{selection\.label\} ✎`/);
+  assert.match(renderCss, /\.self-report-control\.is-unselected[\s\S]{0,220}var\(--color-status-warn\)/);
+  assert.match(renderIndex, /id="stream-self-report-prompt"[\s\S]{0,120}请选择提交人/);
+  assert.match(renderApp, /async function postStreamMessage[\s\S]{0,180}decision \|\| currentSelfReportSelection\(\)/);
 });
 
 test('对话区使用一致的中英文名称，不再向用户显示“会话流”', () => {

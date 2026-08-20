@@ -26,11 +26,15 @@
     </div>
     <div class="top-bar-right">
       <div id="self-report-control" class="self-report-control" hidden>
-        <label for="self-report-select">提交人</label>
-        <select id="self-report-select" aria-label="选择提交人">
-          <option value="">请选择</option>
-        </select>
-        <input id="self-report-other" type="text" maxlength="40" placeholder="输入姓名" aria-label="输入提交人姓名" hidden>
+        <span class="self-report-dot" aria-hidden="true"></span>
+        <span class="self-report-prompt">请选择提交人</span>
+        <button id="self-report-summary" class="self-report-summary" type="button" hidden></button>
+        <div class="self-report-editor">
+          <select id="self-report-select" aria-label="选择提交人">
+            <option value="">请选择</option>
+          </select>
+          <input id="self-report-other" type="text" maxlength="40" placeholder="输入姓名" aria-label="输入提交人姓名" hidden>
+        </div>
       </div>
       <span id="status-badge-mount"></span>
       <button id="submit-btn" class="submit-btn" type="button">提交</button>
@@ -58,6 +62,9 @@
             <span aria-hidden="true">＋</span><span>附件</span>
           </label>
           <span id="stream-send-status" class="stream-send-status" aria-live="polite"></span>
+          <button id="stream-self-report-prompt" class="stream-self-report-prompt" type="button" hidden>
+            <span aria-hidden="true"></span>请选择提交人
+          </button>
           <button id="stream-send-btn" class="stream-send-btn" type="submit">发送</button>
         </div>
       </form>
@@ -108,16 +115,6 @@
 
   <!-- 提交前确认模态（§13 P0-1）：内容由 app.mjs 注入 -->
   <dialog id="confirm-dialog" class="confirm-dialog"></dialog>
-  <dialog id="self-report-dialog" class="self-report-dialog">
-    <form method="dialog">
-      <h2>请选择提交人</h2>
-      <p>共享链接会由多人使用，选择姓名后反馈和留言才能对应到本人。</p>
-      <div class="self-report-dialog-actions">
-        <button type="button" data-self-report-action="choose">返回选择</button>
-        <button type="button" class="self-report-anonymous" data-self-report-action="anonymous">匿名提交</button>
-      </div>
-    </form>
-  </dialog>
 
   <!-- 本地 mermaid（缺失则降级静默） -->
   <script>

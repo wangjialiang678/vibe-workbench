@@ -117,6 +117,25 @@ test('owner 自报身份提交反馈：可信身份不变，自报进入主文�
   assert.deepEqual(receipt.selfReportedBy, { id: 'alice', name: '小艾 / QA' });
 });
 
+test('owner 明确匿名提交：反馈可保存且不产生 selfReportedBy', async () => {
+  const session = 'self-report-owner-anonymous';
+  seedRound(session);
+  const response = await post('/api/feedback', {
+    session,
+    round: 1,
+    items: [],
+  });
+  assert.equal(response.status, 200);
+
+  const saved = readJSON(paths.feedback(session, 1, { exactSession: true }));
+  assert.deepEqual(saved.submittedBy, { id: 'owner', name: '管理员' });
+  assert.equal(Object.hasOwn(saved, 'selfReportedBy'), false);
+  assert.equal(Object.hasOwn(saved, 'selfReport'), false);
+  const receipt = readStreamEntries(session, { exactSession: true }).at(-1);
+  assert.equal(receipt.text, '管理员 已提交第 1 轮反馈');
+  assert.equal(Object.hasOwn(receipt, 'selfReportedBy'), false);
+});
+
 test('owner 自报 name 超过 40 字符返回 400', async () => {
   const session = 'self-report-name-limit';
   seedRound(session);
