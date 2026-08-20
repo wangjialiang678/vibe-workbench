@@ -126,6 +126,55 @@ body {
 .submit-btn:hover { opacity: .88; }
 .submit-btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
+.self-report-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.self-report-control[hidden] { display: none; }
+.self-report-control select,
+.self-report-control input {
+  width: 112px;
+  min-height: 30px;
+  padding: 3px 7px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+}
+.self-report-control input { width: 104px; }
+.self-report-control select:focus,
+.self-report-control input:focus { outline: 2px solid var(--color-focus); outline-offset: -1px; }
+
+.self-report-dialog {
+  width: min(390px, calc(100vw - 32px));
+  margin: auto;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 14px 42px rgba(0,0,0,.24);
+}
+.self-report-dialog::backdrop { background: rgba(0,0,0,.38); }
+.self-report-dialog h2 { margin-bottom: 6px; font-size: 18px; }
+.self-report-dialog p { color: var(--color-text-muted); font-size: 13px; }
+.self-report-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.self-report-dialog button {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+.self-report-dialog .self-report-anonymous { border-color: var(--color-focus); color: var(--color-focus); }
+
 /* ===== 项目首页：项目是长期主线，会话只是项目内档案 ===== */
 body.project-home .workspace-shell {
   display: block;
@@ -2459,6 +2508,9 @@ svg.proto-overlay {
   .retry-btn { flex: none; }
   .retry-btn { margin-left: 2px; padding-inline: 8px; }
   .submit-btn { flex: none; padding-inline: 13px; }
+  .self-report-control label { display: none; }
+  .self-report-control select { width: 88px; }
+  .self-report-control input { width: 82px; }
 
   .workspace-shell {
     display: block;

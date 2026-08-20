@@ -30,6 +30,22 @@ function cleanAuthor(author) {
   return { id: author.id.trim(), name: author.name.trim(), role: author.role };
 }
 
+function cleanSelfReportedBy(selfReportedBy) {
+  if (selfReportedBy == null) return undefined;
+  if (!selfReportedBy || typeof selfReportedBy !== 'object' || Array.isArray(selfReportedBy)
+    || typeof selfReportedBy.name !== 'string'
+    || !selfReportedBy.name.trim()
+    || [...selfReportedBy.name].length > 40) {
+    throw new Error('selfReportedBy 自报身份无效');
+  }
+  return {
+    ...(typeof selfReportedBy.id === 'string' && selfReportedBy.id
+      ? { id: selfReportedBy.id }
+      : {}),
+    name: selfReportedBy.name,
+  };
+}
+
 function cleanRefs(refs) {
   if (refs == null) return undefined;
   if (typeof refs !== 'object' || Array.isArray(refs)) throw new Error('refs 引用信息无效');
@@ -121,12 +137,14 @@ function normalizeEntry(input) {
   if (typeof input.text !== 'string' || !input.text.trim()) throw new Error('text 文本不能为空');
 
   const refs = cleanRefs(input.refs);
+  const selfReportedBy = cleanSelfReportedBy(input.selfReportedBy);
   return {
     id: id.trim(),
     at,
     author: cleanAuthor(input.author),
     kind: input.kind,
     text: input.text,
+    ...(selfReportedBy ? { selfReportedBy } : {}),
     ...(refs ? { refs } : {}),
     ...(input.kind === 'ask' ? { ask: cleanAsk(input.ask) } : {}),
     ...(input.kind === 'answer' ? cleanAnswerFields(input) : {}),
@@ -217,6 +235,7 @@ export function appendAnswerEntry(session, input, { exactSession = false } = {})
     ...(input.id == null ? {} : { id: input.id }),
     ...(input.at == null ? {} : { at: input.at }),
     author: input.author,
+    ...(input.selfReportedBy ? { selfReportedBy: input.selfReportedBy } : {}),
     kind: 'answer',
     text,
     answerTo,

@@ -58,6 +58,10 @@ const $zones        = document.getElementById('zones-mount');
 const $statusMount  = document.getElementById('status-badge-mount');
 const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
+const $selfReportControl = document.getElementById('self-report-control');
+const $selfReportSelect = document.getElementById('self-report-select');
+const $selfReportOther = document.getElementById('self-report-other');
+const $selfReportDialog = document.getElementById('self-report-dialog');
 const $sessionLabel = document.getElementById('session-label');
 const $sessionNav   = document.getElementById('session-nav');
 const $docsLink     = document.getElementById('docs-link');
@@ -81,6 +85,11 @@ const $contentSwitch = document.querySelector('.content-switch');
 const $sessionCommentSection = document.getElementById('session-comment');
 const $historyRoundsSection = document.querySelector('.history-rounds');
 let _projectCatalog = null;
+let _viewerRole = '';
+let _selfReportEnabled = false;
+let _selfReportParticipants = [];
+let _selfReportInitialized = false;
+const SELF_REPORT_CANCELLED = Object.freeze({ cancelled: true });
 
 // CSS 选择器防守（id 含特殊字符时不失效）
 function cssEsc(v) {
@@ -89,6 +98,125 @@ function cssEsc(v) {
 
 // 会话级留言草稿键（与块草稿分开存，避免污染 answeredIds）
 function scKey() { return `wb:${SESSION}:${currentRound}:sc`; }
+function selfReportKey() { return `wb:${SESSION}:self-report`; }
+
+function saveSelfReportSelection(value) {
+  try {
+    if (value) localStorage.setItem(selfReportKey(), JSON.stringify(value));
+    else localStorage.removeItem(selfReportKey());
+  } catch { /* 忽略 */ }
+}
+
+function selectedSelfReport() {
+  if (!_selfReportEnabled) return undefined;
+  const selected = $selfReportSelect?.value || '';
+  if (selected.startsWith('participant:')) {
+    const id = selected.slice('participant:'.length);
+    const participant = _selfReportParticipants.find((item) => item.id === id);
+    return participant ? { id: participant.id, name: participant.name } : undefined;
+  }
+  if (selected === 'other') {
+    const name = $selfReportOther?.value.trim() || '';
+    return name ? { name } : undefined;
+  }
+  return undefined;
+}
+
+function persistCurrentSelfReportSelection() {
+  const selected = $selfReportSelect?.value || '';
+  if (selected.startsWith('participant:')) {
+    const report = selectedSelfReport();
+    saveSelfReportSelection(report ? { mode: 'participant', ...report } : null);
+  } else if (selected === 'other') {
+    saveSelfReportSelection({ mode: 'other', name: $selfReportOther?.value || '' });
+  } else {
+    saveSelfReportSelection(null);
+  }
+}
+
+async function initializeSelfReport(identity) {
+  _viewerRole = identity?.role || '';
+  if (_selfReportInitialized || _viewerRole !== 'owner' || !SESSION) return;
+  _selfReportInitialized = true;
+  try {
+    const response = await fetch(apiUrl(`/api/participants-public?session=${encodeURIComponent(SESSION)}`));
+    if (!response.ok) return;
+    const participants = await response.json();
+    if (!Array.isArray(participants) || participants.length === 0) return;
+    _selfReportParticipants = participants.filter((item) => (
+      item && typeof item.id === 'string' && typeof item.name === 'string'
+    ));
+    if (!_selfReportParticipants.length) return;
+
+    $selfReportSelect.replaceChildren(new Option('请选择', ''));
+    for (const participant of _selfReportParticipants) {
+      $selfReportSelect.add(new Option(participant.name, `participant:${participant.id}`));
+    }
+    $selfReportSelect.add(new Option('其他…', 'other'));
+
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(selfReportKey()) || 'null'); } catch { /* 忽略 */ }
+    if (saved?.mode === 'participant'
+      && _selfReportParticipants.some((item) => item.id === saved.id)) {
+      $selfReportSelect.value = `participant:${saved.id}`;
+    } else if (saved?.mode === 'other') {
+      $selfReportSelect.value = 'other';
+      $selfReportOther.value = typeof saved.name === 'string' ? saved.name.slice(0, 40) : '';
+      $selfReportOther.hidden = false;
+    }
+    _selfReportEnabled = true;
+    $selfReportControl.hidden = false;
+  } catch {
+    _selfReportInitialized = false;
+    /* 身份选择器加载失败不阻断原有匿名流程，下一次消息轮询会重试。 */
+  }
+}
+
+$selfReportSelect?.addEventListener('change', () => {
+  const other = $selfReportSelect.value === 'other';
+  $selfReportOther.hidden = !other;
+  if (other) $selfReportOther.focus();
+  persistCurrentSelfReportSelection();
+});
+$selfReportOther?.addEventListener('input', persistCurrentSelfReportSelection);
+
+function promptForSelfReport() {
+  if (!$selfReportDialog || typeof $selfReportDialog.showModal !== 'function') {
+    const anonymous = confirm('尚未选择提交人。确定匿名提交吗？\n取消后请先选择提交人。');
+    if (!anonymous) $selfReportSelect?.focus();
+    return Promise.resolve(anonymous ? { cancelled: false, report: undefined } : SELF_REPORT_CANCELLED);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const onCancel = (event) => {
+      event.preventDefault();
+      finish(SELF_REPORT_CANCELLED);
+      $selfReportSelect?.focus();
+    };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      $selfReportDialog.removeEventListener('cancel', onCancel);
+      if ($selfReportDialog.open) $selfReportDialog.close();
+      resolve(result);
+    };
+    $selfReportDialog.addEventListener('cancel', onCancel);
+    $selfReportDialog.querySelector('[data-self-report-action="choose"]').onclick = () => {
+      finish(SELF_REPORT_CANCELLED);
+      $selfReportSelect?.focus();
+    };
+    $selfReportDialog.querySelector('[data-self-report-action="anonymous"]').onclick = () => {
+      finish({ cancelled: false, report: undefined });
+    };
+    $selfReportDialog.showModal();
+  });
+}
+
+async function selfReportDecision() {
+  const report = selectedSelfReport();
+  if (report || !_selfReportEnabled) return { cancelled: false, report };
+  return promptForSelfReport();
+}
 
 function contentLink(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -691,6 +819,7 @@ async function loadStream({ initial = false } = {}) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (data.identity?.id) _viewerId = data.identity.id;
+    await initializeSelfReport(data.identity);
     if (initial) {
       $streamEntries.replaceChildren();
       _seenStreamIds.clear();
@@ -756,11 +885,18 @@ function setComposerBusy(busy, label = '') {
   if ($streamSendStatus) $streamSendStatus.textContent = label;
 }
 
-async function postStreamMessage(text, extra = {}) {
+async function postStreamMessage(text, extra = {}, decision = null) {
+  const resolvedDecision = decision || await selfReportDecision();
+  if (resolvedDecision.cancelled) return null;
   const response = await fetch(apiUrl('/api/messages'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session: SESSION, text, ...extra }),
+    body: JSON.stringify({
+      session: SESSION,
+      text,
+      ...extra,
+      ...(resolvedDecision.report ? { selfReport: resolvedDecision.report } : {}),
+    }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.entry) throw new Error(data.error || `HTTP ${response.status}`);
@@ -782,11 +918,11 @@ async function submitAskAnswer(askId) {
   _askErrors.delete(askId);
   renderStreamEntries();
   try {
-    await postStreamMessage(selectedOption.label, {
+    const entry = await postStreamMessage(selectedOption.label, {
       answerTo: askId,
       answerValue,
     });
-    _askSelections.delete(askId);
+    if (entry) _askSelections.delete(askId);
   } catch (error) {
     _askErrors.set(askId, `提交失败：${error.message}`);
   } finally {
@@ -801,9 +937,11 @@ async function sendComposerText() {
   if (!text) return;
   setComposerBusy(true, '发送中…');
   try {
-    await postStreamMessage(text);
-    $streamInput.value = composerValueAfterSend($streamInput.value, text);
-    if (!$streamInput.value) $streamInput.style.height = '';
+    const entry = await postStreamMessage(text);
+    if (entry) {
+      $streamInput.value = composerValueAfterSend($streamInput.value, text);
+      if (!$streamInput.value) $streamInput.style.height = '';
+    }
     setComposerBusy(false, '');
   } catch (error) {
     setComposerBusy(false, `发送失败：${error.message}`);
@@ -848,6 +986,11 @@ async function uploadAndSendFiles(files) {
     setComposerBusy(false, rejectedNote);
     return;
   }
+  const decision = await selfReportDecision();
+  if (decision.cancelled) {
+    if ($streamFileInput) $streamFileInput.value = '';
+    return;
+  }
   setComposerBusy(true, `上传 0/${accepted.length}`);
   try {
     for (let index = 0; index < accepted.length; index += 1) {
@@ -867,7 +1010,7 @@ async function uploadAndSendFiles(files) {
         url: data.url,
         name: file.name || '附件',
         type: file.type,
-      }));
+      }), {}, decision);
     }
     setComposerBusy(false, rejectedNote);
     _documentsCacheKey = '';
@@ -1911,6 +2054,8 @@ function updateFacetBadges() {
 }
 
 async function doSubmit(draft, answeredIds, unanswered) {
+  const decision = await selfReportDecision();
+  if (decision.cancelled) return;
   // 构造 items
   const items = Object.entries(draft).map(([blockId, item]) => {
     const entries = [];
@@ -1967,6 +2112,7 @@ async function doSubmit(draft, answeredIds, unanswered) {
     items,
     unanswered,                                                    // = 需决策但"没看/未操作"（不含"看了不改"）
     sessionComment: ($sessionComment?.value ?? '').trim() || null,  // 会话级留言（P1 · 病例 6）
+    ...(decision.report ? { selfReport: decision.report } : {}),
   };
 
   const previousSubmitState = _submitState;

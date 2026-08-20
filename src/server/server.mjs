@@ -742,6 +742,37 @@ function publicParticipant(participant) {
   return { id, name, createdAt };
 }
 
+function acceptedSelfReport(value, identity, participantsFile) {
+  // participant 的实名 token 已经给出可信身份；客户端夹带的自报字段一律忽略。
+  if (identity?.role !== 'owner' || value == null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || typeof value.name !== 'string'
+    || !value.name.trim()
+    || [...value.name].length > 40) {
+    const error = new Error('selfReport.name 必填且须为 1~40 个字符');
+    error.code = 'INVALID_SELF_REPORT';
+    throw error;
+  }
+  const accepted = { name: value.name };
+  if (typeof value.id === 'string') {
+    const known = listParticipants(participantsFile).some((participant) => participant.id === value.id);
+    if (known) accepted.id = value.id;
+  }
+  return accepted;
+}
+
+function selfReportSlug(name) {
+  const slug = String(name || '')
+    .replace(/[^\p{Script=Han}A-Za-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 20);
+  return slug || '-';
+}
+
+function sharedDisplayName(selfReportedBy) {
+  return selfReportedBy ? `${selfReportedBy.name}（共享链接）` : '';
+}
+
 function workerPresence(runtimeState, now = Date.now()) {
   const heartbeat = runtimeState.workerHeartbeat;
   const at = heartbeat?.at ? Date.parse(heartbeat.at) : NaN;
@@ -1403,16 +1434,30 @@ function handleRequest(
         json(res, 400, { ok: false, error: 'text 必须非空且不超过 4000 字' });
         return;
       }
+      let selfReportedBy;
+      try {
+        selfReportedBy = acceptedSelfReport(body.selfReport, identity, participantsFile);
+      } catch (error) {
+        if (error?.code === 'INVALID_SELF_REPORT') {
+          json(res, 400, { ok: false, error: error.message });
+          return;
+        }
+        console.error('[workbench:messages] 自报身份校验失败：', error.message);
+        json(res, 500, { ok: false, error: '参与者名册无法读取' });
+        return;
+      }
       try {
         if (isAnswer) assertParticipantCanAnswerAsk(body.session, body.answerTo, identity);
         const entry = isAnswer
           ? appendAnswerEntry(body.session, {
               author: identity,
+              ...(selfReportedBy ? { selfReportedBy } : {}),
               answerTo: body.answerTo,
               answerValue: body.answerValue,
             }, { exactSession: true })
           : appendStreamEntry(body.session, {
               author: identity,
+              ...(selfReportedBy ? { selfReportedBy } : {}),
               kind: 'message',
               text: body.text,
             }, { exactSession: true });
@@ -1423,6 +1468,7 @@ function handleRequest(
           id: entry.id,
           kind: entry.kind,
           author: entry.author,
+          ...(selfReportedBy ? { selfReportedBy } : {}),
           at: entry.at,
         });
       } catch (error) {
@@ -1443,6 +1489,21 @@ function handleRequest(
       }
       json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
     });
+    return;
+  }
+
+  if (urlPath === '/api/participants-public' && method === 'GET') {
+    const { session } = parseQuery(rawUrl);
+    if (!isValidSessionName(session)) {
+      json(res, 400, { ok: false, error: 'session 参数无效' });
+      return;
+    }
+    try {
+      json(res, 200, listParticipants(participantsFile).map(({ id, name }) => ({ id, name })));
+    } catch (error) {
+      console.error('[workbench:participants] 公开名册读取失败：', error.message);
+      json(res, 500, { ok: false, error: '参与者名册无法读取' });
+    }
     return;
   }
 
@@ -1867,6 +1928,18 @@ function handleRequest(
         json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
         return;
       }
+      let selfReportedBy;
+      try {
+        selfReportedBy = acceptedSelfReport(fb.selfReport, identity, participantsFile);
+      } catch (error) {
+        if (error?.code === 'INVALID_SELF_REPORT') {
+          json(res, 400, { ok: false, error: error.message });
+          return;
+        }
+        console.error('[workbench:feedback] 自报身份校验失败：', error.message);
+        json(res, 500, { ok: false, error: '参与者名册无法读取' });
+        return;
+      }
       if (identity.role === 'participant') {
         const visibility = feedbackVisibilityForIdentity(session, round, identity);
         if (!visibility.valid) {
@@ -1909,10 +1982,26 @@ function handleRequest(
       const now = new Date().toISOString();
       const submittedBy = { id: identity.id, name: identity.name };
       // submittedBy 永远由服务端覆盖，不能信任客户端自报身份。
-      const saved = { ...fb, submittedAt: now, submittedBy };
+      const {
+        selfReport: _clientSelfReport,
+        selfReportedBy: _clientSelfReportedBy,
+        ...feedbackFields
+      } = fb;
+      const saved = {
+        ...feedbackFields,
+        submittedAt: now,
+        submittedBy,
+        ...(selfReportedBy ? { selfReportedBy } : {}),
+      };
       // 每笔提交无条件先落历史件：共享 owner 链接多人先后提交曾互相覆盖，
       // 2026-08-19 思锐门户因此永久丢失两笔客户反馈——主文件仍保持"最新一笔"语义，历史件保证零丢失。
-      writeJSON(paths.feedbackHistory(session, round, `${now.replace(/[:.]/g, '-')}-${(feedbackHistorySeq += 1).toString(36)}`, identity.id, pathOptions), saved);
+      writeJSON(paths.feedbackHistory(
+        session,
+        round,
+        `${now.replace(/[:.]/g, '-')}-${(feedbackHistorySeq += 1).toString(36)}`,
+        identity.id,
+        { ...pathOptions, ...(selfReportedBy ? { selfReportSlug: selfReportSlug(selfReportedBy.name) } : {}) },
+      ), saved);
       const primaryPath = paths.feedback(session, round, pathOptions);
       if (identity.role === 'participant') {
         writeJSON(paths.participantFeedback(session, round, identity.id, pathOptions), saved);
@@ -1936,7 +2025,10 @@ function handleRequest(
       appendStreamEntry(session, {
         author: AI_IDENTITY,
         kind: 'receipt',
-        text: `${submittedBy.name} 已提交第 ${round} 轮反馈`,
+        text: selfReportedBy
+          ? `${sharedDisplayName(selfReportedBy)}已提交第 ${round} 轮反馈`
+          : `${submittedBy.name} 已提交第 ${round} 轮反馈`,
+        ...(selfReportedBy ? { selfReportedBy } : {}),
         refs: { round },
       }, pathOptions);
       json(res, 200, { ok: true, count: (fb.items || []).length });
@@ -1945,6 +2037,7 @@ function handleRequest(
         session,
         round,
         submittedBy,
+        ...(selfReportedBy ? { selfReportedBy } : {}),
         at: now,
       });
     }).catch((e) => {

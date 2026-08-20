@@ -39,7 +39,11 @@ export const paths = {
   feedback: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.json'),
   participantFeedback: (s, r, id, options) => path.join(roundDir(s, r, options), `feedback-${id}.json`),
   // 逐笔提交的不可覆盖留痕（目录名不带 .json 后缀，不会被 participant 文件的 readdir 正则误读）
-  feedbackHistory: (s, r, stamp, id, options) => path.join(roundDir(s, r, options), 'feedback-history', `${stamp}-${id}.json`),
+  feedbackHistory: (s, r, stamp, id, options) => path.join(
+    roundDir(s, r, options),
+    'feedback-history',
+    `${stamp}-${id}${options?.selfReportSlug ? `-${options.selfReportSlug}` : ''}.json`,
+  ),
   feedbackMd: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.md'),
   ack: (s, r, options) => path.join(roundDir(s, r, options), 'ack.json'),
   response: (s, r, options) => path.join(roundDir(s, r, options), 'response.md'),

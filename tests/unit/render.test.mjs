@@ -84,6 +84,20 @@ test('streamEntryHtml：AI 左侧、自己右侧、他人左侧并显示名字',
   assert.match(other, /stream-author[^>]*>小艾</);
 });
 
+test('streamEntryHtml：共享链接留言显示自报名且不改写 owner author 分侧', () => {
+  const html = streamEntryHtml({
+    id: 'shared-message',
+    at: '2026-08-20T10:00:00.000Z',
+    author: { id: 'owner', name: '管理员', role: 'owner' },
+    selfReportedBy: { id: 'alice', name: '小艾' },
+    kind: 'message',
+    text: '共享链接留言',
+  }, { viewerId: 'owner' });
+  assert.match(html, /stream-entry--right/);
+  assert.match(html, /stream-author[^>]*>小艾（共享链接）</);
+  assert.doesNotMatch(html, /stream-author[^>]*>管理员</);
+});
+
 test('streamEntryHtml：receipt 与 progress 使用各自醒目的居中样式类', () => {
   const receipt = streamEntryHtml({
     id: 'r1',

@@ -36,6 +36,11 @@ function selectedAnswerIds(value) {
     .filter((item) => typeof item === 'string' && item);
 }
 
+function displayName(entry, fallback = '参与者') {
+  if (entry?.selfReportedBy?.name) return `${entry.selfReportedBy.name}（共享链接）`;
+  return entry?.author?.name || entry?.author?.id || fallback;
+}
+
 function askCardHtml(entry, options) {
   const ask = entry.ask || {};
   const askId = String(ask.id || '');
@@ -45,7 +50,7 @@ function askCardHtml(entry, options) {
     ? answer.answerValue
     : mapValue(options.selectedAnswers, askId);
   const selectedIds = new Set(selectedAnswerIds(selectedValue));
-  const answerer = answer?.author?.name || answer?.author?.id || '参与者';
+  const answerer = displayName(answer);
   const selectedLabels = (Array.isArray(ask.options) ? ask.options : [])
     .filter((option) => selectedIds.has(option.id))
     .map((option) => option.label);
@@ -115,7 +120,7 @@ export function streamEntryHtml(entry, options = {}) {
   if (kind === 'ask') return askCardHtml(entry, options);
 
   if (kind === 'answer') {
-    const answerer = escapeHtml(author.name || author.id || '参与者');
+    const answerer = escapeHtml(displayName(entry));
     return `<article class="stream-entry stream-entry--system stream-entry--answer" data-entry-id="${id}" data-answer-to="${escapeHtml(entry.answerTo)}">
   <div class="stream-answer-line"><strong>${answerer}</strong><span>选择了“${escapeHtml(entry.text)}”</span>${at ? `<time>${escapeHtml(at)}</time>` : ''}</div>
 </article>`;
@@ -126,8 +131,8 @@ export function streamEntryHtml(entry, options = {}) {
   const isSelf = Boolean(viewerId) && String(author.id) === String(viewerId);
   const isAi = author.role === 'ai';
   const side = isSelf ? 'right' : 'left';
-  const name = !isSelf && !isAi
-    ? `<div class="stream-author">${escapeHtml(author.name || author.id || '参与者')}</div>`
+  const name = ((!isSelf && !isAi) || entry.selfReportedBy?.name)
+    ? `<div class="stream-author">${escapeHtml(displayName(entry))}</div>`
     : '';
   const meta = at ? `<time class="stream-time">${escapeHtml(at)}</time>` : '';
   return `<article class="stream-entry stream-entry--message stream-entry--${side}${isSelf ? ' stream-entry--self' : ''}${isAi ? ' stream-entry--ai' : ''}" data-entry-id="${id}">
