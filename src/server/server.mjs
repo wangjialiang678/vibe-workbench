@@ -69,6 +69,7 @@ import {
   renewInboxTask,
   resetExpiredInboxClaims,
 } from '../executor-inbox.mjs';
+import { createControlTowerService } from '../control-tower.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
@@ -139,10 +140,15 @@ const PUBLIC_STATIC_EXTENSIONS = new Set([
 
 // /render 下目录、无扩展路由和 HTML 都是页面入口；只豁免明确的静态资源。
 export function requiresPageToken(urlPath) {
-  if (urlPath === '/' || urlPath === '/render') return true;
+  if (urlPath === '/' || urlPath === '/render'
+    || urlPath === '/control' || urlPath === '/control/' || urlPath === '/control/index.html') return true;
   if (!urlPath.startsWith('/render/')) return false;
   const ext = path.posix.extname(urlPath).toLowerCase();
   return !PUBLIC_STATIC_EXTENSIONS.has(ext);
+}
+
+function isControlPage(urlPath) {
+  return urlPath === '/control' || urlPath === '/control/' || urlPath === '/control/index.html';
 }
 
 // ---- helpers ----
@@ -1090,9 +1096,39 @@ function handleRequest(
   const requestToken = auth?.token || '';
   req.identity = identity;
 
+  // 控制塔是创始人驾驶舱：即使参与者通过了工作台通用鉴权，也不能查看跨项目审计数据。
+  if (isControlPage(urlPath) && (!expectedToken || identity.role !== 'owner')) {
+    cors(res);
+    noReferrer(res);
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('访问被拒绝：控制塔仅限管理员');
+    return;
+  }
+
   // --- API routes ---
   if (urlPath === '/api/health') {
     json(res, 200, { ok: true, ts: Date.now() });
+    return;
+  }
+
+  if (urlPath === '/api/control-tower' && method === 'GET') {
+    if (!expectedToken || identity.role !== 'owner') {
+      json(res, 403, { ok: false, error: '控制塔仅限管理员访问' });
+      return;
+    }
+    runtimeState.controlTowerService.snapshot({
+      project: requestUrl.searchParams.get('project') || undefined,
+      executor: requestUrl.searchParams.get('executor') || undefined,
+      type: requestUrl.searchParams.get('type') || undefined,
+      window: requestUrl.searchParams.get('window') || undefined,
+      page: requestUrl.searchParams.get('page') || undefined,
+      pageSize: requestUrl.searchParams.get('pageSize') || undefined,
+    }).then((snapshot) => {
+      json(res, 200, snapshot);
+    }).catch((error) => {
+      console.error('[workbench:control-tower] 聚合失败：', error.message);
+      json(res, 500, { ok: false, error: '控制塔数据读取失败' });
+    });
     return;
   }
 
@@ -2145,6 +2181,7 @@ export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAU
     process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS,
   );
   const runtimeState = { workerHeartbeat: null, inboxClaimTimeoutMs };
+  runtimeState.controlTowerService = createControlTowerService({ runtimeState });
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) {
     throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   }

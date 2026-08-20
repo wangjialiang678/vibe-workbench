@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>控制塔 · Vibe Coding 工作台</title>
+  <!-- 复用工作台既有变量、字体和深色主题。 -->
+  <link rel="stylesheet" href="../render/app.css">
+  <link rel="stylesheet" href="control.css">
+</head>
+<body class="control-tower-page">
+  <header class="control-topbar">
+    <div>
+      <p class="control-kicker">CONTROL TOWER</p>
+      <h1>控制塔</h1>
+      <p>一眼看清项目现状，也能回放 AI 刚刚做过的事。</p>
+    </div>
+    <div class="control-topbar-actions">
+      <span id="control-updated" class="control-updated" aria-live="polite">正在读取…</span>
+      <button id="control-refresh" class="control-refresh" type="button">刷新现状</button>
+    </div>
+  </header>
+
+  <main class="control-shell">
+    <section class="control-section" aria-labelledby="overview-title">
+      <header class="control-section-head">
+        <p class="control-section-number">一区</p>
+        <h2 id="overview-title">项目总览</h2>
+        <p>这里在看什么：每个项目现在有没有需要你拍板的事，以及服务和干活机器是否正常。</p>
+      </header>
+      <div id="control-overview" class="control-project-grid" aria-live="polite"></div>
+    </section>
+
+    <section class="control-section" aria-labelledby="timeline-title">
+      <header class="control-section-head">
+        <p class="control-section-number">二区</p>
+        <h2 id="timeline-title">AI 活动时间线</h2>
+        <p>这里在看什么：按时间回看 AI 和人做了什么；展开后可查看原始记录和相关上下文。</p>
+      </header>
+      <form id="control-filters" class="control-filters">
+        <label>项目
+          <select id="filter-project" name="project"><option value="">全部项目</option></select>
+        </label>
+        <label>干活的机器或人
+          <select id="filter-executor" name="executor"><option value="">全部</option></select>
+        </label>
+        <label>事情类型
+          <select id="filter-type" name="type"><option value="">全部类型</option></select>
+        </label>
+        <label>时间范围
+          <select id="filter-window" name="window">
+            <option value="24h">最近 24 小时</option>
+            <option value="7d">最近 7 天</option>
+            <option value="30d">最近 30 天</option>
+            <option value="all">全部记录</option>
+          </select>
+        </label>
+      </form>
+      <div id="control-timeline" class="control-timeline" aria-live="polite"></div>
+      <nav id="control-pagination" class="control-pagination" aria-label="时间线分页"></nav>
+    </section>
+
+    <section class="control-section" aria-labelledby="health-title">
+      <header class="control-section-head">
+        <p class="control-section-number">三区</p>
+        <h2 id="health-title">系统健康</h2>
+        <p>这里在看什么：后台服务、干活机器、磁盘余量和场外看门狗最近有没有发现问题。</p>
+      </header>
+      <div id="control-health" class="control-health-grid" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <template id="control-empty-template"><p class="control-empty">暂时没有可显示的记录。</p></template>
+  <script type="module" src="control.mjs"></script>
+</body>
+</html>
