@@ -1,0 +1,75 @@
+/* ==========  方案 A · 白纸（Paper） ==========================
+   气质：像读一份排好版的文件。零卡片、零阴影、零灰画布。
+   靠留白和一根发丝线分段；颜色只在「必须你定」和主按钮上出现。
+   ============================================================ */
+
+/* 画布全白，左侧对话栏收窄成辅助列 */
+.workspace-shell { --stream-panel-width: clamp(260px, 24vw, 320px); background: #fff; }
+.stream-panel { background: #fff; border-right: 1px solid #f0f1f3; }
+.content-region { background: #fff; }
+
+/* 顶栏：一根发丝线，没有阴影 */
+.top-bar { background: #fff; border-bottom: 1px solid #f0f1f3; box-shadow: none; padding: 10px 20px; }
+.session-label { color: var(--color-text-muted); font-size: 13px; }
+
+/* 正文列限宽 —— 中文每行 32~40 字最舒服，现在是 90+ 字 */
+.decision-panel, .documents-panel { padding: 32px 24px 96px; }
+.decision-panel > *, .documents-panel > * { max-width: 720px; margin-left: auto; margin-right: auto; }
+
+/* 进度条：细，灰 */
+.decision-progress { height: 3px; border-radius: 0; background: #ececee; }
+.decision-count { font-size: 13px; color: var(--color-text-muted); }
+
+/* 分面导航：下划线式，不是药丸 */
+.tab {
+  border: none; border-radius: 0; background: none; padding: 6px 0;
+  margin-right: 22px; color: var(--color-text-muted); font-size: 14.5px;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { color: var(--color-text); border-bottom-color: #e6e8eb; }
+.tab-active { background: none; color: var(--color-text); border-bottom-color: var(--color-text); }
+.tab-badge { background: #f2f3f5; color: var(--color-text-muted); border-radius: 4px; min-width: 16px; height: 16px; line-height: 16px; font-size: 10.5px; }
+.tab-badge-must { background: #fdecea; color: var(--color-zone-a); }
+
+/* 区标题：小号、疏字距、灰 —— 不用彩色菱形抢注意力 */
+.zone-header { margin: 34px 0 8px; gap: 6px; }
+.zone-icon { display: none; }
+.zone-title { font-size: 11.5px; letter-spacing: .16em; color: var(--color-text-muted); font-weight: 600; }
+
+/* 块：去卡片化，只留一根上边线 */
+.block {
+  background: none; border: none; border-top: 1px solid #f0f1f3;
+  border-radius: 0; box-shadow: none; padding: 26px 0 30px; margin-bottom: 0;
+}
+.zone-a > .zone-blocks > .block,
+.zone-b > .zone-blocks > .block,
+.zone-c-review > .zone-blocks > .block,
+.zone-c-fyi > .zone-blocks > .block,
+.zone-settled > .zone-blocks > .block { border-left: none; }
+/* 「必须你定」用一枚小红点标记，而不是整条色带 */
+.zone-a > .zone-blocks > .block::before {
+  content: ""; position: absolute; left: -14px; top: 34px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--color-zone-a);
+}
+.block-title { font-size: 19px; line-height: 1.5; margin-bottom: 10px; letter-spacing: -.01em; }
+.block-body { color: var(--color-text-muted); margin-bottom: 18px; }
+
+/* 背景 / 为什么需要你定：去掉蓝橙竖条，改极浅灰底 */
+.decision-seg { background: #fafafa; border-left: none; border-radius: 4px; padding: 14px 16px; }
+.decision-bg, .decision-why, .decision-rec { border-left-color: transparent; }
+.decision-h { font-size: 11.5px; letter-spacing: .12em; color: #8a9098; margin-bottom: 6px; }
+.decision-text { font-size: 15px; }
+
+/* 选项：整行发丝框，选中转成黑框 */
+.choice-option { padding: 13px 16px; border-color: #e6e8eb; border-radius: 6px; }
+.choice-option:hover { border-color: #c9ccd1; }
+.choice-item { margin-bottom: 10px; }
+.opt-label { font-size: 15.5px; }
+.opt-proscons { font-size: 13px; color: var(--color-text-muted); }
+
+.verdict-btn { border-radius: 6px; padding: 8px 20px; }
+.verdict-btn.selected { background: var(--color-text); border-color: var(--color-text); color: #fff; }
+.submit-btn { background: var(--color-text); border-radius: 6px; padding: 7px 20px; }
+.badge { border-radius: 3px; font-weight: 600; letter-spacing: .04em; font-size: 10.5px; padding: 2px 6px; }
+.badge-new { background: #eafaf1; color: var(--color-new); }
+.badge-changed { background: #fdf3e7; color: var(--color-changed); }

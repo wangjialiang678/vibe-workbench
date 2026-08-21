@@ -1,0 +1,65 @@
+/* ==========  方案 D · 紧凑（Compact，为「快速填完」优化） ====
+   气质：一张结构清楚的表单。7 项在一两屏内看得见头尾。
+   「背景 / 为什么」默认折叠成一行摘要，想看再展开。
+   ============================================================ */
+
+.workspace-shell { --stream-panel-width: clamp(240px, 20vw, 300px); background: #fff; }
+.stream-panel { background: #fafbfc; border-right: 1px solid #e6e8eb; }
+.content-region { background: #fff; }
+
+.top-bar { background: #fff; border-bottom: 1px solid #e6e8eb; box-shadow: none; padding: 0 16px; min-height: 42px; }
+.session-label { font-size: 12.5px; color: var(--color-text-muted); }
+
+.decision-panel, .documents-panel { padding: 18px 20px 88px; }
+.decision-panel > *, .documents-panel > * { max-width: 820px; margin-left: auto; margin-right: auto; }
+
+.decision-progress { height: 4px; border-radius: 2px; background: #ebedf0; }
+.decision-count { font-size: 12.5px; }
+
+.tab { border: none; background: none; border-radius: 0; padding: 5px 0; margin-right: 20px; font-size: 13.5px; color: #6f757e; border-bottom: 2px solid transparent; }
+.tab-active { background: none; color: var(--color-text); border-bottom-color: var(--color-text); }
+.tab-badge { background: #eceef1; color: #6f757e; border-radius: 3px; min-width: 16px; height: 15px; line-height: 15px; font-size: 10px; }
+.tab-badge-must { background: var(--color-zone-a); color: #fff; }
+
+.zone-header { margin: 20px 0 6px; }
+.zone-icon { display: none; }
+.zone-title { font-size: 11px; letter-spacing: .14em; color: #8a9098; }
+
+/* 块：紧凑行式，编号列固定在左边 */
+.block {
+  background: #fff; border: none; border-top: 1px solid #eceef1;
+  border-radius: 0; box-shadow: none; padding: 16px 0 18px 0; margin-bottom: 0;
+}
+.zone-a > .zone-blocks > .block,
+.zone-b > .zone-blocks > .block,
+.zone-c-review > .zone-blocks > .block,
+.zone-c-fyi > .zone-blocks > .block,
+.zone-settled > .zone-blocks > .block { border-left: none; }
+.zone-a > .zone-blocks > .block { background: linear-gradient(90deg, #fef6f5 0 3px, #fff 3px); }
+
+.block-title { font-size: 15.5px; line-height: 1.5; margin-bottom: 4px; }
+.block-body { font-size: 13.5px; line-height: 1.65; margin-bottom: 10px; color: var(--color-text-muted); }
+
+/* 背景 / 为什么：压成两列小字灰块，不再各占一大段 */
+.decision-context { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.decision-seg { background: #f8f9fa; border-left: none; border-radius: 4px; padding: 9px 11px; margin: 0; }
+.decision-bg, .decision-why, .decision-rec { border-left-color: transparent; }
+.decision-rec { grid-column: 1 / -1; }
+.decision-h { font-size: 10px; letter-spacing: .12em; color: #949aa2; margin-bottom: 3px; }
+.decision-text { font-size: 13.5px; line-height: 1.7; }
+
+/* 选项：紧凑单行，选中黑框 */
+.choice-group { display: grid; gap: 6px; margin-top: 10px; }
+.choice-item { margin: 0; }
+.choice-option { padding: 8px 12px; border-color: #e6e8eb; border-radius: 4px; }
+.choice-option:hover { border-color: #b6bac0; }
+.choice-option:has(input:checked) { border-color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-text); }
+.opt-label { font-size: 14px; }
+.opt-proscons { font-size: 12px; line-height: 1.6; }
+
+.verdict-btn { border-radius: 4px; padding: 5px 14px; font-size: 13px; }
+.verdict-btn.selected { background: var(--color-text); border-color: var(--color-text); color: #fff; }
+.submit-btn { background: var(--color-text); border-radius: 4px; padding: 5px 16px; font-size: 13px; }
+.badge { border-radius: 3px; font-size: 9.5px; padding: 1px 5px; letter-spacing: .06em; }
+.badge-new { background: #e9f7f0; color: var(--color-new); }
+.badge-changed { background: #fdf2e6; color: var(--color-changed); }

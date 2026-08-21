@@ -1,0 +1,64 @@
+/* ==========  方案 E · 卡片（Product card，成熟 SaaS 气质） ===
+   气质：白卡浮在极浅灰画布上，层级靠「眉标 → 标题 → 说明」三级拉开。
+   五个方案里最"有温度"的一个，但仍然只用语义色。
+   ============================================================ */
+
+.workspace-shell { --stream-panel-width: clamp(280px, 26vw, 360px); background: #f6f7f9; }
+.stream-panel { background: #fff; border-right: 1px solid #e6e8eb; }
+.content-region { background: #f6f7f9; }
+
+.top-bar { background: #fff; border-bottom: 1px solid #e9ebee; box-shadow: none; padding: 0 20px; min-height: 48px; }
+.session-label { font-size: 13px; color: var(--color-text-muted); }
+
+.decision-panel, .documents-panel { padding: 28px 24px 100px; }
+.decision-panel > *, .documents-panel > * { max-width: 800px; margin-left: auto; margin-right: auto; }
+
+.decision-progress { height: 6px; border-radius: 3px; background: #e6e8eb; }
+.decision-count { font-size: 13px; }
+
+/* 分面导航：白色药丸，选中黑底 —— 保留可点感，但去掉高饱和蓝 */
+.tab { border: 1px solid #e6e8eb; border-radius: 8px; background: #fff; padding: 7px 14px; font-size: 13.5px; color: #4c525b; margin-right: 8px; }
+.tab:hover { border-color: #c9ccd1; }
+.tab-active { background: var(--color-text); border-color: var(--color-text); color: #fff; }
+.tab-badge { border-radius: 6px; background: #eceef1; color: #6f757e; min-width: 18px; height: 17px; line-height: 17px; font-size: 11px; }
+.tab-badge-must { background: var(--color-zone-a); color: #fff; }
+.tab-active .tab-badge { box-shadow: none; background: rgba(255,255,255,.2); color: #fff; }
+
+.zone-header { margin: 30px 0 12px; gap: 7px; }
+.zone-icon { display: none; }
+.zone-title { font-size: 11.5px; letter-spacing: .15em; color: #8a9098; }
+
+/* 卡片：12px 圆角 + 极轻投影 + 大内边距 */
+.block {
+  background: #fff; border: 1px solid #eaecef; border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04); padding: 26px 28px; margin-bottom: 14px;
+}
+.zone-a > .zone-blocks > .block { border-left: 1px solid #eaecef; box-shadow: 0 1px 2px rgba(16,24,40,.04), inset 3px 0 0 var(--color-zone-a); }
+.zone-b > .zone-blocks > .block { border-left: 1px solid #eaecef; box-shadow: 0 1px 2px rgba(16,24,40,.04), inset 3px 0 0 var(--color-zone-b); }
+.zone-c-review > .zone-blocks > .block,
+.zone-c-fyi > .zone-blocks > .block,
+.zone-settled > .zone-blocks > .block { border-left: 1px solid #eaecef; }
+
+.block-title { font-size: 18px; line-height: 1.55; margin-bottom: 10px; letter-spacing: -.005em; }
+.block-body { color: var(--color-text-muted); font-size: 14.5px; margin-bottom: 18px; }
+
+/* 背景 / 为什么：浅灰圆角块，标签做成小眉标 */
+.decision-seg { background: #f7f8fa; border-left: none; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.decision-bg, .decision-why, .decision-rec { border-left-color: transparent; }
+.decision-h { font-size: 11px; letter-spacing: .13em; color: #8a9098; margin-bottom: 6px; }
+.decision-text { font-size: 14.5px; }
+
+/* 选项：可选卡片，选中黑边 + 浅灰底 */
+.choice-item { margin-bottom: 10px; }
+.choice-option { padding: 14px 16px; border-color: #e6e8eb; border-radius: 10px; background: #fff; }
+.choice-option:hover { border-color: #c2c6cc; background: #fcfcfd; }
+.choice-option:has(input:checked) { border-color: var(--color-text); background: #f7f8fa; box-shadow: inset 0 0 0 1px var(--color-text); }
+.opt-label { font-size: 15px; }
+.opt-proscons { font-size: 13px; color: var(--color-text-muted); }
+
+.verdict-btn { border-radius: 8px; padding: 8px 18px; border-color: #e6e8eb; }
+.verdict-btn.selected { background: var(--color-text); border-color: var(--color-text); color: #fff; }
+.submit-btn { background: var(--color-text); border-radius: 8px; padding: 7px 18px; }
+.badge { border-radius: 6px; font-size: 10.5px; padding: 2px 7px; letter-spacing: .05em; }
+.badge-new { background: #e9f7f0; color: var(--color-new); }
+.badge-changed { background: #fdf2e6; color: var(--color-changed); }

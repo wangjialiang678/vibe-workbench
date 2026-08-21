@@ -1,0 +1,86 @@
+/* ============================================================
+   共同底座：所有方案共享的「强制白底 + 中文排版修复」
+   —— 2026-08-21 创始人反馈：跟随系统的黑底不舒服；字看着扁、读着吃力
+   ============================================================ */
+
+/* 1) 强制亮色：本文件在 app.css 之后加载，同特异性后来者胜，
+      直接压掉 @media (prefers-color-scheme: dark) 里那套 :root */
+:root {
+  color-scheme: light only;
+
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-text: #16181d;
+  --color-text-muted: #6f757e;
+  --color-border: #e6e8eb;
+  --color-focus: #1a1d23;
+
+  --color-zone-a: #d92d20;
+  --color-zone-b: #b54708;
+  --color-zone-cr: #6f757e;
+  --color-zone-cf: #b0b5bd;
+
+  --color-new: #067647;
+  --color-changed: #b54708;
+  --color-status-ok: #067647;
+  --color-status-warn: #b54708;
+  --color-status-err: #d92d20;
+  --color-status-info: #16181d;
+
+  /* 中文优先字体栈：显式点名 PingFang SC，不再靠浏览器兜底 */
+  --font-sans: -apple-system, "system-ui", "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+               "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+               "PingFang SC", monospace;
+
+  --shadow: none;
+}
+
+/* 2) 中文排版修复 */
+html, body { background: #ffffff; }
+body {
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.78;
+  letter-spacing: .006em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* PingFang SC 没有 700/800 —— 写了也只渲染成 Semibold，
+   反而让「600 和 700」看起来一模一样、层级失效。全站封顶 600，
+   层级改用「字号 + 颜色 + 间距」来拉开。 */
+h1, h2, h3, h4, h5, h6,
+.block-title, .zone-title, .decision-h, .tab-active,
+.badge, .verdict-btn, .submit-btn, .opt-label,
+.stream-panel-kicker, .confirm-title { font-weight: 600; }
+
+/* 正文段落：中文需要更松的行高 */
+.block-body, .block-content, .decision-text, .md p, .block-markdown p {
+  line-height: 1.8;
+}
+.block-body { font-size: 14.5px; }
+
+/* 数字与拉丁文用等宽感的表格数字，避免中英混排跳动 */
+body { font-variant-numeric: tabular-nums; }
+
+/* 3) Markdown 正文节奏：现在段落与标题挤在一起，读起来是一堵墙 */
+.block-content > * + *,
+.block-markdown .block-content > * + * { margin-top: .9em; }
+.block-content h1, .block-content h2, .block-content h3,
+.block-content h4 { margin-top: 1.7em; margin-bottom: .45em; line-height: 1.5; }
+.block-content h1 { font-size: 1.28em; }
+.block-content h2 { font-size: 1.15em; }
+.block-content h3 { font-size: 1.04em; }
+.block-content ul, .block-content ol { padding-left: 1.5em; }
+.block-content li + li { margin-top: .35em; }
+.block-content strong { font-weight: 600; }
+.block-content code { font-family: var(--font-mono); font-size: .9em; }
+
+/* 表格：发丝线 + 表头浅灰，去掉重网格 */
+.md-table, .block-table { border-collapse: collapse; }
+.md-table th, .md-table td,
+.block-table th, .block-table td { border: none; border-bottom: 1px solid var(--color-border); padding: 9px 12px; }
+.md-table th, .block-table th { background: none; border-bottom: 1px solid var(--color-text); font-weight: 600; }

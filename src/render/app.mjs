@@ -69,6 +69,9 @@ const $docsLink     = document.getElementById('docs-link');
 const $sessionComment = document.getElementById('session-comment-input');   // 会话级留言（P1）
 const $workspaceShell = document.getElementById('workspace-shell');
 const $splitter = document.getElementById('workspace-splitter');
+const $streamRail = document.getElementById('stream-rail');
+const $streamRailDot = document.getElementById('stream-rail-dot');
+const $streamCollapse = document.getElementById('stream-collapse');
 const $streamEntries = document.getElementById('stream-entries');
 const $streamConnection = document.getElementById('stream-connection');
 const $streamMigrationHint = document.getElementById('stream-migration-hint');
@@ -345,6 +348,41 @@ function setActiveView(view, { scrollTop = false } = {}) {
 document.querySelectorAll('.content-switch-btn, .mobile-tab').forEach((button) => {
   button.addEventListener('click', () => setActiveView(button.dataset.view));
 });
+
+// ── 对话栏收起 / 展开（2026-08-21 拍板：默认收起）────────────────────────────
+// 这条栏原本固定占 33% 宽却常年是空的，横向空间应该先给正文。
+// 收起态是一根 34px 竖条；有未读消息时竖条上冒红点，点一下展开并清掉红点。
+const streamCollapsedKey = `wb:${SESSION}:stream-collapsed`;
+
+function isStreamCollapsed() {
+  return $workspaceShell?.classList.contains('stream-collapsed') === true;
+}
+
+function setStreamCollapsed(collapsed, { persist = true } = {}) {
+  if (!$workspaceShell) return;
+  $workspaceShell.classList.toggle('stream-collapsed', collapsed);
+  $streamRail?.setAttribute('aria-expanded', String(!collapsed));
+  if (!collapsed) setStreamRailUnread(false);   // 展开即视为已读
+  if (persist) {
+    try { localStorage.setItem(streamCollapsedKey, collapsed ? '1' : '0'); } catch { /* 忽略 */ }
+  }
+  repositionVisiblePinComments();
+}
+
+function setStreamRailUnread(hasUnread) {
+  if ($streamRailDot) $streamRailDot.hidden = !hasUnread;
+}
+
+// 默认收起：没存过偏好时按收起处理（存过就尊重用户上次的选择）
+try {
+  const saved = localStorage.getItem(streamCollapsedKey);
+  setStreamCollapsed(saved === null ? true : saved === '1', { persist: false });
+} catch {
+  setStreamCollapsed(true, { persist: false });
+}
+
+$streamRail?.addEventListener('click', () => setStreamCollapsed(false));
+$streamCollapse?.addEventListener('click', () => setStreamCollapsed(true));
 
 // 拖动分隔线调整会话流宽度，并按会话持久化。
 const splitWidthKey = `wb:${SESSION}:stream-width`;
@@ -799,6 +837,10 @@ function appendStreamEntries(entries, { countUnread = false, advanceCursor = tru
   }
   if (countUnread && addedMessages > 0 && (isNarrowScreen() ? _activeView !== 'stream' : false)) {
     _streamUnread += addedMessages;
+  }
+  // 桌面端收起态：新消息在竖条上冒红点，展开即清掉
+  if (countUnread && addedMessages > 0 && !isNarrowScreen() && isStreamCollapsed()) {
+    setStreamRailUnread(true);
   }
   if (_streamEntriesData.length > 0 && $streamMigrationHint) $streamMigrationHint.hidden = true;
   if (addedEntries > 0) _documentsCacheKey = '';

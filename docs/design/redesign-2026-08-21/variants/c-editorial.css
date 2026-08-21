@@ -1,0 +1,79 @@
+/* ==========  方案 C · 文件（Editorial，正式发函气质） ========
+   气质：像一份编好号的正式文件。衬线标题 + 黑体正文，
+   几乎不用颜色，条款式编号。适合直接发给客户看。
+   ============================================================ */
+
+:root {
+  --font-serif: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC",
+                "SimSun", Georgia, "Times New Roman", serif;
+}
+
+.workspace-shell { --stream-panel-width: clamp(250px, 22vw, 300px); background: #fff; }
+.stream-panel { background: #fdfdfc; border-right: 1px solid #ebe8e3; }
+.content-region { background: #fff; }
+
+.top-bar { background: #fff; border-bottom: 1px solid #1a1d23; box-shadow: none; padding: 10px 22px; }
+.session-label { font-family: var(--font-serif); font-size: 14px; color: var(--color-text); }
+
+.decision-panel, .documents-panel { padding: 40px 28px 110px; }
+.decision-panel > *, .documents-panel > * { max-width: 700px; margin-left: auto; margin-right: auto; }
+
+.decision-progress { height: 2px; border-radius: 0; background: #e4e1db; }
+.decision-count { font-family: var(--font-serif); font-size: 13px; color: var(--color-text-muted); }
+
+/* 分面导航：编号式细体，选中加粗黑下划线 */
+.tab {
+  border: none; border-radius: 0; background: none; padding: 4px 0;
+  margin-right: 26px; font-size: 14px; color: #7a746c;
+  border-bottom: 1px solid transparent; font-family: var(--font-serif);
+}
+.tab:hover { color: var(--color-text); }
+.tab-active { background: none; color: var(--color-text); border-bottom: 1px solid var(--color-text); }
+.tab-badge { background: none; color: #a3998c; border-radius: 0; font-family: var(--font-mono); font-size: 11px; min-width: auto; }
+.tab-badge-must { background: none; color: var(--color-zone-a); }
+
+/* 区标题：正文级衬线小标题 + 上下横线 */
+.zone-header { margin: 40px 0 4px; padding-bottom: 6px; border-bottom: 1px solid #1a1d23; }
+.zone-icon { display: none; }
+.zone-title { font-family: var(--font-serif); font-size: 15px; letter-spacing: .06em; color: var(--color-text); font-weight: 600; }
+
+/* 条款块：无卡片，只有细横线；编号靠左外挂 */
+.block {
+  background: none; border: none; border-bottom: 1px solid #ebe8e3;
+  border-radius: 0; box-shadow: none; padding: 28px 0 32px; margin-bottom: 0;
+}
+.zone-a > .zone-blocks > .block,
+.zone-b > .zone-blocks > .block,
+.zone-c-review > .zone-blocks > .block,
+.zone-c-fyi > .zone-blocks > .block,
+.zone-settled > .zone-blocks > .block { border-left: none; }
+.zone-a > .zone-blocks > .block::before {
+  content: "※"; position: absolute; left: -22px; top: 30px;
+  color: var(--color-zone-a); font-size: 12px;
+}
+
+.block-title {
+  font-family: var(--font-serif); font-size: 20px; line-height: 1.6;
+  margin-bottom: 12px; letter-spacing: .01em;
+}
+.block-body { color: #6b655c; font-size: 14.5px; margin-bottom: 18px; }
+
+/* 背景 / 为什么：左侧细竖线 + 衬线小标题，全灰无彩 */
+.decision-seg { background: none; border-left: 2px solid #ded9d1; border-radius: 0; padding: 4px 0 4px 16px; margin-bottom: 14px; }
+.decision-bg, .decision-why, .decision-rec { border-left-color: #ded9d1; }
+.decision-h { font-family: var(--font-serif); font-size: 13px; letter-spacing: .04em; color: #8b8377; margin-bottom: 4px; }
+.decision-text { font-size: 15px; line-height: 1.85; }
+
+/* 选项：甲/乙/丙 式排列，无框，靠留白与横线分隔 */
+.choice-item { margin-bottom: 4px; }
+.choice-option { padding: 12px 2px; border: none; border-bottom: 1px dashed #e4e1db; border-radius: 0; }
+.choice-option:hover { background: #faf9f7; }
+.choice-option:has(input:checked) { background: #f6f4f0; }
+.opt-label { font-size: 15.5px; }
+.opt-proscons { font-size: 13px; color: #7a746c; }
+
+.verdict-btn { border-radius: 2px; padding: 7px 20px; border-color: #cfc9c0; font-size: 14px; }
+.verdict-btn.selected { background: var(--color-text); border-color: var(--color-text); color: #fff; }
+.submit-btn { background: var(--color-text); border-radius: 2px; padding: 7px 22px; font-size: 14px; }
+.badge { border-radius: 2px; background: none; border: 1px solid #cfc9c0; color: #7a746c; font-size: 10px; letter-spacing: .1em; }
+.badge-new, .badge-changed, .badge-adopted { background: none; color: #7a746c; }

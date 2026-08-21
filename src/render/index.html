@@ -42,13 +42,24 @@
   </header>
 
   <main id="workspace-shell" class="workspace-shell" data-active-view="decision">
+    <!-- 收起态的竖条：默认就是它。点一下展开对话栏；有未读消息时冒红点。 -->
+    <button id="stream-rail" class="stream-rail" type="button"
+      aria-expanded="false" aria-controls="stream-panel" aria-label="展开对话" title="展开对话">
+      <span id="stream-rail-dot" class="stream-rail-dot" hidden aria-hidden="true"></span>
+      <span class="stream-rail-label">对话</span>
+    </button>
+
     <aside id="stream-panel" class="stream-panel" aria-label="对话">
       <div class="stream-panel-head">
         <div>
           <p class="stream-panel-kicker">CONVERSATION</p>
           <h2>对话</h2>
         </div>
-        <span id="stream-connection" class="stream-connection" aria-live="polite">连接中</span>
+        <div class="stream-panel-head-right">
+          <span id="stream-connection" class="stream-connection" aria-live="polite">连接中</span>
+          <button id="stream-collapse" class="stream-collapse" type="button"
+            aria-label="收起对话" title="收起对话">&#x27E8;</button>
+        </div>
       </div>
       <p id="stream-migration-hint" class="stream-migration-hint" hidden>历史留言可由管理员迁移进来</p>
       <div id="stream-entries" class="stream-entries" role="log" aria-live="polite" aria-relevant="additions"></div>

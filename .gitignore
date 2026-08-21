@@ -4,3 +4,6 @@ workspace/
 *.log
 config/participants.json
 .claude/workflow/archive_*/
+
+# 视觉重做样张：由真实会话 DOM 快照生成，含客户内容，禁止入库
+src/render/_lab/

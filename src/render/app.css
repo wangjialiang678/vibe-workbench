@@ -1,77 +1,99 @@
-/* vibecoding 工作台 — 亮/暗主题 CSS 变量 + 分区色条 */
-/* 克制、信息优先；色彩 + 形状图标双重语义（§13 P2 可访问性） */
+/* vibecoding 工作台 — 设计令牌 + 中文排版基线 */
+/* 2026-08-21 视觉重做（docs/design/redesign-2026-08-21/）：
+   方案「C 文件」为底 + 页签取「B 工作台」的方角黑底样式。
+   固定亮色，不再跟随系统 —— 创始人明示「黑底看起来很不舒服，都默认是白底」。
+   克制、信息优先；色彩 + 形状图标双重语义（§13 P2 可访问性）。 */
 
-/* ===== 亮色主题（默认）===== */
 :root {
-  --color-bg: #f9f9f9;
-  --color-surface: #ffffff;
-  --color-text: #1a1a1a;
-  --color-text-muted: #6b7280;
-  --color-border: #e5e7eb;
-  --color-focus: #2563eb;
+  /* 固定亮色：连表单控件一起锁住，避免系统暗色给 select/input 套深色 */
+  color-scheme: light only;
 
-  /* 注意力分区强调色 */
-  --color-zone-a: #ef4444;      /* 区A：需定·无预设 = 红 */
-  --color-zone-b: #f97316;      /* 区B：需定·有推荐 = 橙 */
-  --color-zone-cr: #3b82f6;     /* 区CReview：重要默认 = 蓝 */
-  --color-zone-cf: #9ca3af;     /* 区CFyi：普通默认 = 灰 */
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-text: #16181d;
+  --color-text-muted: #6b655c;
+  --color-border: #ebe8e3;      /* 暖中性发丝线，配衬线标题不刺眼 */
+  --color-bg-subtle: #faf9f7;   /* 隔行底/代码块底：画布是纯白，浅底要单独给 */
+  --color-border-strong: #cfc9c0;
+  --color-focus: #16181d;       /* 主操作 = 黑，不再用高饱和蓝 */
+
+  /* 注意力分区强调色 —— 只保留语义，不再做大面积色条 */
+  --color-zone-a: #d92d20;      /* 区A：需定·无预设 = 红 */
+  --color-zone-b: #b54708;      /* 区B：需定·有推荐 = 橙 */
+  --color-zone-cr: #6b655c;     /* 区CReview：重要默认 = 中性 */
+  --color-zone-cf: #b0a99e;     /* 区CFyi：普通默认 = 浅中性 */
 
   /* diff 徽章 */
-  --color-new: #16a34a;         /* 绿 */
-  --color-changed: #f97316;     /* 橙 */
+  --color-new: #067647;
+  --color-changed: #b54708;
 
   /* 状态 */
-  --color-status-ok: #16a34a;
-  --color-status-warn: #ca8a04;
-  --color-status-err: #dc2626;
-  --color-status-info: #2563eb;
+  --color-status-ok: #067647;
+  --color-status-warn: #b54708;
+  --color-status-err: #d92d20;
+  --color-status-info: #16181d;
 
-  /* 对话内嵌决策卡：在亮暗主题里都保持深色、紧凑的临时决策层级 */
+  /* 对话内嵌决策卡：保持深色、紧凑的临时决策层级 */
   --color-ask-bg: #172033;
   --color-ask-surface: #202c43;
   --color-ask-text: #f8fafc;
   --color-ask-muted: #aab6ca;
   --color-ask-border: #34445f;
 
-  --radius: 6px;
-  --bar-width: 4px;
-  --shadow: 0 1px 3px rgba(0,0,0,.08);
-}
+  /* 字体栈：显式点名中文字体。只写 -apple-system/system-ui 会让中文听天由命，
+     可能兜底到又宽又扁的 Heiti SC —— 这是「字体看着扁」的第一来源。 */
+  --font-sans: -apple-system, "system-ui", "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+               "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC",
+                "SimSun", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+               "PingFang SC", monospace;
 
-/* 暗色主题 */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #111827;
-    --color-surface: #1f2937;
-    --color-text: #f3f4f6;
-    --color-text-muted: #9ca3af;
-    --color-border: #374151;
-    --color-focus: #60a5fa;
-    --color-zone-a: #f87171;
-    --color-zone-b: #fb923c;
-    --color-zone-cr: #60a5fa;
-    --color-zone-cf: #6b7280;
-    --color-new: #4ade80;
-    --color-changed: #fb923c;
-    --color-ask-bg: #0b1220;
-    --color-ask-surface: #131e31;
-    --color-ask-text: #f3f4f6;
-    --color-ask-muted: #9ca9bd;
-    --color-ask-border: #2c3b55;
-    --shadow: 0 1px 3px rgba(0,0,0,.4);
-  }
+  --radius: 2px;
+  --bar-width: 4px;
+  --shadow: none;
 }
 
 /* ===== 基础重置 ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+html, body { background: var(--color-bg); }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 15px;
-  line-height: 1.6;
-  background: var(--color-bg);
+  font-family: var(--font-sans);
+  font-size: 15.5px;
+  line-height: 1.78;              /* 中文方块字在 1.5 下会挤成一堵墙 */
+  letter-spacing: .006em;
   color: var(--color-text);
+  /* macOS 默认次像素渲染会把中文笔画糊粗一圈 —— 这是「字看着扁」的直接来源 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
 }
+
+/* ===== 字重封顶 600 =====
+   PingFang SC 最粗只到 Semibold(600)。写 700/800 时浏览器不会为 CJK 合成假粗体，
+   而是直接落回 600 —— canvas 实测 600 与 700 的 bounding box 完全一致。
+   也就是说「加粗」是白写的，层级反被压平。改用字号 + 颜色 + 留白拉层级。 */
+h1, h2, h3, h4, h5, h6,
+.block-title, .zone-title, .decision-h, .tab-active,
+.badge, .verdict-btn, .submit-btn, .opt-label,
+.stream-panel-kicker, .confirm-title, strong, b { font-weight: 600; }
+
+/* ===== Markdown 正文节奏 =====
+   原来段落之间没有间距，长文档读起来是一堵墙 */
+.block-content > * + * { margin-top: .9em; }
+.block-content h1, .block-content h2,
+.block-content h3, .block-content h4 { margin-top: 1.7em; margin-bottom: .45em; line-height: 1.5; }
+.block-content h1 { font-size: 1.28em; }
+.block-content h2 { font-size: 1.15em; }
+.block-content h3 { font-size: 1.04em; }
+.block-content ul, .block-content ol { padding-left: 1.5em; }
+.block-content li + li { margin-top: .35em; }
+.block-content code { font-family: var(--font-mono); font-size: .9em; }
+.block-body, .block-content, .decision-text { line-height: 1.8; }
 
 /* ===== 顶部固定状态条 ===== */
 .top-bar {
@@ -81,10 +103,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  padding: 9px 22px;
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
-  box-shadow: var(--shadow);
+  border-bottom: 1px solid var(--color-text);   /* 实黑细线：文件感的分界 */
+  box-shadow: none;
 }
 
 .top-bar-left, .top-bar-right {
@@ -94,15 +116,16 @@ body {
 }
 
 .session-label {
-  font-size: 13px;
-  color: var(--color-text-muted);
+  font-family: var(--font-serif);
+  font-size: 14px;
+  color: var(--color-text);
 }
 
 .header-nav-select, .header-nav-link {
   min-height: 30px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
@@ -114,7 +137,7 @@ body {
 .header-nav-link[hidden] { display: none; }
 
 .submit-btn {
-  padding: 6px 18px;
+  padding: 7px 22px;
   border-radius: var(--radius);
   border: none;
   background: var(--color-focus);
@@ -163,7 +186,7 @@ body {
   padding: 3px 7px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   font: inherit;
   cursor: pointer;
@@ -176,7 +199,7 @@ body {
   padding: 3px 7px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   font: inherit;
 }
@@ -290,7 +313,7 @@ body.project-home .content-region {
   padding: 9px 10px;
   border: 1px solid var(--color-border);
   border-radius: 7px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   text-decoration: none;
 }
@@ -336,7 +359,7 @@ body.project-home .content-region {
   justify-content: center;
   margin-left: 5px;
   border-radius: 999px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text-muted);
   font-size: 11px;
 }
@@ -368,6 +391,61 @@ body.project-home .content-region {
   overflow: hidden;
   background: var(--color-bg);
 }
+
+/* ===== 对话栏收起态（2026-08-21 拍板：默认收起成一根竖条，点一下展开）=====
+   起因：这条栏固定占 33% 宽（最宽 480px），绝大多数时候是空的，
+   挤掉的横向空间正是正文最需要的。 */
+/* 收起态只剩「竖条 + 正文」两个网格项（面板和分隔线是 display:none，不参与放置）——
+   写成三列会让正文落进中间那条 0 宽的分隔线列里，整个内容区宽度变 0。 */
+.workspace-shell.stream-collapsed { grid-template-columns: 34px minmax(0, 1fr); }
+.workspace-shell.stream-collapsed .stream-panel,
+.workspace-shell.stream-collapsed .workspace-splitter { display: none; }
+
+.stream-rail {
+  display: none;               /* 只在收起态出现 */
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.workspace-shell.stream-collapsed .stream-rail { display: flex; }
+.stream-rail:hover { background: #f4f2ee; color: var(--color-text); }
+.stream-rail:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.stream-rail-label {
+  writing-mode: vertical-rl;
+  letter-spacing: .32em;
+  font-size: 12px;
+}
+.stream-rail-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-zone-a);
+  flex: none;
+}
+.stream-rail-dot[hidden] { display: none; }
+
+.stream-panel-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stream-collapse {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.stream-collapse:hover { color: var(--color-text); border-color: var(--color-border-strong); }
 
 .stream-panel {
   min-width: 0;
@@ -424,7 +502,7 @@ body.project-home .content-region {
   border: 1px dashed var(--color-border);
   border-radius: var(--radius);
   color: var(--color-text-muted);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   text-align: center;
   font-size: 12px;
 }
@@ -459,7 +537,7 @@ body.project-home .content-region {
   padding: 8px 11px;
   border: 1px solid var(--color-border);
   border-radius: 4px 14px 14px 14px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   box-shadow: var(--shadow);
   overflow-wrap: anywhere;
 }
@@ -534,7 +612,7 @@ body.project-home .content-region {
   padding: 4px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  background: color-mix(in srgb, var(--color-bg-subtle) 72%, transparent);
   color: var(--color-text-muted);
   line-height: 1.4;
   text-align: center;
@@ -771,7 +849,7 @@ body.project-home .content-region {
   padding: 9px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
@@ -846,7 +924,7 @@ body.project-home .content-region {
 .workspace-splitter {
   position: relative;
   cursor: col-resize;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   touch-action: none;
 }
 .workspace-splitter::after {
@@ -909,7 +987,14 @@ body.project-home .content-region {
 
 .decision-panel,
 .documents-panel {
-  padding: 20px clamp(16px, 2.4vw, 48px) 60px;
+  padding: 40px clamp(18px, 2.4vw, 48px) 110px;
+}
+/* 正文列限宽：中文一行 32–40 字最舒服。不限宽时 1440px 屏一行 90+ 字，回行找不到行头 */
+.decision-panel > *,
+.documents-panel > * {
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .documents-mount { max-width: 1080px; margin: 0 auto; }
@@ -924,7 +1009,7 @@ body.project-home .content-region {
   gap: 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--color-bg) 68%, transparent);
+  background: color-mix(in srgb, var(--color-bg-subtle) 68%, transparent);
   color: var(--color-text-muted);
   font-size: 12px;
 }
@@ -1002,7 +1087,7 @@ body.project-home .content-region {
   min-width: 24px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text-muted);
   font-size: 11px;
   text-align: center;
@@ -1072,7 +1157,7 @@ body.project-home .content-region {
   padding: 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
 }
 .document-card {
   padding: 18px 20px;
@@ -1094,7 +1179,7 @@ body.project-home .content-region {
   min-width: 25px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text-muted);
   font-size: 11px;
   text-align: center;
@@ -1151,14 +1236,15 @@ body.project-home .content-region {
 .status-bar--nodecision { border-color: var(--color-zone-cf); }
 
 .decision-progress {
-  height: 6px;
-  border-radius: 3px;
+  height: 2px;
+  border-radius: 0;
   flex: 1;
   min-width: 80px;
 }
 
 .decision-count {
-  font-size: 12px;
+  font-family: var(--font-serif);
+  font-size: 13px;
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -1178,26 +1264,44 @@ body.project-home .content-region {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin: 40px 0 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-text);
 }
 
-.zone-icon { font-size: 18px; }
-.zone-title { font-size: 15px; font-weight: 700; }
-
-/* 区 A — 红色左色条 */
-.zone-a > .zone-blocks > .block {
-  border-left: var(--bar-width) solid var(--color-zone-a);
+/* 菱形/图标退场：区标题本身够清楚，图标只是又一层视觉噪音 */
+.zone-icon { display: none; }
+.zone-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  letter-spacing: .06em;
+  color: var(--color-text);
 }
+
+/* 区色条全部退场（方案 C）：整条彩带太吵。
+   待你定的条目改成条款式编号（创始人 2026-08-21：「每个问题可以放一个序号」），
+   区 A（必须你定）的编号用红色 —— 位置分区 + 编号 + 颜色三重语义，不靠颜色单打独斗。 */
+.zone-a > .zone-blocks > .block { border-left: none; }
+
+.decision-panel { counter-reset: wb-item; }
+.zone-a > .zone-blocks > .block,
+.zone-b > .zone-blocks > .block { counter-increment: wb-item; }
+.zone-a > .zone-blocks > .block > .block-title::before,
+.zone-b > .zone-blocks > .block > .block-title::before {
+  content: counter(wb-item, decimal-leading-zero);
+  display: inline-block;
+  min-width: 2.1em;
+  margin-right: .35em;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.zone-a > .zone-blocks > .block > .block-title::before { color: var(--color-zone-a); }
 
 /* 区 B — 橙色左色条 */
-.zone-b > .zone-blocks > .block {
-  border-left: var(--bar-width) solid var(--color-zone-b);
-}
+.zone-b > .zone-blocks > .block { border-left: none; }
 
 /* 区 C-Review — 蓝色左色条 */
-.zone-c-review > .zone-blocks > .block {
-  border-left: var(--bar-width) solid var(--color-zone-cr);
-}
+.zone-c-review > .zone-blocks > .block { border-left: none; }
 
 /* 区 C-FYI 折叠 */
 .zone-c-fyi {
@@ -1218,9 +1322,7 @@ body.project-home .content-region {
   padding: 12px;
 }
 
-.zone-c-fyi > .zone-blocks > .block {
-  border-left: var(--bar-width) solid var(--color-zone-cf);
-}
+.zone-c-fyi > .zone-blocks > .block { border-left: none; }
 
 /* 区 Settled — 本轮无变化·折叠沉降（灰色左色条）*/
 .zone-settled {
@@ -1242,37 +1344,39 @@ body.project-home .content-region {
   padding: 12px;
 }
 
-.zone-settled > .zone-blocks > .block {
-  border-left: var(--bar-width) solid var(--color-zone-cf);
-  opacity: 0.85;
-}
+.zone-settled > .zone-blocks > .block { border-left: none; opacity: .85; }
 
 /* ===== block-body：非 markdown/diagram/code 类型的 body 描述文本 ===== */
 .block-body {
-  font-size: 14px;
+  font-size: 14.5px;
   color: var(--color-text-muted);
-  margin-bottom: 10px;
-  line-height: 1.5;
+  margin-bottom: 18px;
 }
 
 .block-body p { margin: 0 0 6px; }
 .block-body p:last-child { margin-bottom: 0; }
 
 /* ===== Block 卡片 ===== */
+/* 条款式区块：不做卡片，靠一根细横线与留白分段（方案 C）。
+   分割线用 border-strong —— 创始人 2026-08-21：「每个问题上下间隔的分割线可以更明显一些」 */
 .block {
-  background: var(--color-surface);
-  border-radius: var(--radius);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow);
-  padding: 14px 16px;
-  margin-bottom: 12px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-border-strong);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 34px 0 38px;
+  margin-bottom: 0;
   position: relative;
 }
+.zone-blocks > .block:last-child { border-bottom: none; }
 
 .block-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 8px;
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1.6;
+  letter-spacing: .01em;
+  margin-bottom: 12px;
 }
 
 .block-content { font-size: 14px; }
@@ -1286,18 +1390,30 @@ body.project-home .content-region {
 
 .badge {
   display: inline-block;
-  padding: 2px 7px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .5px;
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-strong);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+  letter-spacing: .08em;
+  white-space: nowrap;
 }
+/* 徽章跟在标题文字后面：小一号、往上提一点，别把行高撑开 */
+.block-title .change-badge {
+  margin-left: 8px;
+  vertical-align: .28em;
+  font-family: var(--font-sans);
+  font-weight: 400;
+}
+.change-badge-solo { margin-bottom: 10px; }
 
-.badge-new { background: var(--color-new); color: #fff; }
-.badge-changed { background: var(--color-changed); color: #fff; }
+.badge-new { background: none; color: var(--color-new); border-color: var(--color-new); }
+.badge-changed { background: none; color: var(--color-changed); border-color: var(--color-changed); }
 /* 改动 E 徽章（DESIGN §4/§13 P1）：↩已采纳=蓝、—维持=灰边、unchanged 基线无背景 */
 .badge-unchanged { background: none; color: var(--color-text-muted); }
-.badge-adopted { background: var(--color-zone-cr); color: #fff; }
+.badge-adopted { background: none; color: var(--color-zone-cr); border-color: var(--color-zone-cr); }
 .badge-maintained { background: none; color: var(--color-text-muted); border: 1px solid var(--color-border); }
 
 /* ===== 内联批注入口 ===== */
@@ -1320,25 +1436,31 @@ body.project-home .content-region {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  padding: 12px 2px;
+  border: none;
+  border-bottom: 1px dashed var(--color-border);
+  border-radius: 0;
   cursor: pointer;
 }
+.choice-option:hover { background: #faf9f7; }
+.choice-option:has(input:checked) { background: #f6f4f0; }
 
 .choice-recommended {
-  background: color-mix(in srgb, var(--color-zone-b) 8%, transparent);
-  border-color: var(--color-zone-b);
+  background: var(--color-bg-subtle);
+  box-shadow: inset 2px 0 0 var(--color-text);
+  padding-left: 12px;
 }
 
 .rec-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--color-zone-b);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  color: var(--color-text);
   padding: 1px 5px;
-  border-radius: 8px;
-  border: 1px solid var(--color-zone-b);
-  margin-left: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-text);
+  margin-left: 6px;
+  vertical-align: .1em;
 }
 
 .opt-desc {
@@ -1360,13 +1482,14 @@ body.project-home .content-region {
   border-radius: var(--radius);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
+  border-color: var(--color-border-strong);
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
   transition: background .15s;
 }
 
-.verdict-btn:hover { background: var(--color-bg); }
+.verdict-btn:hover { background: var(--color-bg-subtle); }
 .verdict-btn.selected { background: var(--color-focus); color: #fff; border-color: var(--color-focus); }
 
 .verdict-reason {
@@ -1376,7 +1499,7 @@ body.project-home .content-region {
   border-radius: var(--radius);
   padding: 6px 8px;
   font-size: 14px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   resize: vertical;
 }
@@ -1388,7 +1511,7 @@ body.project-home .content-region {
   border-radius: var(--radius);
   padding: 8px 10px;
   font-size: 14px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   resize: vertical;
 }
@@ -1408,13 +1531,15 @@ body.project-home .content-region {
 }
 
 .block-table th, .block-table td {
-  border: 1px solid var(--color-border);
-  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  padding: 9px 12px;
   text-align: left;
 }
 
 .block-table th {
-  background: var(--color-bg);
+  background: none;
+  border-bottom: 1px solid var(--color-text);
   font-weight: 600;
 }
 
@@ -1446,7 +1571,7 @@ body.project-home .content-region {
 .md-table td {
   max-width: 32rem;
   padding: 9px 12px;
-  border-right: 1px solid var(--color-border);
+  border-right: none;
   border-bottom: 1px solid var(--color-border);
   text-align: left;
   vertical-align: top;
@@ -1457,17 +1582,19 @@ body.project-home .content-region {
 .md-table td:last-child { border-right: 0; }
 .md-table tbody tr:last-child td { border-bottom: 0; }
 .md-table th {
-  background: var(--color-bg);
-  font-weight: 650;
+  background: none;
+  border-bottom: 1px solid var(--color-text);
+  font-weight: 600;
 }
-.md-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--color-bg) 60%, transparent); }
+/* 隔行浅底：长表格靠它扫行不串行（画布已是纯白，必须显式给底色） */
+.md-table tbody tr:nth-child(even) { background: var(--color-bg-subtle); }
 .md-table .md-align-center { text-align: center; }
 .md-table .md-align-right { text-align: right; }
 .md-table .md-align-left { text-align: left; }
 
 /* ===== Code ===== */
 .code-block {
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 12px;
@@ -1535,7 +1662,7 @@ body.project-home .content-region {
   padding: 3px 10px;
   border-radius: var(--radius);
   border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   cursor: pointer;
   font-size: 13px;
 }
@@ -1619,7 +1746,7 @@ body.project-home .content-region {
   width: 100%; box-sizing: border-box; min-height: 2.6em;
   border: 1px solid var(--color-border); border-left: 3px solid var(--color-focus);
   border-radius: var(--radius); padding: 6px 9px; font: inherit; line-height: 1.5; resize: vertical;
-  background: var(--color-bg); color: var(--color-text);
+  background: var(--color-bg-subtle); color: var(--color-text);
 }
 .comment-input:focus { outline: none; border-color: var(--color-focus); }
 
@@ -1685,7 +1812,7 @@ body.project-home .content-region {
   gap: 12px;
   flex-wrap: wrap;
   padding: 6px 10px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
   border-radius: var(--radius) var(--radius) 0 0;
   font-size: 13px;
@@ -1793,7 +1920,7 @@ body.project-home .content-region {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 8px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
 }
 
 .rail-quote {
@@ -1906,7 +2033,7 @@ body.project-home .content-region {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 10px 12px;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
 }
 
 .checklist-item-header {
@@ -1963,7 +2090,7 @@ body.project-home .content-region {
 
 .proto-wireframe-canvas .proto-widget {
   border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   font-size: 11px;
   color: var(--color-text-muted);
   display: flex;
@@ -2030,7 +2157,7 @@ svg.proto-overlay {
   font: inherit;
   font-size: 12px;
   resize: vertical;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
 }
 .proto-pin-input:focus { outline: none; border-color: var(--color-focus); }
@@ -2138,7 +2265,7 @@ svg.proto-overlay {
   padding: 9px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   font-size: 13px;
 }
 .confirm-self-report label { font-weight: 600; }
@@ -2254,25 +2381,26 @@ svg.proto-overlay {
   border-bottom: 1px solid var(--color-border);
   scrollbar-width: thin;
 }
+/* 页签：方案 B 的方角小标签（创始人批注「选中的可以用黑色底，这样更明显」） */
 .tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  padding: 6px 14px;
+  padding: 5px 11px;
   border: 1px solid var(--color-border);
-  border-radius: 18px;
+  border-radius: 5px;
   background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 14px;
+  color: #4c525b;
+  font-size: 13px;
   cursor: pointer;
   flex: none;
 }
 .tab:hover { border-color: var(--color-focus); }
 .tab-active {
-  background: var(--color-focus);
+  background: var(--color-text);
   color: #fff;
-  border-color: var(--color-focus);
+  border-color: var(--color-text);
   font-weight: 600;
 }
 .tab-empty {
@@ -2282,20 +2410,22 @@ svg.proto-overlay {
   background: none;
 }
 .tab-badge {
-  min-width: 18px;
-  height: 18px;
+  min-width: 17px;
+  height: 16px;
   padding: 0 5px;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 18px;
+  border-radius: 4px;
+  background: #eceef1;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
   text-align: center;
-  color: #fff;
+  color: #6f757e;
 }
-.tab-badge-must { background: var(--color-zone-a); }       /* 含必须确认 = 红 */
-.tab-badge-optional { background: var(--color-zone-b); }   /* 只剩可接受 = 橙 */
-.tab-badge-done { background: var(--color-status-ok); }    /* 已清零 = 绿 */
-.tab-active .tab-badge { box-shadow: 0 0 0 1.5px #fff; }
+.tab-badge-must { background: var(--color-zone-a); color: #fff; }       /* 含必须确认 = 红 */
+.tab-badge-optional { background: var(--color-zone-b); color: #fff; }   /* 只剩可接受 = 橙 */
+.tab-badge-done { background: var(--color-status-ok); color: #fff; }    /* 已清零 = 绿 */
+/* 选中页签是黑底，角标改成半透明白，不再描白边 */
+.tab-active .tab-badge { box-shadow: none; background: rgba(255,255,255,.22); color: #fff; }
 
 .facet-empty {
   color: var(--color-text-muted);
@@ -2326,23 +2456,26 @@ svg.proto-overlay {
 /* ===== 决策块结构化（iteration-brief P1 · 创始人加权最高优先级）===== */
 /* 固定四段：背景 → 为什么需要你定 → 选项(含利弊) → 推荐及理由 */
 .decision-context { margin: 10px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+/* 背景 / 为什么需要你定：细竖线 + 衬线小标题，不再用蓝/橙彩条 */
 .decision-seg {
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: var(--color-surface-2, var(--color-surface));
-  border-left: 3px solid var(--color-border);
+  padding: 4px 0 4px 16px;
+  border-radius: 0;
+  background: none;
+  border-left: 2px solid var(--color-border-strong);
+  margin-bottom: 14px;
 }
-.decision-bg  { border-left-color: var(--color-focus); }
-.decision-why { border-left-color: var(--color-zone-b); }
-.decision-rec { border-left-color: var(--color-zone-cr); margin-top: 10px; }
+/* 三段竖线统一中性：原来黑/橙/灰各一色，并排看不出层级，只是三种噪音 */
+.decision-bg,
+.decision-why { border-left-color: var(--color-border-strong); }
+.decision-rec { border-left-color: var(--color-text); margin-top: 10px; }
 .decision-h {
   margin: 0 0 4px;
-  font-size: 12px;
-  font-weight: 700;
+  font-family: var(--font-serif);
+  font-size: 13px;
   letter-spacing: .04em;
-  color: var(--color-text-muted);
+  color: #8b8377;
 }
-.decision-text { font-size: 14px; line-height: 1.65; }
+.decision-text { font-size: 15px; line-height: 1.85; }
 .decision-text > *:first-child { margin-top: 0; }
 .decision-text > *:last-child { margin-bottom: 0; }
 
@@ -2354,6 +2487,7 @@ svg.proto-overlay {
   flex-wrap: wrap;
   gap: 4px 20px;
   font-size: 13px;
+  color: var(--color-text-muted);
 }
 .opt-pros, .opt-cons { margin: 0; padding-left: 16px; list-style: none; }
 .opt-pros li, .opt-cons li { position: relative; line-height: 1.55; }
@@ -2393,8 +2527,10 @@ svg.proto-overlay {
 .tech-fold > *:last-child { padding-bottom: 12px; }
 
 /* ===== 会话级常驻留言（P1 · 病例 6）===== */
+/* margin 简写会把 .decision-panel > * 的 margin-left/right:auto 冲掉 →
+   这块就贴到左边、和正文列错开（创始人 2026-08-21 截图反馈）。必须写 auto。 */
 .session-comment {
-  margin: 28px 0 12px;
+  margin: 40px auto 12px;
   padding: 14px 16px;
   border: 1px dashed var(--color-border);
   border-radius: var(--radius);
@@ -2407,7 +2543,7 @@ svg.proto-overlay {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   color: var(--color-text);
   font: inherit;
   font-size: 14px;
@@ -2588,7 +2724,12 @@ svg.proto-overlay {
     overflow: visible;
   }
   .workspace-splitter,
+  .stream-rail,
+  .stream-collapse,
   .content-switch { display: none; }
+  /* 移动端用底部 mobile-tabs 切换，收起态不参与布局 */
+  .workspace-shell.stream-collapsed { grid-template-columns: none; }
+  .workspace-shell.stream-collapsed .stream-rail { display: none; }
   .stream-panel,
   .content-region { min-height: calc(100vh - 105px); }
   .stream-panel { display: none; border-right: 0; }

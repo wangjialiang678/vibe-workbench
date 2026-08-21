@@ -12,9 +12,12 @@ function escHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-function titleHtml(block) {
-  if (!block.title) return '';
-  return `<h3 class="block-title">${escHtml(block.title)}</h3>`;
+// 改动徽章（+NEW / ~改动 / ↩已采纳）内嵌进标题行：
+// 独占一行时它比标题还显眼，喧宾夺主（创始人 2026-08-21：「感觉这个 new 占地方，可以缩小放到标题边上」）
+function titleHtml(block, badge = '') {
+  const badgeSpan = badge ? `<span class="change-badge">${badge}</span>` : '';
+  if (!block.title) return badgeSpan ? `<div class="change-badge-solo">${badgeSpan}</div>` : '';
+  return `<h3 class="block-title">${escHtml(block.title)}${badgeSpan}</h3>`;
 }
 
 function commentEntry(blockId) {
@@ -395,8 +398,7 @@ export function blockHtml(block) {
     ? '<div class="live-badge" title="这是真实运行中的系统，你在里面的操作会真实生效">⚡ 实时系统 · 就地操作会真实生效</div>'
     : '';
 
-  const inner = `${badge ? `<div class="change-badge">${badge}</div>` : ''}
-${titleHtml(block)}
+  const inner = `${titleHtml(block, badge)}
 ${liveBadge}
 ${bodyHtml(block)}
 ${decisionContextHtml(block)}
