@@ -51,9 +51,7 @@ import {
   readDocument,
 } from '../documents.mjs';
 import {
-  DEFAULT_EXECUTOR_ID,
   executionContextForSession,
-  executorById,
   projectCatalog,
   registeredProjectForSession,
   sessionExists,
@@ -70,6 +68,10 @@ import {
   resetExpiredInboxClaims,
 } from '../executor-inbox.mjs';
 import { createControlTowerService } from '../control-tower.mjs';
+import { dispatchExecutorEvent, postWebhookEvent } from './notify.mjs';
+import { matchRoute } from './routes/index.mjs';
+
+export { postWebhookEvent };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
@@ -97,7 +99,6 @@ const MESSAGE_BODY_LIMIT = 32 * 1024;
 const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 // JSON 控制字符最坏会膨胀为 \uXXXX（6 倍）；业务限额仍按解析后的正文 UTF-8 字节判断。
 const DOCUMENT_REQUEST_LIMIT = (DOCUMENT_BODY_LIMIT * 6) + (64 * 1024);
-const WEBHOOK_TIMEOUT_MS = 5000;
 const WORKER_HEARTBEAT_BODY_LIMIT = 8 * 1024;
 const INBOX_REQUEST_LIMIT = (INBOX_PAYLOAD_LIMIT * 6) + (64 * 1024);
 const UNCLASSIFIED_SESSION_WARNING = '未归属项目的新会话，建议先在项目下创建或使用规范命名';
@@ -872,40 +873,6 @@ function feedbackView(session, round, identity = OWNER_IDENTITY) {
   };
 }
 
-/** 可选事件投递：任何失败都在此吞掉，调用方只需 fire-and-forget。 */
-export async function postWebhookEvent(webhookUrl, payload, {
-  fetchImpl = fetch,
-  timeoutMs = WEBHOOK_TIMEOUT_MS,
-  logger = console,
-} = {}) {
-  if (!webhookUrl) return;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
-  try {
-    const response = await fetchImpl(webhookUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      await response.body?.cancel?.();
-      throw new Error(`HTTP ${response.status}`);
-    }
-    await response.body?.cancel?.();
-  } catch (error) {
-    logger.error('[workbench:webhook] 事件投递失败：', error?.message || String(error));
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function emitWebhook(webhookUrl, payload) {
-  if (!webhookUrl) return;
-  setImmediate(() => { void postWebhookEvent(webhookUrl, payload); });
-}
-
 function configuredClaimTimeoutMs(value) {
   if (!/^[1-9]\d*$/.test(String(value || ''))) return DEFAULT_CLAIM_TIMEOUT_MS;
   const parsed = Number(value);
@@ -914,62 +881,6 @@ function configuredClaimTimeoutMs(value) {
 
 function inboxSweepIntervalMs(claimTimeoutMs) {
   return Math.max(10, Math.min(60 * 1000, Math.floor(claimTimeoutMs / 2)));
-}
-
-function inboxTaskTitle(payload) {
-  if (payload.event === 'round-presented') {
-    return payload.title
-      ? `第 ${payload.round} 轮已呈现：${payload.title}`
-      : `第 ${payload.round} 轮已呈现`;
-  }
-  if (payload.event === 'feedback-submitted') return `第 ${payload.round} 轮反馈已提交`;
-  if (payload.event === 'message-posted') return '会话新消息';
-  return `会话事件：${payload.event || 'unknown'}`;
-}
-
-// resident 保持既有 webhook；pull 落本地持久化收件箱。路由异常一律回退云端链路。
-function dispatchExecutorEvent(webhookUrl, payload) {
-  let executor;
-  try {
-    const project = registeredProjectForSession(payload.session);
-    executor = executorById(project?.executor || DEFAULT_EXECUTOR_ID);
-  } catch (error) {
-    console.error('[workbench:dispatch] 执行面解析失败，回退 resident webhook：', error.message);
-    emitWebhook(webhookUrl, payload);
-    return;
-  }
-
-  if (!executor || executor.kind === 'resident') {
-    emitWebhook(webhookUrl, payload);
-    return;
-  }
-
-  try {
-    const task = enqueueInboxTask({
-      executor: executor.id,
-      session: payload.session,
-      type: payload.event,
-      title: inboxTaskTitle(payload),
-      payload,
-    });
-    appendStreamEntry(payload.session, {
-      author: AI_IDENTITY,
-      kind: 'progress',
-      text: `已入队待本地执行：${task.title}`,
-    }, { exactSession: true });
-    console.error('[workbench:dispatch] pull 任务已入队：', {
-      id: task.id,
-      executor: task.executor,
-      session: task.session,
-      type: task.type,
-    });
-  } catch (error) {
-    console.error('[workbench:dispatch] pull 任务入队失败：', {
-      session: payload.session,
-      event: payload.event,
-      error: error.message,
-    });
-  }
 }
 
 function inboxErrorStatus(error) {
@@ -1072,7 +983,7 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
 }
 
 // ---- request handler ----
-function handleRequest(
+function handleLegacyRequest(
   req,
   res,
   expectedToken = '',
@@ -2264,6 +2175,44 @@ function handleRequest(
 
   // Fallthrough: 404
   json(res, 404, { ok: false, error: 'not found' });
+}
+
+// 路由表是唯一的匹配清单；旧处理器在本次纯重构中仍承载端点实现，
+// 以确保鉴权、前缀匹配和异步响应的字节级外部行为保持不变。
+function handleRequest(
+  req,
+  res,
+  expectedToken = '',
+  eventWebhook = '',
+  participantsFile = DEFAULT_PARTICIPANTS_FILE,
+  runtimeState = { workerHeartbeat: null },
+) {
+  const method = req.method.toUpperCase();
+  const urlPath = new URL(req.url || '/', 'http://localhost').pathname;
+  const route = matchRoute(method, urlPath);
+  const legacy = () => handleLegacyRequest(
+    req,
+    res,
+    expectedToken,
+    eventWebhook,
+    participantsFile,
+    runtimeState,
+  );
+  if (route) {
+    route.handler({
+      req,
+      res,
+      url: urlPath,
+      query: new URL(req.url || '/', 'http://localhost').searchParams,
+      identity: null,
+      token: '',
+      readBody,
+      json,
+      legacy,
+    });
+    return;
+  }
+  legacy();
 }
 
 export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {
