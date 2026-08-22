@@ -988,6 +988,102 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
   return result;
 }
 
+export {
+  AI_IDENTITY,
+  ATTACHMENT_BODY_LIMIT,
+  ATTACHMENT_TYPES,
+  DEFAULT_CLAIM_TIMEOUT_MS,
+  DEFAULT_PARTICIPANTS_FILE,
+  DOCUMENT_BODY_LIMIT,
+  DOCUMENT_REQUEST_LIMIT,
+  HEARTBEAT_STALE_MS,
+  INBOX_PAYLOAD_LIMIT,
+  INBOX_REQUEST_LIMIT,
+  MESSAGE_BODY_LIMIT,
+  MIME,
+  OWNER_IDENTITY,
+  PUBLIC_STATIC_EXTENSIONS,
+  ROUND_BODY_LIMIT,
+  SRC_ROOT,
+  TERMINAL_OR_PROCESSING_STATES,
+  UNCLASSIFIED_SESSION_WARNING,
+  WORKER_HEARTBEAT_BODY_LIMIT,
+  acceptedSelfReport,
+  addParticipant,
+  appendAnswerEntry,
+  appendAskEntry,
+  appendStreamEntry,
+  assertParticipantCanAnswerAsk,
+  assetServiceOrigin,
+  claimInboxTask,
+  completeInboxTask,
+  computeDiff,
+  diffSanity,
+  dispatchExecutorEvent,
+  displayState,
+  enqueueInboxTask,
+  executionContextForSession,
+  exists,
+  feedbackToMd,
+  feedbackView,
+  feedbackVisibilityForIdentity,
+  filterFeedbackForIdentity,
+  filterStreamEntriesForIdentity,
+  findIncompleteDecisions,
+  findParticipantByToken,
+  formatIncompleteDecisions,
+  formatLint,
+  fs,
+  isControlPage,
+  isValidSessionName,
+  lintContent,
+  listDocuments,
+  listInboxTasks,
+  listParticipants,
+  listRounds,
+  listSessionAssets,
+  listSessions,
+  normalizeAssetSubpath,
+  participantFeedbackEntries,
+  participantInviteUrl,
+  path,
+  paths,
+  prepareRound,
+  projectCatalog,
+  publicParticipant,
+  publishDocument,
+  readAssetFile,
+  readDocument,
+  readJSON,
+  readStatus,
+  readStreamEntries,
+  registeredProjectForSession,
+  removeFile,
+  removedBlocks,
+  renderUrl,
+  renewInboxTask,
+  requestTokens,
+  resetExpiredInboxClaims,
+  resolveRequestIdentity,
+  respondInboxError,
+  revokeParticipant,
+  selfReportSlug,
+  sessionExists,
+  sharedDisplayName,
+  updateSessionMetadata,
+  validRoundQuery,
+  validStreamText,
+  validateContent,
+  validateFeedback,
+  visibleAssetPathsForIdentity,
+  workerPresence,
+  workspaceDir,
+  writeAttachment,
+  writeJSON,
+  writeRound,
+  writeStatus,
+  writeText,
+};
 // ---- request handler ----
 function handleRequest(
   req,
@@ -1053,9 +1149,19 @@ function handleRequest(
     return;
   }
 
-  const ctx = { rewriteEmbedHtml, visibleBlocksForIdentity, participantFeedbackEntries, TERMINAL_OR_PROCESSING_STATES, selfReportSlug, sharedDisplayName, json, fs, path, computeDiff, removedBlocks, diffSanity, validateContent, validateFeedback, lintContent, formatLint, findIncompleteDecisions, formatIncompleteDecisions, displayState, HEARTBEAT_STALE_MS, DEFAULT_PARTICIPANTS_FILE, addParticipant, findParticipantByToken, listParticipants, revokeParticipant, paths, workspaceDir, readJSON, writeJSON, writeText, removeFile, exists, readStatus, writeStatus, listSessions, listRounds, isValidSessionName, prepareRound, writeRound, appendAnswerEntry, appendAskEntry, appendStreamEntry, readStreamEntries, DOCUMENT_BODY_LIMIT, listDocuments, publishDocument, readDocument, executionContextForSession, projectCatalog, registeredProjectForSession, sessionExists, updateSessionMetadata, DEFAULT_CLAIM_TIMEOUT_MS, INBOX_PAYLOAD_LIMIT, claimInboxTask, completeInboxTask, enqueueInboxTask, listInboxTasks, renewInboxTask, resetExpiredInboxClaims, dispatchExecutorEvent, postWebhookEvent, SRC_ROOT, ROUND_BODY_LIMIT, MESSAGE_BODY_LIMIT, ATTACHMENT_BODY_LIMIT, DOCUMENT_REQUEST_LIMIT, WORKER_HEARTBEAT_BODY_LIMIT, INBOX_REQUEST_LIMIT, UNCLASSIFIED_SESSION_WARNING, WORKER_HEARTBEAT_STALE_MS, AI_IDENTITY, ATTACHMENT_TYPES, MIME, PUBLIC_STATIC_EXTENSIONS, assetsVersion, requiresPageToken, isControlPage, cors, noReferrer, safeTokenEqual, requestTokens, resolveRequestIdentity, OWNER_IDENTITY, normalizeAssetSubpath, readAssetFile, visibleAssetPathsForIdentity, assetServiceOrigin, listSessionAssets, writeAttachment, validRoundQuery, workerPresence, renderUrl, publicParticipant, participantInviteUrl, acceptedSelfReport, validStreamText, assertParticipantCanAnswerAsk, feedbackVisibilityForIdentity, filterFeedbackForIdentity, filterStreamEntriesForIdentity, feedbackView, feedbackToMd, respondInboxError, parseQuery, readBody, readRawBody, readRawBodyLimited, req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken };
+  const ctx = {
+    req, res, method, rawUrl, requestUrl, urlPath, identity, requestToken,
+    expectedToken, eventWebhook, participantsFile, runtimeState,
+    json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer,
+  };
   const route = matchRoute(method, urlPath);
-  if (route) { route.handler(ctx); return; }
+  if (route) {
+    const handled = route.handler(ctx);
+    if (handled === false && !res.writableEnded) {
+      json(res, 404, { ok: false, error: 'not found' });
+    }
+    return;
+  }
   json(res, 404, { ok: false, error: 'not found' });
 }
 export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {

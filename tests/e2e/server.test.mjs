@@ -100,6 +100,30 @@ test('GET /api/health returns ok:true', async () => {
   assert.ok(typeof body.ts === 'number' || typeof body.ts === 'string');
 });
 
+test('近似 participants 路径不得被前缀吞掉，必须及时返回 404', async () => {
+  for (const requestPath of [
+    '/api/participants-public',
+    '/api/participantsXYZ',
+    '/api/participants-public/foo',
+  ]) {
+    const res = await fetch(url(requestPath), {
+      method: 'POST',
+      signal: AbortSignal.timeout(1000),
+    });
+    assert.equal(res.status, 404, `${requestPath} 必须返回 404`);
+    assert.deepEqual(await res.json(), { ok: false, error: 'not found' });
+  }
+});
+
+test('无匹配路由必须写出 404 响应', async () => {
+  const res = await fetch(url('/api/not-a-route'), {
+    method: 'POST',
+    signal: AbortSignal.timeout(1000),
+  });
+  assert.equal(res.status, 404);
+  assert.deepEqual(await res.json(), { ok: false, error: 'not found' });
+});
+
 // ---- sessions ----
 test('GET /api/sessions returns ok:true with sessions array', async () => {
   const res = await fetch(url('/api/sessions'));
