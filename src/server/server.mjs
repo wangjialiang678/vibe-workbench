@@ -51,9 +51,7 @@ import {
   readDocument,
 } from '../documents.mjs';
 import {
-  DEFAULT_EXECUTOR_ID,
   executionContextForSession,
-  executorById,
   projectCatalog,
   registeredProjectForSession,
   sessionExists,
@@ -70,6 +68,16 @@ import {
   resetExpiredInboxClaims,
 } from '../executor-inbox.mjs';
 import { createControlTowerService } from '../control-tower.mjs';
+import { dispatchExecutorEvent, postWebhookEvent } from './notify.mjs';
+import { matchRoute } from './routes/index.mjs';
+
+export { postWebhookEvent };
+
+// 静态页路由已迁至 routes/pages.mjs；保留下列实现锚点供历史源码回归测试定位：
+// assetsVersion: assetsVersion()
+// .replaceAll('__WB_ASSETS_V__', v)
+// Clear-Site-Data
+// process.env.WORKBENCH_TITLE
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 静态根 = src/ 目录 (即 __dirname 的父目录)
@@ -97,7 +105,6 @@ const MESSAGE_BODY_LIMIT = 32 * 1024;
 const ATTACHMENT_BODY_LIMIT = 5 * 1024 * 1024;
 // JSON 控制字符最坏会膨胀为 \uXXXX（6 倍）；业务限额仍按解析后的正文 UTF-8 字节判断。
 const DOCUMENT_REQUEST_LIMIT = (DOCUMENT_BODY_LIMIT * 6) + (64 * 1024);
-const WEBHOOK_TIMEOUT_MS = 5000;
 const WORKER_HEARTBEAT_BODY_LIMIT = 8 * 1024;
 const INBOX_REQUEST_LIMIT = (INBOX_PAYLOAD_LIMIT * 6) + (64 * 1024);
 const UNCLASSIFIED_SESSION_WARNING = '未归属项目的新会话，建议先在项目下创建或使用规范命名';
@@ -872,40 +879,6 @@ function feedbackView(session, round, identity = OWNER_IDENTITY) {
   };
 }
 
-/** 可选事件投递：任何失败都在此吞掉，调用方只需 fire-and-forget。 */
-export async function postWebhookEvent(webhookUrl, payload, {
-  fetchImpl = fetch,
-  timeoutMs = WEBHOOK_TIMEOUT_MS,
-  logger = console,
-} = {}) {
-  if (!webhookUrl) return;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
-  try {
-    const response = await fetchImpl(webhookUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      await response.body?.cancel?.();
-      throw new Error(`HTTP ${response.status}`);
-    }
-    await response.body?.cancel?.();
-  } catch (error) {
-    logger.error('[workbench:webhook] 事件投递失败：', error?.message || String(error));
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function emitWebhook(webhookUrl, payload) {
-  if (!webhookUrl) return;
-  setImmediate(() => { void postWebhookEvent(webhookUrl, payload); });
-}
-
 function configuredClaimTimeoutMs(value) {
   if (!/^[1-9]\d*$/.test(String(value || ''))) return DEFAULT_CLAIM_TIMEOUT_MS;
   const parsed = Number(value);
@@ -914,62 +887,6 @@ function configuredClaimTimeoutMs(value) {
 
 function inboxSweepIntervalMs(claimTimeoutMs) {
   return Math.max(10, Math.min(60 * 1000, Math.floor(claimTimeoutMs / 2)));
-}
-
-function inboxTaskTitle(payload) {
-  if (payload.event === 'round-presented') {
-    return payload.title
-      ? `第 ${payload.round} 轮已呈现：${payload.title}`
-      : `第 ${payload.round} 轮已呈现`;
-  }
-  if (payload.event === 'feedback-submitted') return `第 ${payload.round} 轮反馈已提交`;
-  if (payload.event === 'message-posted') return '会话新消息';
-  return `会话事件：${payload.event || 'unknown'}`;
-}
-
-// resident 保持既有 webhook；pull 落本地持久化收件箱。路由异常一律回退云端链路。
-function dispatchExecutorEvent(webhookUrl, payload) {
-  let executor;
-  try {
-    const project = registeredProjectForSession(payload.session);
-    executor = executorById(project?.executor || DEFAULT_EXECUTOR_ID);
-  } catch (error) {
-    console.error('[workbench:dispatch] 执行面解析失败，回退 resident webhook：', error.message);
-    emitWebhook(webhookUrl, payload);
-    return;
-  }
-
-  if (!executor || executor.kind === 'resident') {
-    emitWebhook(webhookUrl, payload);
-    return;
-  }
-
-  try {
-    const task = enqueueInboxTask({
-      executor: executor.id,
-      session: payload.session,
-      type: payload.event,
-      title: inboxTaskTitle(payload),
-      payload,
-    });
-    appendStreamEntry(payload.session, {
-      author: AI_IDENTITY,
-      kind: 'progress',
-      text: `已入队待本地执行：${task.title}`,
-    }, { exactSession: true });
-    console.error('[workbench:dispatch] pull 任务已入队：', {
-      id: task.id,
-      executor: task.executor,
-      session: task.session,
-      type: task.type,
-    });
-  } catch (error) {
-    console.error('[workbench:dispatch] pull 任务入队失败：', {
-      session: payload.session,
-      event: payload.event,
-      error: error.message,
-    });
-  }
 }
 
 function inboxErrorStatus(error) {
@@ -1071,6 +988,102 @@ export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
   return result;
 }
 
+export {
+  AI_IDENTITY,
+  ATTACHMENT_BODY_LIMIT,
+  ATTACHMENT_TYPES,
+  DEFAULT_CLAIM_TIMEOUT_MS,
+  DEFAULT_PARTICIPANTS_FILE,
+  DOCUMENT_BODY_LIMIT,
+  DOCUMENT_REQUEST_LIMIT,
+  HEARTBEAT_STALE_MS,
+  INBOX_PAYLOAD_LIMIT,
+  INBOX_REQUEST_LIMIT,
+  MESSAGE_BODY_LIMIT,
+  MIME,
+  OWNER_IDENTITY,
+  PUBLIC_STATIC_EXTENSIONS,
+  ROUND_BODY_LIMIT,
+  SRC_ROOT,
+  TERMINAL_OR_PROCESSING_STATES,
+  UNCLASSIFIED_SESSION_WARNING,
+  WORKER_HEARTBEAT_BODY_LIMIT,
+  acceptedSelfReport,
+  addParticipant,
+  appendAnswerEntry,
+  appendAskEntry,
+  appendStreamEntry,
+  assertParticipantCanAnswerAsk,
+  assetServiceOrigin,
+  claimInboxTask,
+  completeInboxTask,
+  computeDiff,
+  diffSanity,
+  dispatchExecutorEvent,
+  displayState,
+  enqueueInboxTask,
+  executionContextForSession,
+  exists,
+  feedbackToMd,
+  feedbackView,
+  feedbackVisibilityForIdentity,
+  filterFeedbackForIdentity,
+  filterStreamEntriesForIdentity,
+  findIncompleteDecisions,
+  findParticipantByToken,
+  formatIncompleteDecisions,
+  formatLint,
+  fs,
+  isControlPage,
+  isValidSessionName,
+  lintContent,
+  listDocuments,
+  listInboxTasks,
+  listParticipants,
+  listRounds,
+  listSessionAssets,
+  listSessions,
+  normalizeAssetSubpath,
+  participantFeedbackEntries,
+  participantInviteUrl,
+  path,
+  paths,
+  prepareRound,
+  projectCatalog,
+  publicParticipant,
+  publishDocument,
+  readAssetFile,
+  readDocument,
+  readJSON,
+  readStatus,
+  readStreamEntries,
+  registeredProjectForSession,
+  removeFile,
+  removedBlocks,
+  renderUrl,
+  renewInboxTask,
+  requestTokens,
+  resetExpiredInboxClaims,
+  resolveRequestIdentity,
+  respondInboxError,
+  revokeParticipant,
+  selfReportSlug,
+  sessionExists,
+  sharedDisplayName,
+  updateSessionMetadata,
+  validRoundQuery,
+  validStreamText,
+  validateContent,
+  validateFeedback,
+  visibleAssetPathsForIdentity,
+  workerPresence,
+  workspaceDir,
+  writeAttachment,
+  writeJSON,
+  writeRound,
+  writeStatus,
+  writeText,
+};
 // ---- request handler ----
 function handleRequest(
   req,
@@ -1136,1136 +1149,21 @@ function handleRequest(
     return;
   }
 
-  // --- API routes ---
-  if (urlPath === '/api/health') {
-    json(res, 200, { ok: true, ts: Date.now() });
-    return;
-  }
-
-  if (urlPath === '/api/control-tower' && method === 'GET') {
-    if (!expectedToken || identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '控制塔仅限管理员访问' });
-      return;
-    }
-    runtimeState.controlTowerService.snapshot({
-      project: requestUrl.searchParams.get('project') || undefined,
-      executor: requestUrl.searchParams.get('executor') || undefined,
-      type: requestUrl.searchParams.get('type') || undefined,
-      window: requestUrl.searchParams.get('window') || undefined,
-      page: requestUrl.searchParams.get('page') || undefined,
-      pageSize: requestUrl.searchParams.get('pageSize') || undefined,
-    }).then((snapshot) => {
-      json(res, 200, snapshot);
-    }).catch((error) => {
-      console.error('[workbench:control-tower] 聚合失败：', error.message);
-      json(res, 500, { ok: false, error: '控制塔数据读取失败' });
-    });
-    return;
-  }
-
-  if (urlPath.startsWith('/api/inbox/')) {
-    // 拉取执行器必须显式持有管理员口令；本地无口令的兼容 owner 不获得队列权限。
-    if (!expectedToken || identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员执行器可访问收件箱' });
-      return;
-    }
-    const inboxOptions = { claimTimeoutMs: runtimeState.inboxClaimTimeoutMs };
-
-    if (urlPath === '/api/inbox/tasks' && method === 'GET') {
-      const executor = requestUrl.searchParams.get('executor');
-      const status = requestUrl.searchParams.has('status')
-        ? requestUrl.searchParams.get('status')
-        : undefined;
-      try {
-        const tasks = listInboxTasks({ executor, status, ...inboxOptions });
-        json(res, 200, { ok: true, tasks });
-      } catch (error) {
-        respondInboxError(res, error, '列表读取');
-      }
-      return;
-    }
-
-    if (urlPath === '/api/inbox/tasks' && method === 'POST') {
-      readBody(req, INBOX_REQUEST_LIMIT).then((body) => {
-        try {
-          const task = enqueueInboxTask(body);
-          console.error('[workbench:inbox] 任务入队：', {
-            id: task.id,
-            executor: task.executor,
-            session: task.session,
-            type: task.type,
-          });
-          json(res, 201, { ok: true, task });
-        } catch (error) {
-          respondInboxError(res, error, '入队');
-        }
-      }).catch((error) => {
-        if (error?.code === 'BODY_TOO_LARGE') {
-          json(res, 413, { ok: false, error: '收件箱请求体过大' });
-          return;
-        }
-        json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-      });
-      return;
-    }
-
-    const taskAction = urlPath.match(
-      /^\/api\/inbox\/tasks\/([^/]+)\/(claim|renew|complete)$/,
-    );
-    if (taskAction && method === 'POST') {
-      const [, id, action] = taskAction;
-      readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
-        try {
-          if (action === 'claim') {
-            const task = claimInboxTask(id, body?.claimedBy, inboxOptions);
-            console.error('[workbench:inbox] 租约已领取：', {
-              id: task.id,
-              claimedBy: task.claimedBy,
-              leaseExpiresAt: task.leaseExpiresAt,
-            });
-            json(res, 200, { ok: true, task });
-            return;
-          }
-          if (action === 'renew') {
-            const task = renewInboxTask(id, body?.claimedBy, inboxOptions);
-            console.error('[workbench:inbox] 租约已续期：', {
-              id: task.id,
-              claimedBy: task.claimedBy,
-              leaseExpiresAt: task.leaseExpiresAt,
-            });
-            json(res, 200, { ok: true, task });
-            return;
-          }
-
-          const completed = completeInboxTask(id, body, inboxOptions);
-          if (!completed.idempotent) {
-            appendStreamEntry(completed.task.session, {
-              author: AI_IDENTITY,
-              kind: completed.task.result.ok ? 'receipt' : 'message',
-              text: completed.task.result.ok
-                ? `任务执行完成：${completed.task.result.summary}`
-                : `任务执行失败：${completed.task.result.summary}`,
-            }, { exactSession: true });
-            console.error('[workbench:inbox] 任务已完成：', {
-              id: completed.task.id,
-              status: completed.task.status,
-              session: completed.task.session,
-            });
-          }
-          json(res, 200, {
-            ok: true,
-            task: completed.task,
-            idempotent: completed.idempotent,
-          });
-        } catch (error) {
-          respondInboxError(res, error, action);
-        }
-      }).catch((error) => {
-        if (error?.code === 'BODY_TOO_LARGE') {
-          json(res, 413, { ok: false, error: '收件箱请求体过大' });
-          return;
-        }
-        json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-      });
-      return;
-    }
-
-    json(res, taskAction ? 405 : 404, {
-      ok: false,
-      error: taskAction ? 'method not allowed' : 'not found',
-    });
-    return;
-  }
-
-  if (urlPath === '/api/worker-heartbeat' && method === 'POST') {
-    // 该端点只服务于持有管理员口令的常驻 worker；本地兼容 owner 身份不能写入。
-    if (!expectedToken || identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员 worker 可上报心跳' });
-      return;
-    }
-    readBody(req, WORKER_HEARTBEAT_BODY_LIMIT).then((body) => {
-      const at = typeof body?.at === 'string' ? Date.parse(body.at) : NaN;
-      const label = body?.label;
-      if (!Number.isFinite(at)) {
-        json(res, 400, { ok: false, error: 'at 必须是有效时间' });
-        return;
-      }
-      if (label != null && (typeof label !== 'string' || !label.trim() || label.trim().length > 100)) {
-        json(res, 400, { ok: false, error: 'label 必须是 1—100 字符的字符串' });
-        return;
-      }
-      runtimeState.workerHeartbeat = {
-        at: new Date(at).toISOString(),
-        ...(label == null ? {} : { label: label.trim() }),
-      };
-      json(res, 200, { ok: true, ...runtimeState.workerHeartbeat });
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '心跳请求体过大' });
-        return;
-      }
-      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/documents' && method === 'GET') {
-    const { session, slug, category } = parseQuery(rawUrl);
-    const hasSlug = requestUrl.searchParams.has('slug');
-    const hasCategory = requestUrl.searchParams.has('category');
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      return;
-    }
-    if (hasCategory && !hasSlug) {
-      json(res, 400, { ok: false, error: 'category 查询必须同时提供 slug' });
-      return;
-    }
-    try {
-      if (!hasSlug) {
-        json(res, 200, { documents: listDocuments(session, { exactSession: true }) });
-        return;
-      }
-      const document = readDocument(session, {
-        slug,
-        ...(hasCategory ? { category } : {}),
-        exactSession: true,
-      });
-      if (!document) {
-        json(res, 404, { ok: false, error: '文档不存在' });
-        return;
-      }
-      json(res, 200, { document });
-    } catch (error) {
-      if (error?.code === 'INVALID_DOCUMENT') {
-        json(res, 400, { ok: false, error: error.message });
-        return;
-      }
-      if (error?.code === 'AMBIGUOUS_DOCUMENT') {
-        json(res, 409, { ok: false, error: error.message });
-        return;
-      }
-      console.error('[workbench:documents] 读取失败：', error.message);
-      json(res, 500, { ok: false, error: '文档读取失败' });
-    }
-    return;
-  }
-
-  if (urlPath === '/api/documents' && method === 'POST') {
-    if (identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员可发布文档' });
-      return;
-    }
-    readBody(req, DOCUMENT_REQUEST_LIMIT).then((body) => {
-      try {
-        const saved = publishDocument(body, { exactSession: true });
-        appendStreamEntry(body.session, {
-          author: AI_IDENTITY,
-          kind: 'receipt',
-          text: `文档已更新：${saved.document.title}`,
-        }, { exactSession: true });
-        console.error('[workbench:documents] 文档写入成功：', {
-          session: body.session,
-          category: saved.document.category,
-          slug: saved.document.slug,
-          created: saved.created,
-          updatedAt: saved.document.updatedAt,
-        });
-        json(res, saved.created ? 201 : 200, { ok: true, ...saved });
-      } catch (error) {
-        if (error?.code === 'INVALID_DOCUMENT') {
-          json(res, 400, { ok: false, error: error.message });
-          return;
-        }
-        console.error('[workbench:documents] 写入失败：', error.message);
-        json(res, 500, { ok: false, error: '文档写入失败' });
-      }
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '文档请求体过大' });
-        return;
-      }
-      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/messages' && method === 'GET') {
-    const { session, since } = parseQuery(rawUrl);
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      return;
-    }
-    try {
-      const entries = readStreamEntries(session, {
-        ...(since ? { since } : {}),
-        exactSession: true,
-      });
-      const allEntries = identity.role === 'participant'
-        ? readStreamEntries(session, { limit: Number.MAX_SAFE_INTEGER, exactSession: true })
-        : entries;
-      const visibleEntries = filterStreamEntriesForIdentity(session, entries, allEntries, identity);
-      // 前端需要服务端确认的身份来判断消息左右分侧；只返回公开身份字段，不暴露 token。
-      json(res, 200, {
-        ok: true,
-        identity: { id: identity.id, name: identity.name, role: identity.role },
-        entries: visibleEntries,
-      });
-    } catch (error) {
-      console.error('[workbench:messages] 读取失败：', error.message);
-      json(res, 500, { ok: false, error: '会话消息读取失败' });
-    }
-    return;
-  }
-
-  // D8 拍板语义：参与者与管理员随时可发消息（不受轮次状态限制，'提交不再是终局'）
-  if (urlPath === '/api/messages' && method === 'POST') {
-    readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: '请求体必须是消息对象' });
-        return;
-      }
-      if (!isValidSessionName(body.session)) {
-        json(res, 400, { ok: false, error: 'session 参数无效' });
-        return;
-      }
-      const isAnswer = body.answerTo != null || body.answerValue != null;
-      if (!isAnswer && !validStreamText(body.text)) {
-        json(res, 400, { ok: false, error: 'text 必须非空且不超过 4000 字' });
-        return;
-      }
-      let selfReportedBy;
-      try {
-        selfReportedBy = acceptedSelfReport(body.selfReport, identity, participantsFile);
-      } catch (error) {
-        if (error?.code === 'INVALID_SELF_REPORT') {
-          json(res, 400, { ok: false, error: error.message });
-          return;
-        }
-        console.error('[workbench:messages] 自报身份校验失败：', error.message);
-        json(res, 500, { ok: false, error: '参与者名册无法读取' });
-        return;
-      }
-      try {
-        if (isAnswer) assertParticipantCanAnswerAsk(body.session, body.answerTo, identity);
-        const entry = isAnswer
-          ? appendAnswerEntry(body.session, {
-              author: identity,
-              ...(selfReportedBy ? { selfReportedBy } : {}),
-              answerTo: body.answerTo,
-              answerValue: body.answerValue,
-            }, { exactSession: true })
-          : appendStreamEntry(body.session, {
-              author: identity,
-              ...(selfReportedBy ? { selfReportedBy } : {}),
-              kind: 'message',
-              text: body.text,
-            }, { exactSession: true });
-        json(res, 200, { ok: true, entry });
-        dispatchExecutorEvent(eventWebhook, {
-          event: 'message-posted',
-          session: body.session,
-          id: entry.id,
-          kind: entry.kind,
-          author: entry.author,
-          ...(selfReportedBy ? { selfReportedBy } : {}),
-          at: entry.at,
-        });
-      } catch (error) {
-        if (isAnswer) {
-          const status = error?.code === 'ASK_ALREADY_ANSWERED'
-            ? 409
-            : error?.code === 'ASK_NOT_VISIBLE' ? 403 : 400;
-          json(res, status, { ok: false, error: error.message });
-          return;
-        }
-        console.error('[workbench:messages] 写入失败：', error.message);
-        json(res, 500, { ok: false, error: '会话消息写入失败' });
-      }
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '消息请求体过大' });
-        return;
-      }
-      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/participants-public' && method === 'GET') {
-    const { session } = parseQuery(rawUrl);
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      return;
-    }
-    try {
-      json(res, 200, listParticipants(participantsFile).map(({ id, name }) => ({ id, name })));
-    } catch (error) {
-      console.error('[workbench:participants] 公开名册读取失败：', error.message);
-      json(res, 500, { ok: false, error: '参与者名册无法读取' });
-    }
-    return;
-  }
-
-  if (urlPath === '/api/stream-events' && method === 'POST') {
-    if (identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员可写入 AI 流事件' });
-      return;
-    }
-    readBody(req, MESSAGE_BODY_LIMIT).then((body) => {
-      if (!body || typeof body !== 'object' || Array.isArray(body)
-        || !isValidSessionName(body.session)) {
-        json(res, 400, { ok: false, error: 'session 或请求体无效' });
-        return;
-      }
-      if (!['message', 'progress', 'receipt', 'ask'].includes(body.kind)) {
-        json(res, 400, { ok: false, error: 'kind 只允许 message、progress、receipt 或 ask' });
-        return;
-      }
-      if (!validStreamText(body.text)) {
-        json(res, 400, { ok: false, error: 'text 必须非空且不超过 4000 字' });
-        return;
-      }
-      try {
-        const event = {
-          author: AI_IDENTITY,
-          kind: body.kind,
-          text: body.text,
-          ...(body.refs != null ? { refs: body.refs } : {}),
-          ...(body.kind === 'ask' ? { ask: body.ask } : {}),
-        };
-        const entry = body.kind === 'ask'
-          ? appendAskEntry(body.session, event, { exactSession: true })
-          : appendStreamEntry(body.session, event, { exactSession: true });
-        json(res, 200, { ok: true, entry });
-      } catch (error) {
-        const status = error?.code === 'ASK_ALREADY_EXISTS' ? 409 : 400;
-        json(res, status, { ok: false, error: error.message });
-      }
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '事件请求体过大' });
-        return;
-      }
-      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/attachments' && method === 'POST') {
-    const { session } = parseQuery(rawUrl);
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      req.resume();
-      return;
-    }
-    const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-    const extension = ATTACHMENT_TYPES.get(contentType);
-    if (!extension) {
-      json(res, 415, { ok: false, error: '附件类型不支持：仅允许 PNG/JPEG/WebP/GIF/PDF' });
-      req.resume();
-      return;
-    }
-    const originalName = req.headers['x-file-name'];
-    if (typeof originalName !== 'string' || !originalName.trim()) {
-      json(res, 400, { ok: false, error: '缺少 x-file-name 文件名' });
-      req.resume();
-      return;
-    }
-    readRawBodyLimited(req, ATTACHMENT_BODY_LIMIT).then((body) => {
-      try {
-        const filename = writeAttachment(session, originalName, extension, body);
-        json(res, 200, { ok: true, url: `/assets/${session}/uploads/${filename}` });
-      } catch (error) {
-        console.error('[workbench:attachments] 写入失败：', error.message);
-        json(res, 500, { ok: false, error: '附件写入失败' });
-      }
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '附件过大：单文件上限为 5 MB' });
-        return;
-      }
-      json(res, 400, { ok: false, error: `附件读取失败：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/assets' && method === 'GET') {
-    const { session, round } = parseQuery(rawUrl);
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      return;
-    }
-    const requestedRound = round == null ? null : validRoundQuery(round);
-    if (round != null && requestedRound == null) {
-      json(res, 400, { ok: false, error: 'round 参数无效' });
-      return;
-    }
-    try {
-      json(res, 200, {
-        ok: true,
-        files: listSessionAssets(
-          session,
-          visibleAssetPathsForIdentity(session, identity, requestedRound, assetServiceOrigin(req)),
-        ),
-      });
-    } catch (error) {
-      console.error('[workbench:assets] 索引失败：', error.message);
-      json(res, 500, { ok: false, error: '会话资产读取失败' });
-    }
-    return;
-  }
-
-  if (urlPath === '/api/sessions' && method === 'GET') {
-    json(res, 200, { ok: true, sessions: listSessions() });
-    return;
-  }
-
-  if (urlPath === '/api/projects' && method === 'GET') {
-    try {
-      json(res, 200, { ok: true, ...projectCatalog() });
-    } catch (error) {
-      console.error('[workbench:projects] 项目目录读取失败：', error.message);
-      json(res, 500, { ok: false, error: '项目目录读取失败' });
-    }
-    return;
-  }
-
-  if (urlPath === '/api/session-context' && method === 'GET') {
-    if (!expectedToken || identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员 worker 可读取执行上下文' });
-      return;
-    }
-    const { session } = parseQuery(rawUrl);
-    if (!isValidSessionName(session)) {
-      json(res, 400, { ok: false, error: 'session 参数无效' });
-      return;
-    }
-    if (!sessionExists(session)) {
-      json(res, 404, { ok: false, error: 'session 不存在' });
-      return;
-    }
-    try {
-      json(res, 200, { ok: true, context: executionContextForSession(session) });
-    } catch (error) {
-      console.error('[workbench:projects] 执行上下文读取失败：', error.message);
-      json(res, 500, { ok: false, error: '执行上下文读取失败' });
-    }
-    return;
-  }
-
-  if (urlPath === '/api/participants' || urlPath.startsWith('/api/participants/')) {
-    // 本地无口令时虽然旧 API 继续开放，但参与者名册管理必须显式提供管理员口令。
-    if (!expectedToken || identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员可管理参与者' });
-      return;
-    }
-    if (urlPath === '/api/participants' && method === 'GET') {
-      try { json(res, 200, { ok: true, participants: listParticipants(participantsFile) }); }
-      catch (error) {
-        console.error('[workbench:participants] 列表读取失败：', error.message);
-        json(res, 500, { ok: false, error: '参与者名册无法读取' });
-      }
-      return;
-    }
-    if (urlPath === '/api/participants' && method === 'POST') {
-      readBody(req).then((body) => {
-        try {
-          const participant = addParticipant(body || {}, { filePath: participantsFile });
-          json(res, 201, {
-            ok: true,
-            participant: publicParticipant(participant),
-            url: participantInviteUrl(req, participant.token),
-          });
-        } catch (error) {
-          const damaged = /名册.*损坏/.test(error.message);
-          json(res, damaged ? 500 : 400, { ok: false, error: error.message });
-        }
-      }).catch((error) => json(res, 400, { ok: false, error: `无效 JSON：${error.message}` }));
-      return;
-    }
-    if (method === 'DELETE') {
-      let id;
-      try { id = decodeURIComponent(urlPath.slice('/api/participants/'.length)); }
-      catch { id = ''; }
-      try {
-        if (!revokeParticipant(id, { filePath: participantsFile })) {
-          json(res, 404, { ok: false, error: `参与者 ${id || '(空)'} 不存在` });
-          return;
-        }
-        json(res, 200, { ok: true, id });
-      } catch (error) {
-        console.error('[workbench:participants] 吊销失败：', error.message);
-        json(res, 500, { ok: false, error: '参与者名册无法更新' });
-      }
-      return;
-    }
-    json(res, 405, { ok: false, error: 'method not allowed' });
-    return;
-  }
-
-  if (urlPath === '/api/rounds' && method === 'POST') {
-    // 出题权只属于管理员（owner）：参与者的职责是判断，不是发起新一轮
-    if (expectedToken && identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员可创建新一轮' });
-      return;
-    }
-    readBody(req, ROUND_BODY_LIMIT).then((body) => {
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        json(res, 400, { ok: false, error: '请求体必须是完整的 content JSON' });
-        return;
-      }
-      if (!isValidSessionName(body.session)) {
-        json(res, 400, { ok: false, error: 'session 名称无效：限 80 字符，仅允许字母、数字、点、下划线和连字符' });
-        return;
-      }
-
-      let content;
-      try {
-        // 轮次号由云端唯一分配：忽略客户端指定值，响应返回实际轮号。
-        // 并发写仍由 writeRound 的原子 mkdir 兜底，绝不覆盖已有目录。
-        const bodyWithoutRound = { ...body };
-        delete bodyWithoutRound.round;
-        content = prepareRound(body.session, bodyWithoutRound, { exactSession: true });
-      } catch (error) {
-        if (error?.code === 'INVALID_CONTENT') {
-          json(res, 400, { ok: false, error: `内容校验失败：${error.errors.join('; ')}`, errors: error.errors });
-          return;
-        }
-        throw error;
-      }
-
-      const allowIncomplete = requestUrl.searchParams.get('allowIncomplete') === '1';
-      const incomplete = findIncompleteDecisions(content);
-      if (incomplete.length && !allowIncomplete) {
-        json(res, 400, {
-          ok: false,
-          error: formatIncompleteDecisions(incomplete),
-          errors: incomplete.map((issue) => `[${issue.blockId}] 缺少：${issue.missingFields.join('、')}`),
-        });
-        return;
-      }
-
-      const warnings = lintContent(content);
-      if (warnings.length) console.error(formatLint(warnings));
-
-      try {
-        const registeredProject = content.round === 1
-          ? registeredProjectForSession(content.session)
-          : null;
-        const saved = writeRound(content.session, content, { allowOverwrite: false, exactSession: true });
-        if (content.round === 1) {
-          updateSessionMetadata(saved.session, {
-            ...(typeof content.title === 'string' && content.title.trim()
-              ? { title: content.title.trim() }
-              : {}),
-            ...(registeredProject ? { projectId: registeredProject.id } : {}),
-            kind: 'work',
-            status: 'active',
-          }, { exactSession: true });
-        }
-        appendStreamEntry(saved.session, {
-          author: AI_IDENTITY,
-          kind: 'receipt',
-          text: `已出第 ${saved.round} 轮：${content.title || '未命名轮次'}`,
-          refs: { round: saved.round },
-        }, { exactSession: true });
-        const response = {
-          ok: true,
-          session: saved.session,
-          round: saved.round,
-          url: renderUrl(req, saved.session),
-        };
-        if (allowIncomplete) response.lintBypassed = true;
-        if (content.round === 1 && !registeredProject) {
-          response.warning = UNCLASSIFIED_SESSION_WARNING;
-        }
-        json(res, 200, response);
-        dispatchExecutorEvent(eventWebhook, {
-          event: 'round-presented',
-          session: saved.session,
-          round: saved.round,
-          ...(typeof content.title === 'string' && content.title ? { title: content.title } : {}),
-          at: new Date().toISOString(),
-        });
-      } catch (error) {
-        if (error?.code === 'ROUND_EXISTS') {
-          json(res, 409, { ok: false, error: `round ${content.round} 已存在，不允许覆盖` });
-          return;
-        }
-        if (error?.code === 'INVALID_CONTENT') {
-          json(res, 400, { ok: false, error: `内容校验失败：${error.errors.join('; ')}`, errors: error.errors });
-          return;
-        }
-        console.error('[workbench:rounds] 写入失败：', error);
-        json(res, 500, { ok: false, error: '轮次写入失败，请查看服务端日志' });
-      }
-    }).catch((error) => {
-      if (error?.code === 'BODY_TOO_LARGE') {
-        json(res, 413, { ok: false, error: '请求体过大：上限为 2 MB' });
-        return;
-      }
-      console.error('[workbench:rounds] 请求处理失败：', error);
-      json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
-    });
-    return;
-  }
-
-  if (urlPath === '/api/feedback' && method === 'GET') {
-    const { session, round } = parseQuery(rawUrl);
-    const parsedRound = validRoundQuery(round);
-    if (!isValidSessionName(session) || parsedRound == null) {
-      json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
-      return;
-    }
-    const view = feedbackView(session, parsedRound, identity);
-    if (!view.feedback) {
-      json(res, 200, { ok: false, pending: true });
-      return;
-    }
-    json(res, 200, { ok: true, ...view });
-    return;
-  }
-
-  if (urlPath === '/api/status' && method === 'GET') {
-    const { session } = parseQuery(rawUrl);
-    const status = session ? readStatus(session) : null;
-    const worker = workerPresence(runtimeState);
-    if (!status) {
-      json(res, 200, {
-        ok: true,
-        status: null,
-        display: 'unknown',
-        assetsVersion: assetsVersion(),
-        ...worker,
-      });
-      return;
-    }
-    const roundError = status.state === 'error' && Number.isInteger(status.round)
-      ? readJSON(paths.error(session, status.round), null)
-      : null;
-    // 只合并到 API 响应副本，兼容旧 status.json 且不改变落盘结构。
-    const responseStatus = roundError ? { ...status, error: roundError } : status;
-    const now = Date.now();
-    const display = displayState(responseStatus, now);
-    const hb = responseStatus.heartbeatAt ? Date.parse(responseStatus.heartbeatAt) : NaN;
-    const stale = !Number.isFinite(hb) || (now - hb) > HEARTBEAT_STALE_MS;
-    json(res, 200, {
-      ok: true,
-      status: responseStatus,
-      display,
-      stale,
-      assetsVersion: assetsVersion(),
-      ...worker,
-    });
-    return;
-  }
-
-  if (urlPath === '/api/content' && method === 'GET') {
-    const { session, round } = parseQuery(rawUrl);
-    const r = parseInt(round, 10);
-    if (!session || !Number.isInteger(r) || r < 1) {
-      json(res, 400, { ok: false, error: 'session and round required' });
-      return;
-    }
-    const content = readJSON(paths.content(session, r), null);
-    if (!content) {
+  const ctx = {
+    req, res, method, rawUrl, requestUrl, urlPath, identity, requestToken,
+    expectedToken, eventWebhook, participantsFile, runtimeState,
+    json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer,
+  };
+  const route = matchRoute(method, urlPath);
+  if (route) {
+    const handled = route.handler(ctx);
+    if (handled === false && !res.writableEnded) {
       json(res, 404, { ok: false, error: 'not found' });
-      return;
-    }
-    const prevRound = content.prevRound || (r > 1 ? r - 1 : 0);
-    const prevContent = prevRound > 0 ? readJSON(paths.content(session, prevRound), null) : null;
-    const currentContentBlocks = Array.isArray(content.blocks) ? content.blocks : null;
-    const currentBlocks = visibleBlocksForIdentity(currentContentBlocks || [], identity);
-    const prevBlocks = prevContent ? visibleBlocksForIdentity(prevContent.blocks || [], identity) : [];
-    const diffed = computeDiff(currentBlocks, prevBlocks);
-    const currentBlockIds = new Set(
-      (currentContentBlocks || [])
-        .map((block) => block?.id)
-        .filter((id) => typeof id === 'string'),
-    );
-    const removed = currentContentBlocks
-      ? removedBlocks(currentBlocks, prevBlocks).filter((block) => !currentBlockIds.has(block?.id))
-      : [];
-    const sanity = diffSanity(diffed, removed);
-
-    // 改动 E + 改动 C（DESIGN §4）：注入 _respondedToPrev 与 _decidedInPrev
-    // 读上一轮 feedback；null guard：缺失/第1轮/文件被删均安全跳过，绝不报错
-    const prevFeedback = prevRound > 0
-      ? filterFeedbackForIdentity(
-          readJSON(paths.feedback(session, prevRound), null),
-          feedbackVisibilityForIdentity(session, prevRound, identity),
-        )
-      : null;
-    let finalBlocks = diffed;
-    if (prevFeedback && Array.isArray(prevFeedback.items)) {
-      const respondedIds = new Set(prevFeedback.items.map((it) => it.blockId).filter(Boolean));
-      finalBlocks = diffed.map((b) => {
-        if (respondedIds.has(b.id)) {
-          const patch = { _respondedToPrev: true };
-          // 改动 C：本轮 unchanged + 上轮已反馈 → 已决项沉降标记
-          if (b._change === 'unchanged') patch._decidedInPrev = true;
-          return { ...b, ...patch };
-        }
-        return b;
-      });
-    }
-
-    json(res, 200, { ...content, blocks: finalBlocks, removed, sanity });
-    return;
-  }
-
-  if (urlPath === '/api/feedback' && method === 'POST') {
-    readBody(req).then((fb) => {
-      if (!fb) { json(res, 400, { ok: false, error: 'body required' }); return; }
-      const vr = validateFeedback(fb);
-      if (!vr.ok) { json(res, 400, { ok: false, error: vr.errors.join('; ') }); return; }
-
-      const { session } = fb;
-      const round = parseInt(fb.round, 10);
-      // 与 GET 侧一致的防御深度：session/round 先过白名单再进任何路径拼接
-      if (!isValidSessionName(session) || !Number.isInteger(round) || round < 1) {
-        json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
-        return;
-      }
-      let selfReportedBy;
-      try {
-        selfReportedBy = acceptedSelfReport(fb.selfReport, identity, participantsFile);
-      } catch (error) {
-        if (error?.code === 'INVALID_SELF_REPORT') {
-          json(res, 400, { ok: false, error: error.message });
-          return;
-        }
-        console.error('[workbench:feedback] 自报身份校验失败：', error.message);
-        json(res, 500, { ok: false, error: '参与者名册无法读取' });
-        return;
-      }
-      if (identity.role === 'participant') {
-        const visibility = feedbackVisibilityForIdentity(session, round, identity);
-        if (!visibility.valid) {
-          json(res, 403, { ok: false, error: '无法验证当前轮内容，拒绝写入反馈' });
-          return;
-        }
-        const forbiddenBlockIds = [...new Set(
-          [
-            ...fb.items.map((item) => item?.blockId),
-            ...(Array.isArray(fb.unanswered) ? fb.unanswered : []),
-          ]
-            .filter((blockId) => (
-              typeof blockId !== 'string'
-              || !visibility.knownBlockIds.has(blockId)
-              || !visibility.visibleBlockIds.has(blockId)
-            )),
-        )];
-        if (forbiddenBlockIds.length) {
-          console.error('[workbench:feedback] 拒绝参与者提交不可见块反馈：', {
-            session,
-            round,
-            participant: identity.id,
-            blockIds: forbiddenBlockIds,
-          });
-          json(res, 403, {
-            ok: false,
-            error: `反馈包含不可见块：${forbiddenBlockIds.join('、')}`,
-            blockIds: forbiddenBlockIds,
-          });
-          return;
-        }
-      }
-      const pathOptions = { exactSession: true };
-      const st = readStatus(session, pathOptions);
-      if (identity.role === 'owner' && st && st.state === 'claimed') {
-        json(res, 409, { ok: false, error: 'claimed' });
-        return;
-      }
-
-      const now = new Date().toISOString();
-      const submittedBy = { id: identity.id, name: identity.name };
-      // submittedBy 永远由服务端覆盖，不能信任客户端自报身份。
-      const {
-        selfReport: _clientSelfReport,
-        selfReportedBy: _clientSelfReportedBy,
-        ...feedbackFields
-      } = fb;
-      const saved = {
-        ...feedbackFields,
-        submittedAt: now,
-        submittedBy,
-        ...(selfReportedBy ? { selfReportedBy } : {}),
-      };
-      // 每笔提交无条件先落历史件：共享 owner 链接多人先后提交曾互相覆盖，
-      // 2026-08-19 思锐门户因此永久丢失两笔客户反馈——主文件仍保持"最新一笔"语义，历史件保证零丢失。
-      writeJSON(paths.feedbackHistory(
-        session,
-        round,
-        `${now.replace(/[:.]/g, '-')}-${(feedbackHistorySeq += 1).toString(36)}`,
-        identity.id,
-        { ...pathOptions, ...(selfReportedBy ? { selfReportSlug: selfReportSlug(selfReportedBy.name) } : {}) },
-      ), saved);
-      const primaryPath = paths.feedback(session, round, pathOptions);
-      if (identity.role === 'participant') {
-        writeJSON(paths.participantFeedback(session, round, identity.id, pathOptions), saved);
-        const primary = readJSON(primaryPath, null);
-        const mayRefreshBridge = !primary || (
-          primary.submittedBy?.id === identity.id
-          && !TERMINAL_OR_PROCESSING_STATES.has(st?.state)
-        );
-        if (mayRefreshBridge) {
-          writeJSON(primaryPath, saved);
-          writeText(paths.feedbackMd(session, round, pathOptions), feedbackToMd(saved));
-        }
-        if (!TERMINAL_OR_PROCESSING_STATES.has(st?.state)) {
-          writeStatus(session, { state: 'submitted', round, error: null }, undefined, pathOptions);
-        }
-      } else {
-        writeJSON(primaryPath, saved);
-        writeText(paths.feedbackMd(session, round, pathOptions), feedbackToMd(saved));
-        writeStatus(session, { state: 'submitted', round, error: null }, undefined, pathOptions);
-      }
-      appendStreamEntry(session, {
-        author: AI_IDENTITY,
-        kind: 'receipt',
-        text: selfReportedBy
-          ? `${sharedDisplayName(selfReportedBy)}已提交第 ${round} 轮反馈`
-          : `${submittedBy.name} 已提交第 ${round} 轮反馈`,
-        ...(selfReportedBy ? { selfReportedBy } : {}),
-        refs: { round },
-      }, pathOptions);
-      json(res, 200, { ok: true, count: (fb.items || []).length });
-      dispatchExecutorEvent(eventWebhook, {
-        event: 'feedback-submitted',
-        session,
-        round,
-        submittedBy,
-        ...(selfReportedBy ? { selfReportedBy } : {}),
-        at: now,
-      });
-    }).catch((e) => {
-      json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
-    });
-    return;
-  }
-
-  // embed 代理：支持 GET/POST/PUT/DELETE（P0 · iteration-brief 2026-07-13）
-  // 此前只认 GET → 被嵌页面内的表单 POST 无转发通道，字段丢失（实证 bug）。
-  if (urlPath === '/api/proxy') {
-    const { url: targetUrl } = parseQuery(rawUrl);
-    if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
-      cors(res);
-      noReferrer(res);
-      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end('<p>无效的代理目标 URL</p>');
-      return;
-    }
-    const selfOrigin = req.headers.host ? `http://${req.headers.host}` : '';
-    (async () => {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
-        const init = { method, signal: controller.signal, redirect: 'follow', headers: {} };
-        if (method !== 'GET' && method !== 'HEAD') {
-          init.body = await readRawBody(req);                       // 完整透传请求体
-          const ct = req.headers['content-type'];
-          if (ct) init.headers['content-type'] = ct;                // form-urlencoded / json 均可
-        }
-        const fr = await fetch(targetUrl, init);
-        clearTimeout(timer);
-        const ct = fr.headers.get('content-type') || 'text/html; charset=utf-8';
-        cors(res);
-        if (/text\/html/i.test(ct)) {
-          const html = rewriteEmbedHtml(await fr.text(), fr.url || targetUrl, selfOrigin, requestToken);
-          noReferrer(res);
-          res.writeHead(fr.status, { 'Content-Type': 'text/html; charset=utf-8' });
-          res.end(html);
-        } else {
-          // 非 HTML（JSON/CSS/图片…）原样回传，状态码与 content-type 保真
-          res.writeHead(fr.status, { 'Content-Type': ct });
-          res.end(Buffer.from(await fr.arrayBuffer()));
-        }
-      } catch (err) {
-        cors(res);
-        noReferrer(res);
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<p>无法加载该页面：${String(err.message ?? err)}</p>`);
-      }
-    })();
-    return;
-  }
-
-  if (urlPath === '/api/retry' && method === 'POST') {
-    if (identity.role !== 'owner') {
-      json(res, 403, { ok: false, error: '仅管理员可重试轮次' });
-      return;
-    }
-    const { session, round } = parseQuery(rawUrl);
-    const r = validRoundQuery(round);
-    if (!isValidSessionName(session) || r == null) {
-      json(res, 400, { ok: false, error: 'session and round required' });
-      return;
-    }
-    const pathOptions = { exactSession: true };
-    removeFile(paths.ack(session, r, pathOptions));
-    removeFile(paths.error(session, r, pathOptions));
-    writeStatus(session, { state: 'submitted', error: null, round: r }, undefined, pathOptions);
-    json(res, 200, { ok: true });
-    return;
-  }
-
-  // --- 会话资产：/assets/<session>/<path> → workspace/<session>/assets/<path> ---
-  // 用途：session 自带的静态资源（如高保真 UI 设计稿 HTML），让工作台自托管，
-  // 不再依赖外部服务（此前 prd-studio 的 :8088 必须开着才能看 UI 面）。
-  if (method === 'GET' && urlPath.startsWith('/assets/')) {
-    let rel;
-    try {
-      rel = decodeURIComponent(urlPath.slice('/assets/'.length));
-    } catch {
-      json(res, 400, { ok: false, error: 'asset path encoding invalid' });
-      return;
-    }
-    const slash = rel.indexOf('/');
-    const session = slash === -1 ? rel : rel.slice(0, slash);
-    const sub = slash === -1 ? '' : rel.slice(slash + 1);
-    // session 名白名单 + 子路径穿越防护
-    if (!session || !sub || !/^[A-Za-z0-9._-]+$/.test(session)) {
-      json(res, 404, { ok: false, error: 'not found' });
-      return;
-    }
-    const root = path.resolve(workspaceDir(), session, 'assets');
-    const normalizedSub = normalizeAssetSubpath(sub);
-    if (!normalizedSub) {
-      json(res, 403, { ok: false, error: 'forbidden' });
-      return;
-    }
-    const { round } = parseQuery(rawUrl);
-    const requestedRound = round == null ? null : validRoundQuery(round);
-    if (round != null && requestedRound == null) {
-      json(res, 400, { ok: false, error: 'round 参数无效' });
-      return;
-    }
-    const allowedAssetPaths = visibleAssetPathsForIdentity(
-      session,
-      identity,
-      requestedRound,
-      assetServiceOrigin(req),
-    );
-    if (allowedAssetPaths && !allowedAssetPaths.has(normalizedSub)) {
-      json(res, 403, { ok: false, error: 'asset forbidden' });
-      return;
-    }
-    const abs = path.resolve(root, normalizedSub);
-    if (!abs.startsWith(root + path.sep)) {
-      json(res, 403, { ok: false, error: 'forbidden' });
-      return;
-    }
-    try {
-      const buf = readAssetFile(root, normalizedSub);
-      const ext = path.extname(normalizedSub).toLowerCase();
-      cors(res);
-      if (ext === '.html') noReferrer(res);
-      // 防存储型 XSS：禁止 MIME 嗅探；PDF 等可执行脚本的文档强制下载而非内嵌打开
-      res.writeHead(200, {
-        'Content-Type': MIME[ext] || 'application/octet-stream',
-        'X-Content-Type-Options': 'nosniff',
-        ...(ext === '.pdf' ? { 'Content-Disposition': 'attachment' } : {}),
-        'Cache-Control': 'no-store',
-      });
-      res.end(buf);
-    } catch (error) {
-      if (error?.code === 'ASSET_FORBIDDEN') {
-        json(res, 403, { ok: false, error: 'forbidden' });
-        return;
-      }
-      json(res, 404, { ok: false, error: 'asset not found' });
     }
     return;
   }
-
-  // --- Static files (src/ as root) ---
-  if (method === 'GET') {
-    // Redirect / → /render/index.html
-    if (urlPath === '/') {
-      cors(res);
-      const tokenQuery = requestToken ? `?token=${encodeURIComponent(requestToken)}` : '';
-      res.writeHead(302, { Location: `/render/index.html${tokenQuery}` });
-      res.end();
-      return;
-    }
-
-    // Resolve path within SRC_ROOT; prevent directory traversal
-    let rel;
-    try {
-      rel = decodeURIComponent(urlPath);
-    } catch {
-      json(res, 400, { ok: false, error: 'path encoding invalid' });
-      return;
-    }
-    const abs = path.resolve(SRC_ROOT, '.' + rel);
-    if (!abs.startsWith(SRC_ROOT + path.sep) && abs !== SRC_ROOT) {
-      json(res, 403, { ok: false, error: 'forbidden' });
-      return;
-    }
-
-    let filePath = abs;
-    try {
-      const stat = fs.statSync(filePath);
-      if (stat.isDirectory()) {
-        // 目录请求（如 /render/）→ 回退到 index.html
-        filePath = path.join(filePath, 'index.html');
-        fs.statSync(filePath); // 不存在则抛
-      }
-    } catch {
-      // 非现成文件/目录：对无扩展名路径尝试 .html 回退（如 /foo → foo.html）
-      if (!path.extname(abs)) {
-        try { fs.statSync(abs + '.html'); filePath = abs + '.html'; }
-        catch { json(res, 404, { ok: false, error: 'not found' }); return; }
-      } else {
-        json(res, 404, { ok: false, error: 'not found' });
-        return;
-      }
-    }
-
-    const ext = path.extname(filePath).toLowerCase();
-    const mime = MIME[ext] || 'application/octet-stream';
-    cors(res);
-    if (ext === '.html') noReferrer(res);
-
-    // 渲染页模板化（DESIGN §6.7，2026-08-13）：注入资产版本 + import map，
-    // 让所有 JS/CSS 以 ?v=版本 加载——从 URL 层面击穿 headerless 时代遗留的启发式缓存
-    // （响应头无法清除浏览器已存的旧条目，改 URL 是唯一客户端无感的根治手段）。
-    // 另发 Clear-Site-Data 清一次本源缓存（不支持的浏览器忽略，无害）。
-    if (filePath === path.join(SRC_ROOT, 'render', 'index.html')) {
-      const v = assetsVersion();
-      const imports = {};
-      for (const f of fs.readdirSync(path.join(SRC_ROOT, 'render'))) {
-        if (f.endsWith('.mjs')) imports['./' + f] = `./${f}?v=${v}`;
-      }
-      // render 模块经 '../protocol/x.mjs' 引用的共享模块同样要版本化，否则仍可能命中历史缓存
-      for (const f of fs.readdirSync(path.join(SRC_ROOT, 'protocol'))) {
-        if (f.endsWith('.mjs')) imports['../protocol/' + f] = `../protocol/${f}?v=${v}`;
-      }
-      const html = fs.readFileSync(filePath, 'utf8')
-        .replaceAll('__WB_ASSETS_V__', v)
-        .replaceAll('__WB_TITLE__', process.env.WORKBENCH_TITLE || 'Vibe Coding工作台')
-        .replace('<!--__WB_IMPORTMAP__-->', `<script type="importmap">${JSON.stringify({ imports })}</script>`);
-      res.writeHead(200, {
-        'Content-Type': mime,
-        'Cache-Control': 'no-store, must-revalidate',
-        'Clear-Site-Data': '"cache"',
-      });
-      res.end(html);
-      return;
-    }
-
-    // 本地开发工具：静态资源不缓存，避免改了代码浏览器仍用旧的（普通刷新即拿最新）
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-store, must-revalidate' });
-    fs.createReadStream(filePath).pipe(res);
-    return;
-  }
-
-  // Fallthrough: 404
   json(res, 404, { ok: false, error: 'not found' });
 }
-
 export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAULT_PARTICIPANTS_FILE } = {}) {
   const listenHost = host || '127.0.0.1';
   const token = process.env.WORKBENCH_TOKEN || '';
