@@ -28,7 +28,7 @@
 - 正文 `15.5px / line-height 1.78`，`letter-spacing .006em`
 - 开 `-webkit-font-smoothing: antialiased` + `-moz-osx-font-smoothing: grayscale`
 - 全站字重封顶 600，层级改用「字号 + 颜色 + 留白」拉开
-- 正文列限宽 700–820px（原来是满宽）
+- 正文列限宽（原来是满宽）；具体值见 §五「正文列宽的两次调整」
 - Markdown 段落与标题之间补出节奏（原来段间距为 0，读起来是一堵墙）
 - 表格去掉重网格，只留发丝底线
 
@@ -105,6 +105,7 @@
   - 区色条、彩色徽章、实心推荐底全部改成描边/中性
   - 画布变纯白后，27 处原本靠 `--color-bg` 做浅底的地方改指 `--color-bg-subtle`（否则全部隐形）
   - `.session-comment` 的 `margin` 简写改 `auto` —— 简写会冲掉 `.decision-panel > *` 的居中
+  - 正文列宽收进 `--content-max` 令牌（见 §五）
 - `src/render/blocks.mjs` — 改动徽章从独占一行改为内嵌标题行末尾（`titleHtml(block, badge)`）
 - `src/render/index.html` — 新增收起态竖条 `#stream-rail` 与 `#stream-collapse` 按钮
 - `src/render/app.mjs` — 收起/展开逻辑、`localStorage` 记忆（默认收起）、收起态新消息红点
@@ -117,3 +118,36 @@
 - **收起态网格列数**：面板与分隔线是 `display:none`，不参与 grid 放置。收起态若仍写三列，正文会落进中间那条 0 宽的分隔线列 → 整个内容区宽度变 0，页面一片空白。收起态必须写两列。
 - **纯白画布让浅底全部隐形**：`--color-bg` 从 `#f9f9f9` 变 `#ffffff` 后，所有 `background: var(--color-bg)` 的次级表面（输入框、hover、代码块、表格隔行）与 `--color-surface` 同色，等于没有。必须引入独立的 `--color-bg-subtle`。
 - **`margin` 简写会冲掉居中**：`.decision-panel > *` 给了 `margin-left/right: auto`，任何子元素自己写 `margin: X 0 Y` 都会把它冲掉、跑到左边去。
+
+
+---
+
+## 五、正文列宽的两次调整
+
+**第一版 700px 定窄了。** 当时按「纯中文正文一行 32–40 字最舒服」取值，
+但这个页面的实际内容大部分不是纯正文 —— 表格、利弊两栏、嵌入原型、mermaid 图，
+这些都吃宽度，700px 下被挤得很难看，宽屏上还剩大片空白。
+创始人 2026-08-22 反馈「目前宽度太窄了，最好加宽一些」。
+
+**第二版改成跟着窗口放大、带上下限的一个令牌：**
+
+```css
+--content-max: min(clamp(720px, 72vw, 1180px), 100%);
+```
+
+| 视口 | 正文列（实测） |
+|---|---|
+| 790px（刚过移动断点） | 718px（被 `100%` 兜住，不溢出） |
+| 1150px | 828px |
+| 1440px | 1037px |
+| ≥1640px | 1180px（封顶） |
+
+四段各有各的作用：
+
+- `720px` 下限 —— 再窄表格和两栏利弊就散架
+- `72vw` —— 窗口越大列越宽，宽屏不再浪费
+- `1180px` 上限 —— 再宽中文一行超过 75 字，回行时眼睛找不到行头
+- 外层 `min(…, 100%)` —— 窗口比下限还窄时（790px 一带）兜住，防止横向溢出
+
+**要整体调宽/调窄只改这一个值。** `.decision-panel > *`、`.documents-panel > *`、
+`.session-comment` 三处都引它，改一处三处一起变。

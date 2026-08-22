@@ -50,6 +50,12 @@
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
                "PingFang SC", monospace;
 
+  /* 正文列宽：跟着窗口放大、带上限。
+     720px 是纯中文正文的舒适下限（一行 ~45 字）；但本页大部分是表格、利弊两栏、
+     嵌入原型，这些吃宽度，所以随窗口放到 72vw、封顶 1180px。
+     想整体调宽/调窄，改这一个值即可。 */
+  --content-max: min(clamp(720px, 72vw, 1180px), 100%);
+
   --radius: 2px;
   --bar-width: 4px;
   --shadow: none;
@@ -989,10 +995,11 @@ body.project-home .content-region {
 .documents-panel {
   padding: 40px clamp(18px, 2.4vw, 48px) 110px;
 }
-/* 正文列限宽：中文一行 32–40 字最舒服。不限宽时 1440px 屏一行 90+ 字，回行找不到行头 */
+/* 正文列限宽：不限宽时 1440px 屏一行 90+ 字，回行找不到行头；限太死又浪费宽屏。
+   见 --content-max。 */
 .decision-panel > *,
 .documents-panel > * {
-  max-width: 700px;
+  max-width: var(--content-max);
   margin-left: auto;
   margin-right: auto;
 }
@@ -2530,6 +2537,7 @@ svg.proto-overlay {
 /* margin 简写会把 .decision-panel > * 的 margin-left/right:auto 冲掉 →
    这块就贴到左边、和正文列错开（创始人 2026-08-21 截图反馈）。必须写 auto。 */
 .session-comment {
+  max-width: var(--content-max);
   margin: 40px auto 12px;
   padding: 14px 16px;
   border: 1px dashed var(--color-border);
