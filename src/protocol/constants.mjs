@@ -1,5 +1,5 @@
 // 浏览器安全常量（无 node 依赖）——前端可直接 import。
-export const BLOCK_TYPES = ['markdown', 'diagram', 'choice', 'verdict', 'freetext', 'editable', 'table', 'code', 'embed', 'prototype', 'checklist'];
+export { BLOCK_TYPES } from './block-types/index.mjs';
 export const IMPORTANCE = ['high', 'normal', 'low'];
 // tab 分面导航默认类目（prd-studio 六面对齐）。content.sections 可覆盖；空面渲染为灰 tab。
 export const DEFAULT_SECTIONS = ['需求', '架构', 'UI 设计', '交互设计', '测试', '风险'];

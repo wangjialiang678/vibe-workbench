@@ -1,6 +1,7 @@
 // 内容协议 schema 与校验（DESIGN §2）。服务端用（含 node:crypto）。
 import { createHash } from 'node:crypto';
 import { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES, AUDIENCE } from './constants.mjs';
+import { getBlockType } from './block-types/index.mjs';
 
 export { BLOCK_TYPES, IMPORTANCE, IMPORTANCE_RANK, FEEDBACK_TYPES, STATES, AUDIENCE };
 
@@ -41,20 +42,8 @@ export function blockFingerprint(block) {
     recommendReason: block.recommendReason ?? null,
   };
   // §1.4 C：新 block 类型的核心字段加入指纹，否则 diff 对新类型失效
-  if (block.type === 'prototype') {
-    Object.assign(subset, {
-      mode: block.mode ?? null,
-      src: block.src ?? null,
-      imageUrl: block.imageUrl ?? null,
-      screen: block.screen ?? null,
-    });
-  }
-  if (block.type === 'checklist') {
-    Object.assign(subset, {
-      items: block.items ?? null,
-      verdictLabels: block.verdictLabels ?? null,
-    });
-  }
+  const definition = getBlockType(block.type);
+  for (const field of definition?.hashFields ?? []) subset[field] = block[field] ?? null;
   return createHash('sha1').update(stableStringify(subset)).digest('hex');
 }
 
@@ -62,7 +51,8 @@ export function validateBlock(block) {
   const errors = [];
   if (!block || typeof block !== 'object') return { ok: false, errors: ['block must be object'] };
   if (!block.id || typeof block.id !== 'string') errors.push('block.id required string');
-  if (!BLOCK_TYPES.includes(block.type)) errors.push(`block.type invalid: ${block.type}`);
+  const definition = getBlockType(block.type);
+  if (!definition) errors.push(`block.type invalid: ${block.type}`);
   if (block.importance != null && !IMPORTANCE.includes(block.importance)) errors.push(`importance invalid: ${block.importance}`);
   if (block.needsDecision != null && typeof block.needsDecision !== 'boolean') errors.push('needsDecision must be boolean');
   if (block.hasRecommendation != null && typeof block.hasRecommendation !== 'boolean') errors.push('hasRecommendation must be boolean');
@@ -80,51 +70,7 @@ export function validateBlock(block) {
     errors.push('assignee must be a non-empty string when provided');
   }
 
-  if (block.type === 'choice') {
-    if (!Array.isArray(block.options) || block.options.length === 0) errors.push('choice requires non-empty options[]');
-    else block.options.forEach((o, i) => {
-      if (!o || !o.id) errors.push(`choice option[${i}] requires id`);
-      if (o && o.pros != null && !Array.isArray(o.pros)) errors.push(`choice option[${i}].pros must be array`);
-      if (o && o.cons != null && !Array.isArray(o.cons)) errors.push(`choice option[${i}].cons must be array`);
-    });
-    if (block.hasRecommendation && block.recommendation != null) {
-      const ids = (block.options || []).map((o) => o && o.id);
-      if (!ids.includes(block.recommendation)) errors.push('choice.recommendation must match an option id');
-    }
-  }
-  if (block.type === 'table') {
-    if (!Array.isArray(block.columns)) errors.push('table requires columns[]');
-    if (!Array.isArray(block.rows)) errors.push('table requires rows[]');
-  }
-  if (block.type === 'embed') {
-    if (!block.url || typeof block.url !== 'string') errors.push('embed requires non-empty url string');
-  }
-  if (block.type === 'prototype') {
-    const validModes = ['wireframe', 'iframe', 'image'];
-    if (!validModes.includes(block.mode)) errors.push(`prototype.mode must be one of: ${validModes.join(', ')}`);
-    if (block.mode === 'iframe' && (!block.src || typeof block.src !== 'string')) {
-      errors.push('prototype with mode=iframe requires non-empty src string');
-    }
-    if (block.mode === 'image' && (!block.imageUrl || typeof block.imageUrl !== 'string')) {
-      errors.push('prototype with mode=image requires non-empty imageUrl string');
-    }
-    if (block.mode === 'wireframe' && (!block.screen || typeof block.screen !== 'object')) {
-      errors.push('prototype with mode=wireframe requires screen object');
-    }
-  }
-  if (block.type === 'checklist') {
-    if (!Array.isArray(block.items) || block.items.length === 0) {
-      errors.push('checklist requires non-empty items[]');
-    } else {
-      block.items.forEach((item, i) => {
-        if (!item || !item.id) errors.push(`checklist items[${i}] requires id`);
-        if (!item || !item.label) errors.push(`checklist items[${i}] requires label`);
-      });
-    }
-    if (!Array.isArray(block.verdictLabels) || block.verdictLabels.length === 0) {
-      errors.push('checklist requires non-empty verdictLabels[]');
-    }
-  }
+  if (definition) errors.push(...definition.validate(block));
   return { ok: errors.length === 0, errors };
 }
 

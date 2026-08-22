@@ -3,6 +3,7 @@
 // 每条规则都对应 docs/feedback-examples-2026-07-13.md 里的真实病例——
 // 目的：把"让不了解细节的人也能判断"变成默认约束，而不是作者自觉。
 // 浏览器安全（无 node 依赖），纯函数，可单测。
+import { getBlockType } from './block-types/index.mjs';
 
 // 决策者语境里可直接使用、无需解释的常见缩写
 const ACRONYM_ALLOW = new Set([
@@ -34,13 +35,8 @@ function missingDecisionFields(block) {
   if (!isNonEmptyString(block.background)) missingFields.push('background（背景）');
   if (!isNonEmptyString(block.why)) missingFields.push('why（为什么需要人定）');
 
-  if (block.type === 'choice') {
-    const options = Array.isArray(block.options) ? block.options : [];
-    options.forEach((option, index) => {
-      if (!isNonEmptyArray(option?.pros)) missingFields.push(`options[${index}].pros（选项优点）`);
-      if (!isNonEmptyArray(option?.cons)) missingFields.push(`options[${index}].cons（选项缺点）`);
-    });
-  }
+  const definition = getBlockType(block.type);
+  missingFields.push(...(definition?.decisionMissingFields?.(block, { isNonEmptyArray }) ?? []));
 
   if (block.hasRecommendation === true && !isNonEmptyString(block.recommendReason)) {
     missingFields.push('recommendReason（推荐理由）');
@@ -73,6 +69,7 @@ export function lintBlock(block) {
   const w = [];
   const push = (rule, message) => w.push({ level: 'warn', blockId: block.id, rule, message });
   const isDecision = block.needsDecision === true;
+  const definition = getBlockType(block.type);
 
   // —— P1 决策块结构化（病例 1/3/8）——
   if (isDecision && !isNonEmptyString(block.background)) {
@@ -81,13 +78,7 @@ export function lintBlock(block) {
   if (isDecision && !isNonEmptyString(block.why)) {
     push('missing-why', '决策块缺 why（为什么需要你定）：用户不知道"这题为什么归我、错了多大事"（病例 8 四维自评）');
   }
-  if (isDecision && block.type === 'choice') {
-    const opts = Array.isArray(block.options) ? block.options : [];
-    const incomplete = opts.filter((o) => !isNonEmptyArray(o?.pros) || !isNonEmptyArray(o?.cons));
-    if (incomplete.length) {
-      push('missing-proscons', `${incomplete.length}/${opts.length} 个选项缺非空 pros/cons：选项只讲机制不讲后果，用户无法判断"选了会发生什么、能不能反悔"（病例 1）`);
-    }
-  }
+  for (const warning of definition?.lint?.(block, { isDecision, isNonEmptyArray }) ?? []) push(warning.rule, warning.message);
   // —— ASCII 字符画检测（创始人 2026-07-23 实证反馈：框线在比例字体下必然散架）——
   // 命中 3 个以上制表/框线字符（U+2500–U+257F）即判定为字符画
   const artSource = [block.body, block.value, ...(Array.isArray(block.options) ? block.options.map((o) => o?.desc) : [])]
@@ -99,20 +90,6 @@ export function lintBlock(block) {
 
   if (isDecision && block.hasRecommendation === true && !isNonEmptyString(block.recommendReason)) {
     push('missing-recommend-reason', '有 recommendation 却缺 recommendReason：用户不知道你为什么推荐它');
-  }
-
-  // —— P2 确认场景低摩擦（病例 5：行为数据，editable 连续两轮无人应答）——
-  if (isDecision && block.type === 'editable') {
-    push('editable-for-confirm', '确认场景用 editable 是高摩擦（病例 5：R2 三个 editable 全部无人应答，改 verdict 后当轮通过）。只需"行/不行"时优先 verdict');
-  }
-
-  // —— 一块一问（病例 4：一个 freetext 塞三问，用户被迫自行编号作答，跨轮 diff 也失效）——
-  if (block.type === 'freetext') {
-    const t = `${block.title ?? ''}\n${block.body ?? ''}`;
-    const marks = (t.match(/[①②③④⑤⑥]|(?:^|\n)\s*[1-9][.)、]/g) ?? []).length;
-    if (marks >= 2) {
-      push('multi-question', `freetext 里疑似塞了 ${marks} 个问题：建议一块一问（病例 4），否则答案与问题的对应关系要用户手工维护`);
-    }
   }
 
   // —— P3 未解释的术语/缩写（病例 3：用户直接回"没听懂"）——

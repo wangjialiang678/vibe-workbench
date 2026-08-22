@@ -25,6 +25,7 @@ import {
   streamEntriesHtml,
 } from '../../src/render/stream-view.mjs';
 import { resolveSelfReportSelection } from '../../src/render/self-report-state.mjs';
+import { submitPayload } from '../../src/render/submit-payload.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const renderIndex = readFileSync(path.resolve(__dirname, '../../src/render/index.html'), 'utf8');
@@ -72,7 +73,9 @@ test('共享 owner 明确选匿名可提交且 payload 不带 selfReport', () =>
   assert.equal(anonymous.explicit, true);
   assert.equal(anonymous.mode, 'anonymous');
   assert.equal(anonymous.report, undefined);
-  assert.match(renderApp, /\.\.\.\(decision\.report \? \{ selfReport: decision\.report \} : \{\}\)/);
+  assert.equal(submitPayload({
+    session: 'demo', round: 1, submittedAt: 'now', draft: {}, unanswered: [], sessionComment: '', selfReport: anonymous.report,
+  }).selfReport, undefined);
 });
 
 test('共享 owner 选名册参与人时提交携带 selfReport', () => {
