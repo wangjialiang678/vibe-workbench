@@ -70,3 +70,19 @@ test('抗锯齿按屏幕密度分开：1 倍屏不强制灰度抗锯齿', () => 
     'app.css 不应无条件写死 -webkit-font-smoothing',
   );
 });
+
+// 2026-08-22 回归：把令牌从 app.css 挪进 theme.css 时漏了控制塔页面 ——
+// 它只引了 app.css，于是 control.css 里 38 处 var(--color-*) 全部落空、配色崩掉。
+// 凡是引 app.css 的页面都必须先引 theme.css。
+test('所有引用 app.css 的页面都必须先引 theme.css', () => {
+  const pages = ['../../src/render/index.html', '../../src/control/index.html'];
+  for (const rel of pages) {
+    const html = readFileSync(path.resolve(__dirname, rel), 'utf8');
+    if (!html.includes('app.css')) continue;
+    assert.ok(html.includes('theme.css'), `${rel} 引了 app.css 却没引 theme.css，令牌会全部落空`);
+    assert.ok(
+      html.indexOf('theme.css') < html.indexOf('app.css'),
+      `${rel} 的 theme.css 必须排在 app.css 之前`,
+    );
+  }
+});
