@@ -3,6 +3,7 @@
 // 形状图标(◆/◇/＋/～)承载语义，不靠颜色单独传达（§13 P2 可访问性）。
 import { mdToHtml } from './md.mjs';
 import { changeBadge } from './diff-view.mjs';
+import { getBlockType } from '../protocol/block-types/index.mjs';
 
 function escHtml(str) {
   return String(str ?? '')
@@ -296,27 +297,15 @@ export function renderPrototype(block) {
 // ---------- 按 type 分派 ----------
 
 function renderContent(block) {
-  switch (block.type) {
-    case 'markdown':   return renderMarkdown(block);
-    case 'diagram':    return renderDiagram(block);
-    case 'choice':     return renderChoice(block);
-    case 'verdict':    return renderVerdict(block);
-    case 'freetext':   return renderFreetext(block);
-    case 'editable':   return renderEditable(block);
-    case 'table':      return renderTable(block);
-    case 'code':       return renderCode(block);
-    case 'embed':      return renderEmbed(block);
-    case 'checklist':  return renderChecklist(block);
-    case 'prototype':  return renderPrototype(block);
-    default:           return `<p class="unknown-type">未知 block 类型：${escHtml(block.type)}</p>`;
-  }
+  const definition = getBlockType(block.type);
+  return definition
+    ? definition.render(block, { escHtml, mdToHtml })
+    : `<p class="unknown-type">未知 block 类型：${escHtml(block.type)}</p>`;
 }
 
 // body 上屏（§5.0）：markdown/diagram/code 已把 body 当主内容，其余类型若有 body 则在 title 后额外渲染。
-const BODY_AS_CONTENT_TYPES = new Set(['markdown', 'diagram', 'code']);
-
 function bodyHtml(block) {
-  if (BODY_AS_CONTENT_TYPES.has(block.type)) return ''; // 这三类已在 renderContent 里用 body
+  if (getBlockType(block.type)?.bodyAsContent) return ''; // 这三类已在 renderContent 里用 body
   if (!block.body) return '';
   return `<div class="block-body">${mdToHtml(block.body)}</div>`;
 }

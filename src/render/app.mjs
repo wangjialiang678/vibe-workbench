@@ -12,7 +12,6 @@ import {
   clampStreamPanelWidth,
   collectAssetLinks,
   composerValueAfterSend,
-  containerPinPopoverPosition,
   decisionChipForLatestReceipt,
   streamEntriesHtml,
 } from './stream-view.mjs';
@@ -31,6 +30,11 @@ import {
   submitStateAfterSuccess,
 } from './submit-state.mjs';
 import { resolveSelfReportSelection } from './self-report-state.mjs';
+import { draftKey, mergeDraft, readDraft, writeDraft } from './draft-store.mjs';
+import { nextRoundTitle, pickRound, shouldAdvance } from './round-nav.mjs';
+import { containerPinPopoverPosition, pinFromPointer, visibleBoundsInContainer } from './pin-geometry.mjs';
+import { facetBadges, pickFacet } from './facet-state.mjs';
+import { submitPayload } from './submit-payload.mjs';
 
 // ── URL 参数 ──────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
@@ -51,8 +55,6 @@ let _latestRound = currentRound;
 // URL 未带 round = "跟随最新轮"模式（bootstrap 解析最新 + 轮询自动推进）；
 // 带了 round=N = 用户锁定该轮，绝不自动跳走。
 const FOLLOW_LATEST = URL_ROUND === '';
-
-function draftKey(round = currentRound) { return `wb:${SESSION}:${round}:fb`; }
 
 // ── 元素引用 ─────────────────────────────────────────────
 const $zones        = document.getElementById('zones-mount');
@@ -583,8 +585,7 @@ function showProjectHome() {
 
 // ── 草稿 ─────────────────────────────────────────────────
 function loadDraft(round = currentRound) {
-  try { return JSON.parse(localStorage.getItem(draftKey(round)) ?? 'null') ?? {}; }
-  catch { return {}; }
+  return readDraft(localStorage, draftKey(SESSION, round));
 }
 
 let _submitState = 'ready';
@@ -603,8 +604,8 @@ function markFeedbackDirty() {
 
 function saveDraft(patch) {
   const draft = loadDraft();
-  Object.assign(draft, patch);
-  localStorage.setItem(draftKey(), JSON.stringify(draft));
+  mergeDraft(draft, patch);
+  writeDraft(localStorage, draftKey(SESSION, currentRound), draft);
   markFeedbackDirty();
 }
 
@@ -1284,12 +1285,7 @@ function positionPinComment(blockId, pin, bubble) {
     { width: bubble.offsetWidth || 280, height: bubble.offsetHeight || 120 },
     {
       // 把视口可见区换算为 overlay 内坐标，翻转后仍返回容器内位置。
-      visibleBounds: {
-        left: Math.max(0, -rect.left),
-        top: Math.max(0, -rect.top),
-        right: Math.min(rect.width, window.innerWidth - rect.left),
-        bottom: Math.min(rect.height, window.innerHeight - rect.top),
-      },
+      visibleBounds: visibleBoundsInContainer(rect, { width: window.innerWidth, height: window.innerHeight }),
     },
   );
   bubble.style.position = 'absolute';
@@ -1792,11 +1788,10 @@ function bindInteractions() {
       if (e.target.closest('.proto-pin')) return;
 
       const rect = overlay.getBoundingClientRect();
-      const xPct = ((e.clientX - rect.left) / rect.width) * 100;
-      const yPct = ((e.clientY - rect.top)  / rect.height) * 100;
+      const { xPct, yPct } = pinFromPointer({ x: e.clientX, y: e.clientY }, rect);
 
       const pinId = `pin-${blockId}-${_pinSeq++}`;
-      const pin = { id: pinId, xPct: +xPct.toFixed(2), yPct: +yPct.toFixed(2), text: '' };
+      const pin = { id: pinId, xPct, yPct, text: '' };
 
       renderPinOnOverlay(blockId, pin, /* readMode= */ false);
     });
@@ -2134,20 +2129,7 @@ function activateDefaultFacet() {
   if (!$zones.querySelector('.tab-nav')) return;   // 非 tab 模式
   const groups = groupBySection(_blocks, _sectionData);
 
-  // 深链：?facet=UI 设计 / ?facet=2（可分享某一面）
-  const want = params.get('facet');
-  if (want) {
-    const byName = groups.findIndex((g) => g.section === want);
-    const byIdx = Number.isInteger(Number(want)) ? Number(want) : -1;
-    const hit = byName !== -1 ? byName : (groups[byIdx] ? byIdx : -1);
-    if (hit !== -1) { activateFacet(hit); return; }
-  }
-
-  const draft = loadDraft();
-  let idx = groups.findIndex((g) => g.blocks.length && sectionPendingStats(g.blocks, draft).must > 0);
-  if (idx === -1) idx = groups.findIndex((g) => g.blocks.length);
-  if (idx === -1) idx = 0;
-  activateFacet(idx);
+  activateFacet(pickFacet(groups, params.get('facet'), loadDraft(), sectionPendingStats));
 }
 
 // 更新每个 tab 角标（未确认决策数 + 颜色：红=含必须、橙=只剩可接受、灰=已清零）
@@ -2156,74 +2138,24 @@ function updateFacetBadges() {
   if (!nav) return;
   const groups = groupBySection(_blocks, _sectionData);
   const draft = loadDraft();
-  groups.forEach((g, i) => {
+  facetBadges(groups, draft, sectionPendingStats).forEach((state, i) => {
     const badge = nav.querySelector(`.tab-badge[data-facet="${i}"]`);
     if (!badge) return;
-    const st = sectionPendingStats(g.blocks, draft);
-    badge.textContent = String(st.must + st.optional);
-    badge.className = `tab-badge tab-badge-${st.must > 0 ? 'must' : (st.optional > 0 ? 'optional' : 'done')}`;
+    badge.textContent = String(state.count);
+    badge.className = `tab-badge tab-badge-${state.level}`;
   });
 }
 
 async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfReportSelection()) {
-  // 构造 items
-  const items = Object.entries(draft).map(([blockId, item]) => {
-    const entries = [];
-    if (item.verdict) entries.push({ blockId, type: 'verdict', value: item.verdict, comment: item.comment });
-    else if (item.select) entries.push({ blockId, type: 'select', value: item.select, comment: item.comment });
-    else if (item.text) entries.push({ blockId, type: 'text', value: item.text, comment: item.comment });
-    // 看了但不改（P2 · 病例 5）：与"没看"(unanswered) 语义区分
-    else if (item.confirmed === true) entries.push({ blockId, type: 'confirm', value: '保持原样', comment: item.comment });
-    if (item.comment && !item.verdict && !item.select && !item.text && item.confirmed !== true) {
-      entries.push({ blockId, type: 'comment', value: null, comment: item.comment });
-    }
-    // embed 飞书式评论 → 每条有文本的评论产生一条 feedback item
-    if (Array.isArray(item.comments)) {
-      item.comments.forEach((c) => {
-        if (c && c.text) {
-          entries.push({ blockId, type: 'pin', value: { quote: c.quote }, comment: c.text });
-        }
-      });
-    }
-    // checklist 三态 → 每个 item 产生一条 select feedback，value = 'itemId:label'
-    if (item.checklistItems && typeof item.checklistItems === 'object') {
-      Object.entries(item.checklistItems).forEach(([itemId, label]) => {
-        if (label) {
-          entries.push({ blockId, type: 'select', value: `${itemId}:${label}` });
-        }
-      });
-    }
-    // 原型控件移动（编辑模式）→ 每个被拖过的控件产生一条 move feedback（含归一化几何）
-    if (item.moves && typeof item.moves === 'object') {
-      Object.entries(item.moves).forEach(([widgetId, g]) => {
-        entries.push({ blockId, type: 'move', value: { widgetId, ...g } });
-      });
-    }
-    // prototype pin 批注 → 每条有文本的 pin 产生一条 pin feedback
-    if (Array.isArray(item.pins)) {
-      item.pins.forEach((pin) => {
-        if (pin && pin.text) {
-          entries.push({
-            blockId,
-            type: 'pin',
-            value: { xPct: pin.xPct, yPct: pin.yPct },
-            comment: pin.text,
-          });
-        }
-      });
-    }
-    return entries;
-  }).flat();
-
-  const payload = {
+  const payload = submitPayload({
     session: SESSION,
-    round: Number(currentRound),
+    round: currentRound,
     submittedAt: new Date().toISOString(),
-    items,
+    draft,
     unanswered,                                                    // = 需决策但"没看/未操作"（不含"看了不改"）
-    sessionComment: ($sessionComment?.value ?? '').trim() || null,  // 会话级留言（P1 · 病例 6）
-    ...(decision.report ? { selfReport: decision.report } : {}),
-  };
+    sessionComment: $sessionComment?.value ?? '',                  // 会话级留言（P1 · 病例 6）
+    selfReport: decision.report,
+  });
 
   const previousSubmitState = _submitState;
   setSubmitState('submitting');
@@ -2306,7 +2238,7 @@ async function advanceToRound(newRound) {
   _historyRoundsCacheKey = '';
   setSubmitState('ready');
   updateSessionLabel();
-  document.title = `第 ${newRound} 轮 — ${window.__WB_TITLE || 'Vibe Coding工作台'}`;
+  document.title = nextRoundTitle(newRound, window.__WB_TITLE);
   await loadAndRender();
   await refreshLatestDecisionState();
   await loadHistoryRounds();
@@ -2323,7 +2255,7 @@ async function bootstrap() {
   const resolvedLatest = await resolveLatestRound();
   if (resolvedLatest != null) _latestRound = resolvedLatest;
   if (currentRound == null) {
-    currentRound = resolvedLatest ?? 1;
+    currentRound = pickRound('', resolvedLatest);
     updateSessionLabel();
   }
   await loadAndRender();
@@ -2376,7 +2308,7 @@ async function pollStatus() {
       }
       _latestRound = latest;
     }
-    if (FOLLOW_LATEST && Number.isInteger(latest) && currentRound != null && latest > currentRound) {
+    if (FOLLOW_LATEST && shouldAdvance(currentRound, latest)) {
       await advanceToRound(latest);
       return;
     }
