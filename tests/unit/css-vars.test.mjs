@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const css = readFileSync(path.resolve(__dirname, '../../src/render/app.css'), 'utf8');
+const appCss = readFileSync(path.resolve(__dirname, '../../src/render/app.css'), 'utf8');
+const themeCss = readFileSync(path.resolve(__dirname, '../../src/render/theme.css'), 'utf8');
+const css = themeCss + '\n' + appCss;
 
 test('app.css 不得使用未定义的颜色变量（必须用 --color-*）', () => {
   const bad = css.match(/var\(--(bg|text|accent|border|accent-weak|surface|focus)[,)]/g) || [];
@@ -42,5 +44,29 @@ test('云端 worker 在线状态使用既有绿色状态变量', () => {
   assert.match(
     css,
     /\.status-worker-online\s*\{[^}]*--color-status-ok[^}]*\}/s,
+  );
+});
+
+
+// 2026-08-22 视觉与结构解耦：创始人问「视觉相关的是不是都和代码解耦」——
+// 当时答案是"没有，143 处字号硬编码在 app.css"。抽进 theme.css 后加这条守卫，
+// 免得以后又一点点漏回去。
+test('app.css 不得硬编码字号：视觉数值必须住在 theme.css', () => {
+  const hard = appCss.match(/font-size:\s*[0-9.]+px/g) || [];
+  assert.deepEqual(hard, [], `app.css 出现硬编码字号，应改用 theme.css 的 --fs-* 令牌：${hard.join(', ')}`);
+});
+
+test('theme.css 提供整体缩放与版心两个常用旋钮', () => {
+  assert.match(themeCss, /--ui-scale:\s*[\d.]+/, '应有 --ui-scale 整体字号缩放');
+  assert.match(themeCss, /--content-max:/, '应有 --content-max 版心宽度');
+  assert.match(themeCss, /--fs-tab:/, '应有 --fs-tab 分面导航条字号');
+});
+
+test('抗锯齿按屏幕密度分开：1 倍屏不强制灰度抗锯齿', () => {
+  // 灰度抗锯齿在 1 倍屏上会削细中文笔画，观感发"扁"（创始人 2026-08-22 反馈）
+  assert.match(themeCss, /@media \(min-resolution: 2dppx\)/, '应有高密度屏媒体查询');
+  assert.ok(
+    !/^\s*-webkit-font-smoothing/m.test(appCss),
+    'app.css 不应无条件写死 -webkit-font-smoothing',
   );
 });

@@ -79,7 +79,7 @@ const SRC_ROOT = path.resolve(__dirname, '..');
 // 渲染页只就地换内容、从不重载 JS——老标签页会永远跑老代码（已修故障会"复发"）。
 // 页面每 3s 轮询 /api/status 比对此版本，变了就整页自刷新（草稿在 localStorage，无损）。
 const ASSET_VERSION_FILES = [
-  'render/index.html', 'render/app.mjs', 'render/app.css',
+  'render/index.html', 'render/app.mjs', 'render/app.css', 'render/theme.css',
   'render/blocks.mjs', 'render/vendor/mermaid.min.js',
 ];
 export function assetsVersion() {

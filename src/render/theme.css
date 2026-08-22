@@ -1,0 +1,118 @@
+/* ============================================================================
+   theme.css —— 工作台的全部视觉旋钮
+   ----------------------------------------------------------------------------
+   规矩：**所有跟"好不好看"有关的数值都住在这个文件里**——颜色、字体、字号、
+   行高、间距、圆角、正文列宽。app.css 只负责布局与结构，一律 var() 引用这里。
+
+   想调整外观，改这里就够了，不用进 app.css 翻 2700 行。常用的三个：
+     --ui-scale       整体字号缩放（觉得字小就 1.05 / 1.1，字大就 0.95）
+     --content-max    正文列宽
+     --fs-tab         中间那条分面导航条的字号
+   ============================================================================ */
+
+:root {
+  /* ── 0. 固定亮色 ────────────────────────────────────────────────────────
+     不跟随系统配色。连表单控件一起锁住，避免系统暗色给 select/input 套深色。 */
+  color-scheme: light only;
+
+  /* ── 1. 整体缩放 ────────────────────────────────────────────────────────
+     下面所有字号都乘这个数。想让全站字大一圈就调到 1.06，不用逐条改。 */
+  --ui-scale: 1;
+
+  /* ── 2. 字号阶梯 ─────────────────────────────────────────────────────── */
+  --fs-3xs:  calc(10px   * var(--ui-scale));   /* 角标、极小徽章 */
+  --fs-2xs:  calc(11px   * var(--ui-scale));   /* 眉标、字距标签 */
+  --fs-xs:   calc(12.5px * var(--ui-scale));   /* 辅助说明 */
+  --fs-sm:   calc(13.5px * var(--ui-scale));   /* 次要正文、按钮 */
+  --fs-md:   calc(14.5px * var(--ui-scale));   /* 块描述 */
+  --fs-base: calc(16px   * var(--ui-scale));   /* 正文基准 */
+  --fs-lg:   calc(17.5px * var(--ui-scale));
+  --fs-xl:   calc(19px   * var(--ui-scale));
+  --fs-2xl:  calc(21px   * var(--ui-scale));   /* 区块标题 */
+  --fs-3xl:  calc(25px   * var(--ui-scale));
+
+  /* 组件专用字号（经常单独调的几个，单拎出来） */
+  --fs-tab:         calc(15px * var(--ui-scale));  /* 分面导航条 */
+  --fs-block-title: var(--fs-2xl);                 /* 条款标题 */
+  --fs-zone-title:  var(--fs-base);                /* 区标题 */
+
+  /* ── 3. 行高与字距 ───────────────────────────────────────────────────── */
+  --lh-body: 1.78;      /* 中文方块字在 1.5 下会挤成一堵墙 */
+  --lh-prose: 1.85;     /* 长段说明文字 */
+  --lh-tight: 1.5;      /* 标题 */
+  --ls-body: .006em;
+
+  /* ── 4. 字体栈 ───────────────────────────────────────────────────────────
+     必须显式点名中文字体。只写 -apple-system / system-ui 会让中文听天由命，
+     可能兜底到又宽又扁的 Heiti SC —— 这是"字看着扁"的第一来源。 */
+  --font-sans: -apple-system, "system-ui", "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+               "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC",
+                "SimSun", Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+               "PingFang SC", monospace;
+
+  /* PingFang SC 最粗只到 Semibold(600)。写 700/800 时浏览器不会为中文合成假粗体，
+     而是直接落回 600 —— 实测 600 与 700 的字形包围盒完全一致，"加粗"是白写的。
+     所以全站封顶 600，层级改用字号 + 颜色 + 留白拉开。 */
+  --fw-strong: 600;
+
+  /* ── 5. 版心 ─────────────────────────────────────────────────────────────
+     跟着窗口放大、带上下限。720px 是纯中文正文的舒适下限（一行 ~45 字）；
+     但本页大部分是表格、利弊两栏、嵌入原型，这些吃宽度，所以随窗口放到
+     72vw、封顶 1180px；外层 min(…,100%) 兜住窄窗口防横向溢出。 */
+  --content-max: min(clamp(720px, 72vw, 1180px), 100%);
+
+  /* ── 6. 颜色 ─────────────────────────────────────────────────────────── */
+  --color-bg: #ffffff;
+  --color-bg-subtle: #faf9f7;   /* 隔行底/代码块底：画布是纯白，浅底要单独给 */
+  --color-surface: #ffffff;
+  --color-text: #16181d;
+  --color-text-muted: #6b655c;
+  --color-border: #ebe8e3;      /* 暖中性发丝线，配衬线标题不刺眼 */
+  --color-border-strong: #cfc9c0;
+  --color-focus: #16181d;       /* 主操作 = 黑，不用高饱和蓝 */
+
+  /* 注意力分区强调色 —— 只保留语义，不做大面积色条 */
+  --color-zone-a: #d92d20;      /* 区A：需定·无预设 */
+  --color-zone-b: #b54708;      /* 区B：需定·有推荐 */
+  --color-zone-cr: #6b655c;     /* 区CReview：重要默认 */
+  --color-zone-cf: #b0a99e;     /* 区CFyi：普通默认 */
+
+  --color-new: #067647;
+  --color-changed: #b54708;
+
+  --color-status-ok: #067647;
+  --color-status-warn: #b54708;
+  --color-status-err: #d92d20;
+  --color-status-info: #16181d;
+
+  /* 对话内嵌决策卡：保持深色、紧凑的临时决策层级 */
+  --color-ask-bg: #172033;
+  --color-ask-surface: #202c43;
+  --color-ask-text: #f8fafc;
+  --color-ask-muted: #aab6ca;
+  --color-ask-border: #34445f;
+
+  /* ── 7. 形状与间距 ───────────────────────────────────────────────────── */
+  --radius: 2px;
+  --bar-width: 4px;
+  --shadow: none;
+
+  --block-pad-y: 34px;          /* 条款上下留白 */
+  --block-pad-y-end: 38px;
+  --panel-pad-top: 40px;
+  --zone-gap: 40px;             /* 区标题上方留白 */
+}
+
+/* ── 8. 字体渲染：按屏幕像素密度分开处理 ───────────────────────────────────
+   灰度抗锯齿（antialiased）在 2 倍屏上让中文更清爽；但在 1 倍屏上会把笔画
+   削细削淡，中文笔画多，一细就糊成一片 —— 观感正是"扁"。
+   所以只在高密度屏开它，1 倍屏保持系统默认的次像素渲染（笔画更实）。 */
+@media (min-resolution: 2dppx) {
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
