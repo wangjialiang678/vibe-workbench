@@ -7,7 +7,9 @@ import {
   listSessions, listRounds,
 } from '../workspace.mjs';
 import { getSession, getSessionId, setSessionId, getCwd } from './session-store.mjs';
-import { resolveAgent, runAgent } from './agent-exec.mjs';
+import { configuredAgentName, driverHelp, resolveAgent, runAgent } from './agent-exec.mjs';
+
+export { configuredAgentName } from './agent-exec.mjs';
 
 const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
 
@@ -109,9 +111,7 @@ export async function processRound(session, round, { driver } = {}) {
       : 'subscription';
 
     // 按 DESIGN §13 P1：按 kind 写 userMessage/suggestedAction
-    const configuredAgent = typeof process.env.WORKBENCH_AGENT === 'string'
-      ? process.env.WORKBENCH_AGENT.trim().toLowerCase()
-      : '';
+    const configuredAgent = configuredAgentName();
     const activeAgent = err.agent || configuredAgent || null;
     const { userMessage, suggestedAction } = kindToUserFacing(kind, activeAgent);
 
@@ -128,31 +128,6 @@ export async function processRound(session, round, { driver } = {}) {
 
     // 不再抛出（单轮异常不拖垮进程）
     return { status: 'error', driverSource };
-  }
-}
-
-function driverHelp(agent) {
-  switch (agent) {
-    case 'claude':
-      return {
-        name: 'Claude Code',
-        action: '请确认 `claude` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
-      };
-    case 'workbuddy':
-      return {
-        name: 'WorkBuddy',
-        action: '请确认 `codebuddy` 命令或 `WORKBENCH_WORKBUDDY_BIN` 配置可用，问题修复后无需重试（会自动处理）。',
-      };
-    case 'codex':
-      return {
-        name: 'Codex',
-        action: '请确认 `codex` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
-      };
-    default:
-      return {
-        name: 'AI',
-        action: '请确认 Claude Code、WorkBuddy 或 Codex CLI 已安装，或正确设置 `WORKBENCH_AGENT`。',
-      };
   }
 }
 

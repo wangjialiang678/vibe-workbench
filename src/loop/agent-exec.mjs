@@ -185,6 +185,48 @@ function unavailableMessage() {
 }
 
 /**
+ * 读取显式配置的 agent 名称，并维持各调用方一致的小写归一规则。
+ * 未配置时返回空字符串；合法性仍由 resolveAgent 统一校验。
+ *
+ * @param {NodeJS.ProcessEnv|Record<string, string|undefined>} [env]
+ * @returns {string}
+ */
+export function configuredAgentName(env = process.env) {
+  const configuredAgent = env.WORKBENCH_AGENT;
+  return typeof configuredAgent === 'string' ? configuredAgent.trim().toLowerCase() : '';
+}
+
+const DRIVER_HELP = {
+  claude: {
+    name: 'Claude Code',
+    action: '请确认 `claude` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
+  },
+  workbuddy: {
+    name: 'WorkBuddy',
+    action: '请确认 `codebuddy` 命令或 `WORKBENCH_WORKBUDDY_BIN` 配置可用，问题修复后无需重试（会自动处理）。',
+  },
+  codex: {
+    name: 'Codex',
+    action: '请确认 `codex` 命令在 PATH 中可用，配置问题修复后无需重试（会自动处理）。',
+  },
+};
+
+const DEFAULT_DRIVER_HELP = {
+  name: 'AI',
+  action: '请确认 Claude Code、WorkBuddy 或 Codex CLI 已安装，或正确设置 `WORKBENCH_AGENT`。',
+};
+
+/**
+ * 返回指定驱动的面向用户排障文案。
+ *
+ * @param {string|null} agent
+ * @returns {{ name: string, action: string }}
+ */
+export function driverHelp(agent) {
+  return Object.hasOwn(DRIVER_HELP, agent) ? DRIVER_HELP[agent] : DEFAULT_DRIVER_HELP;
+}
+
+/**
  * 解析本轮 agent 与二进制。显式参数优先于 WORKBENCH_AGENT。
  * 未配置时依次探测 PATH claude、WorkBuddy、PATH codex。
  *
@@ -205,7 +247,9 @@ export function resolveAgent({
   isExecutable: isExecutableImpl = isExecutable,
 } = {}) {
   const configuredAgent = requestedAgent ?? env.WORKBENCH_AGENT;
-  const normalized = typeof configuredAgent === 'string' ? configuredAgent.trim().toLowerCase() : '';
+  const normalized = requestedAgent === undefined || requestedAgent === null
+    ? configuredAgentName(env)
+    : (typeof configuredAgent === 'string' ? configuredAgent.trim().toLowerCase() : '');
 
   if (normalized) {
     if (!AGENTS.has(normalized)) {
