@@ -93,12 +93,15 @@ function incompleteChoice(id = 'incomplete-choice') {
 }
 
 // ---- health ----
-test('GET /api/health returns ok:true', async () => {
+test('GET /api/health returns health and deployment version fields', async () => {
   const res = await fetch(url('/api/health'));
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.ok(typeof body.ts === 'number' || typeof body.ts === 'string');
+  const packageInfo = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+  assert.equal(body.version, packageInfo.version);
+  assert.equal(typeof body.commit, 'string');
 });
 
 test('近似 participants 路径不得被前缀吞掉，必须及时返回 404', async () => {

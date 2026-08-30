@@ -116,6 +116,12 @@ function equal(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function withoutExpectedChanges(response, expectedChange) {
+  if (expectedChange !== 'health-version-fields' || !response.body || typeof response.body !== 'object' || Array.isArray(response.body)) return response;
+  const { version, commit, ...body } = response.body;
+  return { ...response, body };
+}
+
 function request(baseUrl, spec) {
   return new Promise((resolve) => {
     const requestUrl = new URL(spec.path, baseUrl);
@@ -198,6 +204,8 @@ function endpointCases() {
   ];
   return identities.flatMap((identity) => cases.map(([method, requestPath, body, headers]) => ({
     identity, method, path: requestPath, body, headers, write: method !== 'GET',
+    // 第 5 期唯一允许的协议变化：health 新增部署可调试字段。
+    expectedChange: method === 'GET' && requestPath === '/api/health' ? 'health-version-fields' : null,
   })));
 }
 
@@ -249,8 +257,8 @@ async function compareRequest(pair, baseUrl, workUrl, baseFixture, workFixture, 
   const before = pair.write ? await Promise.all([treeSnapshot(baseFixture), treeSnapshot(workFixture)]) : null;
   const [baseResult, workResult] = await Promise.all([request(baseUrl, pair), request(workUrl, pair)]);
   const after = pair.write ? await Promise.all([treeSnapshot(baseFixture), treeSnapshot(workFixture)]) : null;
-  const baseline = normalResponse(baseResult);
-  const working = normalResponse(workResult);
+  const baseline = withoutExpectedChanges(normalResponse(baseResult), pair.expectedChange);
+  const working = withoutExpectedChanges(normalResponse(workResult), pair.expectedChange);
   if (injectDifference) working.body = { injected: 'known self-test difference' };
   const differences = [];
   if (baseline.termination === 'timeout' || working.termination === 'timeout') differences.push('hard timeout');

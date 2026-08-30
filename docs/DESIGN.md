@@ -1,502 +1,212 @@
-# DESIGN — 通用人机交互层（vibecoding 工作台）
+# DESIGN — Vibe Workbench 当前架构
 
-> 交互体验设计师视角的完整设计。配套 [PRD.md](PRD.md)。本文件是实现的权威规格（schema / 算法 / 文件契约 / UI 状态全部具体到可实现）。
+> 本文描述已落地的工作台及其明确的运行边界。它从零开始可读；历史评审、迁移过程和已作废的增量说明留在 `docs/design/`，不再以“覆盖前文”的方式改变本文件。
 
-## 0. 设计目标（体验优先级）
+## 1. 产品与硬约束
 
-1. **编排注意力 > 渲染内容**：用户注意力是最稀缺资源。默认正确的下沉、需决策的上浮、无推荐的最先（FR-7）。
-2. **不丢、不黑洞**：提交永不丢失；AI 侧任何异常用户都能从网页看到状态并自救（FR-6）。
-3. **多轮不迷路**：每轮清楚标出"哪些是新的/变了的"（FR-8）。
-4. **按语义选表达**：架构→图、流程→时序、选择→控件，而非纯文本（D5）。
-5. **零依赖、可自举**：前端零框架、后端零依赖，复用已验证积木。
+Vibe Workbench 把 AI 的一轮思考保存为可交互网页。用户在网页中选择、批注或改写，反馈先安全落盘；AI 可以由人工继续，也可以由受控的执行面续跑。
 
----
+- 文件系统是事实源；`workspace/<session>/round-<n>/` 中的文件足以恢复一轮状态。
+- Node ≥20、ESM、零运行时依赖。服务端只使用 Node 内置模块，浏览器直接加载原生 ESM。
+- 前端固定亮色，`theme.css` 是全部视觉数值的唯一来源；`app.css` 只引用令牌。
+- 默认安全：公网监听必须设置 `WORKBENCH_TOKEN`；参与者只看获授权的块和反馈。
+- `WB_CLOUD_AI` 默认 `off`。关闭自动执行不影响 present、查看和 feedback 落盘。
 
-## 1. 目录结构
+## 2. 五层结构与依赖方向
 
-```
-vibecoding 工作台/
-├── docs/                 PRD.md · DESIGN.md · design/scenarios.md · test-plan.md · dev-log.md · feedback-log.md
-├── src/
-│   ├── protocol/         schema.mjs(校验) · diff.mjs(轮次diff) · attention.mjs(注意力路由排序)
-│   ├── server/           server.mjs(零依赖 HTTP + API)
-│   ├── loop/             listener.mjs(异步唤醒+对账) · claude-exec.mjs(驱动 claude -p --resume) · session-store.mjs
-│   └── render/           (前端) index.html · app.mjs · blocks.mjs(各 block 渲染) · attention-view.mjs · diff-view.mjs · status-bar.mjs · app.css
-│       └── vendor/       mermaid.min.js（从 prd-studio 复制，本地化）
-├── templates/            think-discuss.mjs · dev-review.mjs（模板=block 组合工厂）
-├── workspace/            运行时数据（gitignore）：<session>/round-<n>/...
-├── tests/                unit/ · e2e/
-├── bin/                  workbench.mjs（CLI：起 server+listener、渲染一轮、等待）
-└── package.json
+```text
+protocol/  ← 纯协议、校验、diff、注意力路由、状态显示
+    ↑
+storage/   ← 工作台文件读写、轮次独占、反馈历史、认领
+    ↑
+core/      ← 只保留跨入口且有不变量的用例（当前为 presentRound）
+    ↑
+adapters/  ← HTTP server / CLI / feedback listener / inbox 路由
+    │
+render/    ← 浏览器端；仅依赖 render/ 与 protocol/
 ```
 
-技术栈：Node ≥20 ESM、零运行时依赖（仅内置 http/fs/path/crypto + 测试用 node:test）。前端原生 JS + 本地 mermaid。
+这是中间态，而不是全量六边形架构。简单读取接口（例如读 status、content）可由 server adapter 直接调 storage；只有必须统一不变量的动作才进入 core。禁止让 render 依赖 server/storage，也禁止 routes 反向 import `server.mjs`。
 
----
+| 层 | 责任 | 主要位置 |
+|---|---|---|
+| protocol | 不触碰 DOM、网络和文件系统的共享计算 | `src/protocol/` |
+| storage | 唯一常规 workspace 文件出口；固化写入顺序与原子认领 | `src/storage/index.mjs` |
+| core | 跨 CLI、HTTP、loop 共用的薄用例 | `src/core/present.mjs` |
+| adapters | 把 HTTP、命令行、定时扫描等输入转成用例或 storage 调用 | `src/server/`、`bin/`、`src/loop/` |
+| render | 把协议内容变成浏览器 DOM，保存本地草稿 | `src/render/` |
 
-## 2. 内容协议（核心 · FR-1）
+`tests/guards/layering.test.mjs` 检查 render 依赖与 src import 环；`tests/guards/fs-boundary.test.mjs` 将 `node:fs` 收敛到 storage 和少数明确边界（CLI、静态资产、部署元数据等）。
 
-### 2.1 一轮内容 `content.json`
+## 3. 协议：一轮内容与反馈
+
+一轮的权威内容是 `content.json`；`content.md` 是同一内容的人读副本。跨轮同一议题必须复用 block id，diff 才能识别它是新增、变更还是未变。
 
 ```jsonc
 {
-  "session": "ses_xxx",          // 会话 id（= 一条人机对话线）
-  "round": 2,                    // 轮次，从 1 起
-  "prevRound": 1,                // 上一轮号，用于 diff；首轮为 0
+  "session": "ses_example",
+  "round": 2,
+  "prevRound": 1,
   "title": "本轮主题",
-  "template": "think-discuss",   // think-discuss | dev-review | null(即兴)
-  "createdAt": "ISO",
-  "blocks": [ Block, ... ]
+  "blocks": [{
+    "id": "b-decision",
+    "type": "choice",
+    "body": "需要拍板的问题",
+    "needsDecision": true,
+    "hasRecommendation": true,
+    "recommendation": "safe",
+    "importance": "high",
+    "options": [{ "id": "safe", "label": "稳妥方案" }]
+  }]
 }
 ```
 
-并行落 `content.md`（人读/单一信息源，由 blocks 线性序列化）。
+`schema.mjs` 校验内容，`lint.mjs` 对决策卡给出作者侧建议，`diff.mjs` 计算 `_change`，`attention.mjs` 将块稳定地路由到：需决策无推荐、需决策有推荐、仅供了解三个区域。block 类型由 `protocol/block-types/` 注册；渲染层不自行定义协议语义。
 
-### 2.2 Block 通用结构
+反馈由 `POST /api/feedback` 接收，含 block 选择、评语、改写、总评和未答项。服务端按身份校验可见 block：参与者不能提交未授权或不存在的 block；owner 保留历史兼容视图。
 
-```jsonc
-{
-  "id": "b-decision-trigger",    // 跨轮稳定 id（diff 依赖；同一议题保持同 id）
-  "type": "markdown",            // 见 2.3
-  "section": "架构",             // 可选：tab 分面类目（§15）；任一块带 section 即启用 tab 导航
-  "title": "可选标题",
-  "body": "...",                 // markdown / mermaid 源 / 提示文案（按 type 释义）
+## 4. 存储：文件就是恢复点
 
-  // —— 注意力元数据（FR-7，渲染器据此分区排序）——
-  "needsDecision": false,        // 是否需要用户做决策/操作
-  "hasRecommendation": false,    // 是否带推荐答案/默认
-  "recommendation": null,        // 推荐值（optionId / 文本 / verdict）
-  "importance": "normal",        // high | normal | low
-  "default": null,               // 预填默认（无需决策项的既定值，用户同意即跳过）
-  "assignee": null,              // 可选责任人 ID；省略/null/空串=公共块；参与者按卡可见
-
-  // —— 类型特定字段见 2.3 ——
-
-  // —— diff 字段（FR-8，运行时计算，作者不填）——
-  "_change": "unchanged"         // new | changed | unchanged
-}
-```
-
-### 2.3 Block 类型与字段
-
-| type | 额外字段 | 渲染 | 可反馈 |
-|---|---|---|---|
-| `markdown` | — | markdown→HTML | 评论 |
-| `diagram` | `lang:"mermaid"`, `body`=源 | mermaid→SVG，下方可折叠 `rationale` | verdict + 评论 |
-| `choice` | `options:[{id,label,desc?}]`, `multi:bool`, `recommendation:optionId` | 单/多选控件，推荐项标「推荐」 | select(必填若 needsDecision) + 评论 |
-| `verdict` | — | ✓赞成/✗异议/?疑问 三按钮 | verdict + 评论 |
-| `freetext` | `placeholder?` | 文本输入框 | text + 评论 |
-| `editable` | `value`(markdown), `editable:true` | 就地可编辑文档块（textarea/contenteditable，保存为新 value） | edit + 评论 |
-| `table` | `columns:[], rows:[[]]` | 表格 | 评论 |
-| `code` | `lang`, `body` | 代码块（高亮） | 评论 |
-
-评论层（comment）对所有 block 通用：每块右侧「+批注」。
-
-### 2.4 反馈 `feedback.json`
-
-```jsonc
-{
-  "session":"ses_xxx", "round":2, "submittedAt":"ISO",
-  "items":[
-    {"blockId":"b-x","type":"select","value":"opt-2","comment":"理由…"},
-    {"blockId":"b-y","type":"verdict","value":"疑问","comment":"…"},
-    {"blockId":"b-z","type":"edit","value":"用户改写后的 markdown"},
-    {"blockId":"b-w","type":"comment","value":null,"comment":"批注…"}
-  ],
-  "summary":"总评（可选）",
-  "unanswered":["b-y"]       // 可选；服务端按当前身份可见 block 集合过滤
-}
-```
-
-服务端并写 `feedback.md`（人读）。
-参与者只能看到当前轮 content 中已知且对自己可见 block 的 `items`/`unanswered`；未知 block ID 的参与者写入直接拒绝，当前 content 缺失或无效时不返回 feedback。owner 视图保留历史反馈中的未知 ID。
-
----
-
-## 3. 渲染器（FR-2）
-
-- `blocks.mjs`：导出 `renderBlock(block) -> HTMLElement`，按 type 分派；纯函数、无副作用、可单测（jsdom-free：用字符串/DOM 断言）。
-- markdown：Markdown 是持久化的单一信息源，浏览器按需派生安全 HTML；内置 md→HTML 支持标题/列表/粗体/代码/换行/链接/图片和 GFM 表格（含对齐与窄屏横向滚动），避免外部依赖。
-- diagram：输出 `<pre class="mermaid">{src}</pre>`，页面加载后 `mermaid.run()`；`rationale` 折叠。
-- choice/verdict/freetext/editable：受控控件，状态写入 localStorage 草稿（键 `wb:<session>:<round>:fb`）。
-- 每个 block 外层带 `data-block-id`、`data-change`（diff）、`data-zone`（注意力分区）。
-
----
-
-## 4. 注意力路由（FR-7 · 分区排序算法）
-
-`attention.mjs` 导出 `routeBlocks(blocks) -> { zoneA, zoneB, zoneC }`：
-
-```
-zoneA = blocks.filter(b => b.needsDecision && !b.hasRecommendation)   // 需决策·无推荐：最先
-zoneB = blocks.filter(b => b.needsDecision &&  b.hasRecommendation)   // 需决策·有推荐
-zoneC = blocks.filter(b => !b.needsDecision)                          // 已设默认·FYI
-```
-
-- 区内排序：`importance` 降序（high>normal>low），同级 **稳定排序**（保留作者顺序）。
-- 渲染：
-  - **区 A**：页面顶部，醒目（左侧红条 + 「需你定·无预设」徽章）。
-  - **区 B**：其次（左侧橙条 + 「需你定·有推荐」徽章，推荐项预选浅色高亮）。
-  - **区 C**：底部折叠区「已为你设好默认（N 项）· 展开查看」，默认收起。
-- 顶部状态条显示：`需你决策 X 项（其中 Y 项无预设）`，点击锚点跳转区 A。
-- 单测点：给定混合 blocks，断言三区归属与区内排序正确。
-
----
-
-## 5. 轮次差异 Diff（FR-8）
-
-`diff.mjs` 导出 `computeDiff(curBlocks, prevBlocks) -> curBlocks(带 _change)`：
-
-```
-对每个 cur block 按 id 在 prev 中查找：
-  无 → _change="new"
-  有 → 比较内容指纹 hash(type+title+body+options+recommendation+default)
-        不同 → "changed"；相同 → "unchanged"
-```
-
-- 指纹用 `crypto.createHash('sha1')`，稳定序列化字段。
-- 渲染：`new`→绿色「NEW」徽章；`changed`→橙色「CHANGED」徽章 + 可展开「看上轮」对照；`unchanged`→无徽章。
-- 顶部开关「只看变更」：过滤仅显示 new/changed（解决"老内容淹没新内容"）。
-- prevBlocks 来源：`workspace/<session>/round-<prevRound>/content.json`。
-- 单测点：增、改、删、未变四种情形 _change 正确；只看变更过滤正确。
-
----
-
-## 6. 容错与恢复（FR-6 · 状态机 + 文件契约）
-
-### 6.1 每轮状态机（`status.json`）
-
-```
-rendered ──(用户POST)──► submitted ──(listener认领写ack)──► claimed ──(AI写response)──► responded
-                              │                                              │
-                              │                                       (AI异常写error)
-                              └──────────────────────────────────────────► error
-listener 心跳过期 ⇒ 前端显示 offline（提交已存，恢复后自动处理；非独立状态，由心跳新鲜度推导）
-```
-
-`workspace/<session>/status.json`：
-```jsonc
-{ "session":"ses_x","round":2,"state":"submitted",
-  "heartbeatAt":"ISO",            // listener 每 10s 刷新
-  "error":null,                   // error 状态时填 {message, at}
-  "updatedAt":"ISO" }
-```
-
-### 6.2 文件契约（异步唤醒回路核心）
-
-```
+```text
 workspace/<session>/
-  session.json                 { session,title,projectId?,kind,status,...执行器兼容字段 }
-  status.json                  当前状态 + 心跳
+  session.json                    会话与项目元数据
+  status.json                     当前轮状态、心跳、错误
   round-<n>/
-    content.json / content.md  AI 渲染的一轮（state=rendered）
-    feedback.json / .md        用户提交（state=submitted；持久，不删）
-    ack.json                   listener 认领凭证 { claimedAt, pid }（幂等锁）
-    response.md                AI 续跑产出（state=responded）→ 同时生成 round-<n+1>/content.*
-    error.json                 AI 异常 { message, at }（state=error）
+    content.json / content.md     AI 呈现内容
+    feedback*.json / feedback*.md 反馈主件、参与者件、历史件
+    ack.json                      机 A 的原子认领凭证
+    response.md                   driver 的可读输出
+    error.json                    本轮执行错误
 ```
 
-### 6.3 自愈与对账
+storage 的关键不变量如下。
 
-- **持久 + 幂等**：feedback.json 落盘即 durable；listener 认领前先写 ack.json（存在则跳过，防重复处理）。
-- **启动对账（reconcile）**：listener 启动时扫描所有 `round-*/feedback.json` 且无 `ack.json`、无 `response.md` 的轮 → 补处理。崩溃重启自动补上。
-- **监管自愈**：`bin/workbench.mjs` 以子进程方式起 listener，监测退出码 → 自动重启（≤N 次）；listener 内部 try/catch 单轮异常 → 写 error.json，不拖垮进程。
-- **心跳**：listener 每 10s 写 `status.heartbeatAt`；前端轮询发现 `now - heartbeat > 30s` → 显示 🔴 离线。
+- `createRound` 以目录创建占位，同一 session/round 永不覆盖；冲突返回 `ROUND_EXISTS`。
+- `appendFeedback` 先写带时间戳的历史件，再写主反馈和 status，因此反馈不因后一次提交而丢失。
+- 反馈驱动认领使用 rename 竞争；两个 worker 同时处理一轮时只有一个赢家。
+- inbox 任务同样使用临时文件和 rename 维护租约，是独立队列状态机的原子写范本。
+- 存储错误保留真实 errno，adapter 再映射为 HTTP 响应，不能伪装成“JSON 无效”。
 
-### 6.4 网页状态徽章 + 恢复动作
+## 5. Core 与三个适配入口
 
-`status-bar.mjs` 轮询 `GET /api/status?session=` 每 3s，显示：
-- 🟢 在线（监听中）/ 🟡 处理中（claimed）/ 🔵 已回复（responded，提示"已生成新一轮，点击查看"）/ 🔴 AI 离线（提交已保存，恢复后自动处理）/ ⚠️ 出错（显示 error.message + 「重试」）
-- **重试按钮**：`POST /api/retry?session=&round=` → 删除该轮 ack.json/error.json、状态回 submitted → listener（或重启后对账）重新处理。用户全程不需回 IDE。
+`presentRound` 是当前 core 用例：校验 content、委托 `storage.createRound`、返回 session 与 round。CLI `workbench present`、HTTP `POST /api/rounds` 以及 listener 生成下一轮都走它，因此三条路径共享“不得覆盖”的规则。
 
-### 6.5 mermaid 渲染容错（2026-08-13，线上双故障修复后的固定契约）
+反馈提交的权限校验和 HTTP 形状仍在 server adapter；它调用 storage 的三步持久化事务。除非出现第二个需要共享这一用例的入口，不为了形式额外建立一层空壳。
 
-**病史**（两个真实线上故障，长期被误读为"图语法错"）：
-1. **炸弹图**：旧实现 `mermaid.run()` 在元素内**就地渲染**。图块带 `section` 被分进非默认 tab 时，容器 `display:none`（零尺寸），mermaid 的边标签定位算法崩溃（真实错误 `Could not find a suitable point for the given distance`）——但 mermaid 把一切错误统一显示为 **"Syntax error in text"** 炸弹图。图源码本身能过 `mermaid.parse`，作者按"语法错误"排查必然南辕北辙。
-2. **图裸奔**：`vendor/mermaid.min.js` 异步加载。内容先渲染完时 `window.mermaid` 不存在，旧代码 `if (window.mermaid)` 静默跳过且无人补渲染。
+| 适配器 | 输入 | 输出/职责 |
+|---|---|---|
+| server | HTTP 请求、身份、速率/大小限制 | API、静态 render 页面、CORS、鉴权 |
+| CLI | `bin/workbench.mjs` 子命令 | present、wait、serve、up、文档发布 |
+| loop | `src/loop/listener.mjs` | 扫描可处理反馈、认领、调用注入的 driver、写回结果 |
+| inbox | `src/executor-inbox.mjs` + `/api/inbox/*` | 拉取型执行器的任务租约与状态推进 |
 
-**修复契约**（`app.mjs` 的 `renderMermaidDiagrams()`，回归锁在 `tests/unit/render.test.mjs`）：
-- 用 `mermaid.render(id, src)` **脱离容器渲染**，隐藏/零尺寸不影响；禁止回退到裸 `mermaid.run()`
-- 源码从 `pre.textContent` 取（`run()` 走 `innerHTML`+entityDecode，多一次实体往返）
-- 单图隔离 try/catch；失败时降级为 `.mermaid-fallback`：**真实错误一行 + 原始源码**，绝不让 mermaid 写入误导性炸弹
-- `index.html` 的 vendor onload 调 `window.__renderMermaidDiagrams()` 补渲染，双向覆盖脚本/内容的加载顺序
+HTTP 路由都是精确路径或明确带尾斜杠的前缀；近似路径必须 404，不能被 `startsWith` 吞掉。认证在路由匹配前执行，避免未知 API 成为鉴权侧信道。
 
-**排查口诀**：看到"Syntax error in text"先跑 `mermaid.parse(src)`——parse 能过就是**渲染期/环境问题**（容器尺寸、加载竞态），不是图的语法。
+## 6. 浏览器渲染与草稿
 
-### 6.6 长寿命页版本握手（2026-08-13，§6.5 修复"复发"的真因与根治）
+`src/render/app.mjs` 负责本轮加载、分区、提交、轮询和交互绑定；`blocks.mjs` 负责 block DOM；`*-view.mjs`、`*-state.mjs` 将局部渲染和纯状态拆出。草稿存于 localStorage，键包含 session 和 round；刷新或前端自动更新不应丢失未提交内容。
 
-**病史**：§6.5 修复上线后用户页面炸弹图"复发"，且显示 **mermaid 10.9.1**（磁盘已是 11.15.0）——渲染页是**长寿命页**：每 3s 轮询新轮次、`advanceToRound()` 就地换内容，**从不重载 JS**。用户几天前打开的标签页永远跑老代码，服务端的 `Cache-Control: no-store` 帮不上忙（页面根本不发起 JS 请求）。**任何前端修复对已打开的旧标签页都不生效**——这是就地推进架构的固有代价。
+页面通过 `assetsVersion` 和版本化 import map 处理长寿命标签页：关键资源更新后页面会刷新到同一版本的 HTML、CSS、模块和本地 mermaid。mermaid 使用脱离隐藏容器的 `mermaid.render`，单图失败时显示真实错误与原文，不把渲染期错误伪装成语法错误。
 
-**根治（版本握手）**：
-- 服务端：`assetsVersion()` = 关键渲染资产（index.html/app.mjs/app.css/blocks.mjs/vendor mermaid）的最新 mtime，随 `GET /api/status` 每次返回
-- 页面：`pollStatus()` 首次播种版本号，之后比对——版本变了 → toast「工作台前端已更新，正在自动刷新」→ `location.reload()`（草稿全在 localStorage，刷新无损）
-- 自愈时延 ≤ 一个轮询周期（3s）+900ms
-- 回归锁：`tests/unit/render.test.mjs`「版本握手」契约测试
-- **边界**：本机制上线**之前**就已打开的旧标签页没有比对逻辑，无法自愈，需手动强刷一次；此后所有页面自愈
+`app.mjs` 仍是整合入口。它的进一步事件委托/抽薄是低优先级纯重构：只有能保持对拍零差异、并可补足行为测试时才做，不以压行数为目标。
 
-### 6.7 资产版本注入（2026-08-13，同日三连修之三——§6.5/§6.6 修复"送不达"的最终根治）
+## 7. 两套独立状态机
 
-**病史**：§6.6 上线后用户**新开页面**仍见 mermaid 10.9.1 炸弹。git 考古：`Cache-Control: no-store` 是后补的（239f22f），此前静态资源**无任何缓存头** → 浏览器按 RFC 启发式缓存规则存了旧 app.mjs/vendor，**在"启发式新鲜期"内不再询问服务器**——后补的响应头无法追溯清除已存条目，普通导航（非刷新）一直命中旧缓存。§6.5/§6.6 的修复因此永远送不进用户浏览器：**解药装在病人打不开的瓶子里**（版本握手代码本身就在被缓存的旧 app.mjs 里）。用户按 F5 后痊愈（reload 强制向服务器核对 → 拿到 no-store 新响应 → 旧条目被顶掉，该浏览器永久痊愈）。
+两者都保留，但不能混为一条链。
 
-**根治（改 URL 是唯一能击穿历史缓存的客户端无感手段）**：
-- `index.html` 服务端模板化：注入 `__WB_ASSETS_V__`（资产 mtime 版本）+ **import map**（render/*.mjs 与 ../protocol/*.mjs 全部映射到 `?v=版本`）
-- CSS/vendor/app.mjs 全部带 `?v=` 加载；app.mjs 用版本化动态 import（防无版本静态标签回退）
-- HTML 响应附 `Clear-Site-Data: "cache"`（支持的浏览器顺手清一次本源缓存；不支持则忽略，无害）
-- 未经服务端直接开文件时占位符回退 `Date.now()`
-- 回归锁：`render.test.mjs`「资产版本注入」契约测试
+### 机 A：反馈驱动的 AI 自动续跑
 
-**教训**：修复必须审视**送达链路**——渲染修复(§6.5)依赖新 JS 送达，送达机制(§6.6 握手)又装在 JS 里，而 JS 的送达被更底层的 HTTP 缓存卡死。三层同病一根：**长寿命/强缓存环境里，任何客户端修复的第一问是"它怎么到达用户"**。版本注入把送达锚定在唯一永远新鲜的 HTML 上，闭环。
-
----
-
-## 7. 异步唤醒回路（FR-4 · D7）
-
-时序（已在需求确认阶段实证）：
-```
-AI 渲染 content → 结束回合 + listener 监听 → 用户提交(POST→feedback.json,state=submitted)
-→ listener 检测→写 ack→ claude -p --resume <sid> "<结构化反馈>" → 写 response.md + 下一轮 content
-→ 更新 status=responded → 前端轮询到→提示查看
+```text
+feedback 已落盘且无 ack/response
+  → 原子认领 ack
+  → claimed
+  → driver 执行
+  → response + 下一轮 present
+  → responded
+              └→ error（可重试/冷启动对账）
 ```
 
-- **IDE 内**：listener 由 `bin/workbench.mjs` 拉起；它检测到 responded 也可（可选）通过控制台输出提醒主 Claude。MVP 内核心 = 文件契约，driver 可换。
-- **接入**：`claude-exec.mjs` 封装 `claude -p <prompt> --output-format stream-json [--resume <sid>]`，cwd=会话工作目录；首轮无 sid，从输出捕获 session_id 存 `session.json`，后续 --resume。
-- **超时兜底**：listener 对单轮处理设软超时，超时写 error，前端可重试。
-- **D3 阶段② hybrid 托底**：默认尝试从子进程环境移除 `ANTHROPIC_API_KEY`，使用 Claude CLI 的机器默认凭据；仅当该尝试非零退出或超时且环境存在 key 时，显式传 key 重试一次。状态落 `driverSource: "subscription" | "sdk-fallback"`；托底回复与状态区写固定中文标注。字段只证明工作台采用了哪条凭据尝试路径，不能从 CLI 外部证明最终认证来源或账单归属；当前没有直接接入 Anthropic SDK。子进程 stderr 进入错误状态前脱敏 `ANTHROPIC_API_KEY=...` 与 `sk-ant-...` 密钥串。
+- `workbench-continue`：listener 使用 Claude driver 产生工作台下一轮。
+- `code-exec`：常驻 worker 可在目标仓库执行 Codex、提交并写回回执；它不受 Anthropic 凭据开关支配。
+- subscription 模式执行 `claude -p --resume`，不注入 API key；apikey 模式仅向子进程注入从安全来源获得的 `ANTHROPIC_API_KEY`。凭据绝不写入 workspace、日志或 API 响应。
+- listener 启动时 reconcile：只凭文件扫描未完成轮即可继续，无需内存状态。
 
----
+### 机 B：inbox 任务队列
 
-## 8. Server API（`server/server.mjs`，零依赖）
+```text
+pending → claimed → done
+                  └→ failed
+claimed 超过租约 → pending
+```
 
-| 方法 路径 | 作用 |
+机 B 服务拉取型执行器，例如 `local-mac`、`github-actions` 或外部评审。事件先按会话项目的 executor 路由；resident 类型走机 A，pull/external-review 类型入对应 inbox。它有独立的认领、续租和完成 API，不能把 feedback 文件当 inbox 任务。
+
+## 8. 执行面开关矩阵
+
+统一开关是 `WB_CLOUD_AI=off|on`，缺省和任何非 `on` 值都等同 `off`。顾问或客户线上需要自动处理时显式设为 `on`；开关不影响基础协作闭环。
+
+| 场景 | `WB_CLOUD_AI=off`（默认） | `WB_CLOUD_AI=on` |
+|---|---|---|
+| present、内容读取、feedback 落盘 | 正常 | 正常 |
+| 机 A listener / 自动 driver | 不启动、不认领 | 扫描、认领、写 response 与下一轮 |
+| 机 B `/api/inbox/*` | 503“云端 AI 未启用” | 按权限和租约规则运行 |
+| control tower | 明示“未启用” | 展示实际执行状态 |
+| Anthropic 认证 | 不执行 | `WB_CLOUD_AI_AUTH=subscription`（默认）或 `apikey` |
+
+## 9. Health 与部署诊断
+
+`GET /api/health` 返回：
+
+```json
+{ "ok": true, "ts": 0, "version": "0.1.0", "commit": "unknown" }
+```
+
+`version` 在服务启动时从 `package.json` 读取。部署流程应在启动服务前执行 `node scripts/write-version.mjs [commit]`，将 commit 写进被 gitignore 的根目录 `version.json`；服务运行时只读取该文件，缺失或不可读时 `commit` 回退为 `"unknown"`。服务端**不得调用 git**。这是仅保留的部署可调试能力；不构建发布包、不做三机 SHA 对比、也不引入部署编排。
+
+## 10. 主要 HTTP 契约
+
+| 接口组 | 关键接口 |
 |---|---|
-| GET `/` 及静态 | 托管 src/render/ |
-| POST `/api/rounds` | 校验并独占写入新轮次；2 MiB 上限；重复 round 返回 409 |
-| GET/POST `/api/messages` | 读取会话流（支持 ID/时间 `since`）/ 以请求身份追加实名消息 |
-| POST `/api/stream-events` | 仅管理员以 AI 身份追加 `message` / `progress` / `receipt` |
-| POST `/api/attachments?session=` | 上传 ≤5 MiB PNG/JPEG/WebP/GIF/PDF 到该会话 `assets/uploads/` |
-| GET `/api/assets?session=&round=` | 列出会话资产；参与者默认只得到最新轮（指定 `round` 时为该轮）当前身份可见 block 可达的文件 |
-| GET `/api/content?session=&round=` | 返回该轮 content.json（含 diff `_change`，服务端注入）；参与者的 `removed` 与上一轮响应标记重新按身份校验 |
-| POST `/api/feedback` | owner 写 feedback.json/.md；参与者写 feedback-<id>.json 并给首份建立兼容桥；任一首份使 status=submitted |
-| GET `/api/feedback?session=&round=` | 返回 owner 优先的 `feedback`、`byParticipant` 与 select `conflicts`；参与者只看到已授权 block；无反馈则 HTTP 200 + `pending:true` |
-| GET `/api/status?session=` | 返回 status.json、本地驱动心跳新鲜度，以及 `workerOnline` / `workerLabel` |
-| POST `/api/worker-heartbeat` | 仅口令门内管理员可写；记录常驻 worker 的 `{at,label?}`，90 秒未更新即离线 |
-| POST `/api/retry?session=&round=` | 仅 owner 重置该轮为 submitted（清 ack/error）；本地无口令且无 token 仍走 owner 兼容路径 |
-| GET `/api/sessions` | 列出 workspace 下会话（dev 用） |
-| GET/POST `/api/participants` | 管理员脱敏列表 / 新增参与者并返回完整邀请链接 |
-| DELETE `/api/participants/:id` | 管理员吊销参与者 magic-link |
-| GET `/api/health` | `{ok,ts}` |
+| 内容与轮次 | `POST /api/rounds`、`GET /api/content`、`GET /api/status`、`POST /api/retry` |
+| 反馈与对话流 | `POST/GET /api/feedback`、`POST/GET /api/messages`、`POST /api/stream-events` |
+| 身份与项目 | `GET/POST/DELETE /api/participants`、`GET /api/sessions`、`GET /api/projects` |
+| 文件与页面 | `POST /api/attachments`、`GET /api/assets`、`GET /render/` |
+| 执行面 | `POST /api/worker-heartbeat`、`/api/inbox/*`、`GET /api/control-tower` |
+| 诊断 | `GET /api/health` |
 
-服务端在返回 content 时调用 `diff.computeDiff` 注入 `_change`、`attention.routeBlocks` 可前端做（前端做，便于"只看变更"交互）。
+启用 `WORKBENCH_TOKEN` 后，页面通过 query token，API 接受 query 或 `x-workbench-token`；静态会话 assets 只接受 query token，避免 Referrer 泄漏。参与者名册每请求读取，因此撤销立即生效。
 
-公网绑定默认防呆：`serve/up --host` 默认仍为 `127.0.0.1`；非 `127.0.0.1/localhost` 监听必须设置 `WORKBENCH_TOKEN`。该 token 解析为 `{id:'owner',name:'管理员',role:'owner'}`；`config/participants.json` 中的个人 token 解析为 `{id,name,role:'participant'}`，名册每请求读取以保证吊销立即生效。启用口令门后页面入口使用 `?token=`，API 接受 `x-workbench-token` 或 `?token=`，会话 `/assets/*` 只接受 query token；管理员和参与者都可进入普通页面/API，但参与者管理 API 仅 owner 可用。会话资产下载还校验 block 可见性、资产引用只接受本服务实际监听 origin 的 URL 或字面量 `/assets/` 绝对路径、路径逐组件拒绝 symlink，并使用同一 fd 完成 `fstat` 与读取；同一资产被公共块和私有块共同引用时按公共可见放行。参与者资产授权只计算最新轮，显式 `round` 只计算被请求轮次，不聚合历史并集；授权 manifest 按 content 版本缓存，资产清单按目录/文件版本失效。根跳转和 embed 代理只透传本次已验证的来访 token，绝不把管理员口令替换给参与者。页面把入口 query 中的 token 透传到后续同源 API及直接渲染的 `/assets/` 资源；本机 CLI 在环境存在 token 时自动附带。只豁免渲染器自身的 JS/CSS/字体/图片，`.json`/`.map` 不豁免；所有 HTML/代理页面响应统一带 `Referrer-Policy: no-referrer`。
+## 11. 测试与回归门槛
 
-参与者名册格式为 `[{id,name,token,createdAt}]`，写入采用同目录临时文件 + rename，token 为 16 个密码学随机字节的十六进制表示。CLI `participant add/list/revoke` 在本地直接维护名册；配置 `WORKBENCH_REMOTE_URL` 后复用管理 API。只有 add/API 创建响应包含一次性可分发的完整邀请链接，list 永不回显 token。
+- `npm test`：Node 内置 `node:test` 的行为测试、golden 和结构守卫全量运行。
+- `tests/golden/`：锁定 protocol 的 `computeDiff`、`routeBlocks` 和渲染分区输出。
+- `tests/e2e/`：真实 HTTP 覆盖鉴权、可见性、轮次和两套执行面。
+- `tests/guards/`：分层无环、fs 边界、零依赖等结构约束。
+- `node scripts/ab-compare.mjs`：基线与当前树逐请求/逐写盘对拍，health 的 `version`、`commit` 是唯一显式 `expected-change`；`ts`、`assetsVersion` 是时间/资源版本归一化字段。
+- `node scripts/ab-compare.mjs --self-test` 必须故意报差异并以退出码 1 结束，证明对拍器没有失效。
 
-逐人反馈：服务端覆盖客户端传入的 `submittedBy`，参与者反馈写 `feedback-<id>.json`；第一份同步写规范 `feedback.json`，让旧 listener 与 `wait` 保持“首份即唤醒”。owner 后交时覆盖规范文件，并成为 GET 的合并主视图；`byParticipant` 始终保留逐人提交。参与者可在 claimed 后补交自己的文件，但不得把 claimed/responded/error 状态倒退；owner 仍沿用 claimed 时 409。冲突只比较已授权集合内同 block 的 `type:'select'`，不同参与者值不一致时返回 `conflicts:[{blockId,choices}]`。
+## 12. 已保留与已砍边界
 
-会话流：`workspace/<session>/stream.jsonl` 是 append-only 消息档案，每行包含 `id/at/author/kind/text/refs?`。普通消息作者取认证身份，AI 回执/进度作者固定为 `ai`；rounds 与 feedback 成功后分别自动写“已出第 N 轮”和“某人已提交第 N 轮反馈”。历史规范 `feedback.json` 的非空 `sessionComment` 可用 `stream-migrate` 幂等迁入。
-
-远程 CLI：设置 `WORKBENCH_REMOTE_URL` 后，`present` 把完整 content POST 到云端，默认 `wait` 每 3 秒轮询云端 feedback；显式 `wait --events` 同时增量轮询 messages，任一新事件即返回。`participant` 子命令调用云端管理 API；轮次分配、反馈和名册持久化只发生在云端。未设置时继续走本地文件流程。`--allow-incomplete-decisions` 映射为 `allowIncomplete=1`，页面 URL 由 CLI 使用远程基址构造并附带 token query。服务端首轮成功后合并写入会话标题、`kind:"work"`、`status:"active"`；项目 ID、主会话、别名或既有 `session.json.projectId` 命中注册项目时保留/写入归属，否则成功响应附带 warning，CLI 写 stderr，会话按既有目录规则显示为“待归类”。
-
-事件通知：设置 `WORKBENCH_EVENT_WEBHOOK` 后，服务端在轮次成功落盘、feedback 成功落盘和 message 成功落流后异步 POST 最小事件 JSON。云端常驻 worker 固定在 `127.0.0.1:WORKER_EVENT_PORT`（默认 8097）接收这些事件并立即检查指定 session；60 秒全量轮询仅用于 webhook 丢失兜底。投递使用 5 秒超时；网络错误、非 2xx 和超时只写日志，不回滚落盘，也不改变主请求响应。worker 另以 30 秒周期写管理员心跳，页面优先据此展示云端 AI 在线状态。
-
-Codex 子进程超时或非零退出时，worker 仅对本次 `executionContext.primaryProject.repoPath` 做 Git 善后。候选真实路径必须恰好等于 Git 顶层目录，并避开默认及 `WB_WORKSPACE` 指定的数据目录；脏工作区封存到 `codex-timeout-<UTC时间戳>` 后切回原分支。非 Git、受保护路径或 Git 失败都不会转而操作 worker 常驻目录，结果通过对话流 receipt 如实返回。
-
-远程写入的 session 限 80 字符且必须匹配 `/^[A-Za-z0-9._-]+$/`（另拒绝 `.` / `..`）。服务端对点号 session 使用精确目录，避免与下划线名称碰撞；本地默认路径仍兼容旧版“点号转下划线”的既有 workspace，精确目录一旦存在则自动跟随。
-
----
-
-## 9. 视觉与交互设计语言
-
-- 克制、信息优先：浅色为主 + 暗色切换（复用 prd-studio CSS 变量）。强调色仅用于注意力分区（红=需定无预设、橙=需定有推荐/CHANGED、绿=NEW、蓝=已回复）。
-- 顶部固定状态条：左=会话/轮次 + 会话列表 + 可选「设计资产」+ diff 开关「只看变更」；右=AI 状态徽章 + 「提交」。`content.meta.docsUrl` 为字符串时显示设计资产链接；同源链接才继承 token，外站不携口令。
-- 分区视觉：区 A/B 卡片带左色条 + 徽章；区 C 折叠。
-- 移动友好：单列、viewport-fit、控件触摸尺寸（为 phase 2 飞书/移动载体铺路）。
-- 草稿即时存 localStorage，防丢。
-- 每 3 秒只刷新块下的逐人只读意见，不重渲表单、草稿、焦点和 tab；select 分歧同时显示文字角标，不能只靠颜色。
-
----
-
-## 10. 两个模板（D6）
-
-模板 = 产出 blocks 的工厂函数（`templates/*.mjs`）：
-- `think-discuss(input) -> blocks[]`：思考共创。典型块：markdown(思路) + diagram(结构/时序) + choice/verdict(决策点，带 needsDecision/recommendation/importance) + editable(可改文档) + 评论。**本项目这几轮的确认过程即此模板。**
-- `dev-review(spec) -> blocks[]`：研发评审。复刻现 prd-studio 能力：PRD 条目(verdict) + 架构(diagram+assertions) + 测试场景。证明"prd-studio = 本框架一个模板"。
-
-两模板共用 §4 注意力路由、§5 diff、§6 容错、§3 渲染器——验证通用性。
-
----
-
-## 11. 测试策略（FR：全自动化，跑绿）
-
-- **unit**（node:test）：
-  - protocol/schema：合法/非法 content 校验
-  - attention.routeBlocks：分区归属 + 区内重要性排序
-  - diff.computeDiff：new/changed/unchanged/删除 + 只看变更
-  - blocks.renderBlock：各 type 输出关键 DOM 结构/属性（用轻量 DOM 断言，不引浏览器）
-  - templates：两模板产出结构正确
-  - session-store / claude-exec：argv 组装含 --resume、session_id 捕获（mock 子进程）
-- **e2e/scenario**（起真 server + 文件契约，不依赖真 claude）：
-  - 提交→feedback 落盘→status=submitted
-  - listener 对账：放一个无 ack 的 feedback → 运行对账 → 产生 ack/response（用 mock driver）
-  - 容错：模拟 listener 崩溃（不写 ack）→ 重启对账补处理；retry 重置状态
-  - 心跳过期→status 接口反映 offline
-- 全部 `npm test` 跑绿；P0：依赖(无)、ESM 可加载、server 起得来、主流程冒烟。
-
----
-
-## 12. 关键设计决策记录（自决项）
-
-- **协议字段命名**`needsDecision/hasRecommendation/importance` 直白可读，渲染器一一映射注意力分区。
-- **diff 用 id+内容指纹**而非位置，保证跨轮稳定（要求作者复用 block id）。
-- **容错以"文件即状态 + ack 幂等锁 + 启动对账"**实现，无需数据库/队列中间件——契合零依赖与复用 control-plane 文件态理念。
-- **driver 可插拔**：claude-exec 为默认 CLI 驱动；listener 只认文件契约，未来换 SDK/飞书载体不改内核。
-
----
-
-## 13. UX 自审修订（已采纳，覆盖前文相应小节）
-
-独立 UX 评审后采纳以下修订，**优先级高于前文冲突处**，子代理须按此实现。完整原始评审见 docs/feedback-log.md。
-
-> **落地校验（批次 6，2026-07-03）**：本节部分"已采纳"项此前只落文档、代码断了，已在批次 6 补齐并加测试断言（详见 docs/dev-log.md「批次 6」）：
-> - ✅ **P0-1** 提交前确认改真·模态（`<dialog>`），未表态/重要默认项可就地展开并跳转补填（此前仅 `confirm()` 列 id）。
-> - ✅ **P0-3** zoneC-Fyi 折叠标题前缀重复 bug 修复（分区过滤本身正确）。
-> - ✅ **P1** 议题重组提示：前端消费服务端 `sanity.suspect` → 顶部横幅（此前算了不展示）。
-> - ✅ **P1** 「↩已采纳/—维持」徽章补 CSS（此前退化成橙色/无样式）。
-> - ✅ **P2** 长页面进度「已填 m/X」实时更新（此前 `<progress value>` 恒 0）。
-> - 仍未落地（后续批次）：字段级 diff 前端并排对照、可访问性 aria 关联、暗色对比度全面复核。
-
-### P0-1 杜绝"盲签"：统一提交前确认（改 §6.4 + §2.4）
-- 提交时弹**摘要确认层**：「你将 — 决策 a 项 / 接受 b 项默认（含 c 项重要）/ d 项未表态」，重要默认与未表态项可就地展开复核。
-- feedback.json 增 `unanswered:[blockId]`（needsDecision 但用户未操作的块）；前端用 `attention.unansweredDecisions()` 计算。edit 与 comment 是同一 blockId 下的两条独立 item。
-- 区 A（needsDecision 且无推荐）若有未填项，提交按钮二次确认并锚点跳转。
-
-### P0-2 区分"处理中"与"离线"，修心跳误报（改 §6.1 + §6.3）
-- 心跳必须**独立异步定时**写，不被 claude-exec 子进程阻塞。
-- status.json 增 `claimedAt`、`supervisorState:"alive"|"dead"`；error 改为 `{kind,message,userMessage,suggestedAction,at}`。
-- 前端/服务端统一用 `protocol/status.mjs` 的 `displayState(status, now)` 联合判定：`claimed+心跳新鲜=processing`（再久也不误判）；`非claimed+心跳过期=offline`；`supervisorState==='dead'=dead(终态)`。
-
-### P0-3 区 C 不再一刀切折叠（改 §4）
-- zoneC 拆两级：`importance==='high'` 的已设默认 → **zoneCReview「默认采用·建议过目」**（半展开、逐条带 default 值预览）；normal/low → **zoneCFyi** 折叠，标题给默认值摘要而非只报数量。
-
-### P1（采纳）
-- **异步价值兑现**（§6.4/§9）：processing 显示已等待时长（用 claimedAt）+ `document.title` 角标 +（授权后）Notification；首次提交弹一次性 toast 说明"可离开"。
-- **错误说人话**（§6.1/§6.4）：按 `error.kind` 显示 userMessage/suggestedAction；driver 配置类错误**不给**「重试」（避免误导），原始 message 收进折叠详情。
-- **自愈终态**（§6.3/§6.4）：监管重启耗尽 → `supervisorState:"dead"` → 前端「⛔ 服务未恢复，提交已安全保存在 round-n/feedback.json，请联系维护者」，消灭"永远🔴"假承诺。
-- **diff 更真**（§5/§10）：computeDiff 额外产出 `removed`（上轮有本轮无）+ changed 块带 `_changedFields` 与 `_prev`（字段级对照）；模板用**语义 slug 生成稳定 block id**；本轮 >60% 块同时 new 且上轮等量 removed → 顶部提示「可能议题重组，diff 仅供参考」。
-- **verdict 异议/疑问** 强引导填理由（§2.3，空不阻断但软提醒）。
-- **已 claimed 的轮**：POST /api/feedback 返回 409（提示"处理中，请等待或撤回重填"）；区分「重试」(原反馈再跑) 与「撤回重填」(清 ack 允许改后重提)（§8/§6.4）。
-- **🟡处理中态不给普通「重试」**，仅「强制重试」(二次确认，警示可能重复)（§6.4）。
-
-### P2（采纳）
-- 可访问性：色彩非唯一信号，区/变更徽章叠加形状图标 + 文字（◆需答/◇建议/＋新增/～改动）；暗色对比度复核（§9）。
-- 长页面：状态条「需你决策」做成进度「已填 m/X」+ 区/块跳转锚点（§4）。
-- 退化态文案：全默认→主按钮变「确认」、状态条「无需你决策，确认即可」；无 zoneC→不渲染折叠容器；全 unchanged→只看变更空列表提示；首次使用引导（§4/§9 新增"空态与退化态"）。
-
----
-
-## 14. embed 产物嵌入 + 就地批注（dogfood 增补）
-
-**动机**：当 AI 的产物是一个真实网页/可视化（如部署好的 HTML 页），用户需要**在产物本身上就地圈点批注**，而不是只在抽象 block 上表态。
-
-- **block 类型 `embed`**：`{id, type:'embed', title, url, height?}`。渲染为 iframe + 批注 overlay。
-- **代理 `/api/proxy?url=`**：很多站点带 `X-Frame-Options/CSP` 禁止被 iframe。服务端反代目标页：抓取 HTML → **不转发** `x-frame-options`/`content-security-policy` → 注入 `<base href="<url>">`（原站相对资源正常加载）→ 同源返回。iframe 指向 `/api/proxy?url=<encoded>`。纯函数 `rewriteEmbedHtml(html, url)` 可单测；仅 http/https、10s 超时、失败降级错误页。
-- **飞书式批注（选中文字→评论→右栏）**：因页面经 `/api/proxy` **同源**嵌入，监听 iframe 内选区——用户**选中文字**即浮出「💬 评论」按钮（无"批注模式"开关）；点击在**右侧评论栏**建卡片（引用原文 + 评论），每条可 **保存 / 编辑 / 删除**；也可「+ 新增批注」写不锚定文字的整体意见。best-effort 用 CSS Custom Highlight API 高亮原文。
-- **布局**：embed 区左右两栏——左=内容（iframe），右=固定宽度评论栏。
-- **数据/反馈**：草稿 `comments:[{id,quote,text,done}]`；**创建不落草稿、保存空内容即丢弃**（不产生空评论）；提交为 `{blockId, type:'pin', value:{quote}, comment}`（quote=引用原文，整体意见为 null）。
-- **局限**：文字锚定按 quote 文本 best-effort 定位/高亮（重复文本可能不精确）；目标页若强依赖自身同源后端，代理下动态请求可能失效（静态展示页无碍）。
-
----
-
-## 15. tab 分面导航（批次 7，2026-07-04）
-
-restore prd-studio 六面 tab 体验，工作台原生化——**用角标 + 全局提交确认消除隐藏式 tab 的盲签风险**。
-
-- **协议**：块可选 `section: string`（需求/架构/UI 设计/交互设计/测试/风险…）；content 可选 `sections: string[]` 覆盖类目顺序。无需改 schema（validateBlock 宽容额外字段）；`section` 不进 blockFingerprint（换面不触发 diff）。
-- **启用**：存在 `section` 或 `content.sections` → tab 模式；否则纯注意力分区（向后兼容，老 session 渲染不变）。
-- **canonical 类目**（`constants.DEFAULT_SECTIONS`）：需求 / 架构 / UI 设计 / 交互设计 / 测试 / 风险。全部常显，空面渲染为**灰 tab**（disabled）；无 section 块归「其他」（仅非空时出现）；自定义面追加在 canonical 之后。
-- **tab 角标（防漏看）**：每面 = 未确认决策数；红=含必须确认(`needsDecision && !hasRecommendation`)、橙=只剩可接受(有推荐)、绿=已清零。用户每确认一个即递减（`app.mjs updateFacetBadges`）。
-- **面内顺序**：设计方案(zoneContext) → 必须确认(zoneA) → 可接受(zoneB) → 已设默认(zoneC) → 沉降(zoneSettled)，复用 `renderZoneBody`（各面 zone id 加 `-f<i>` 后缀避免重复）。
-- **默认激活面**：第一个"含未确认必须决策"的非空面；否则第一个非空面。
-- **防盲签四重网**：① 角标常显未确认数（切走也知哪面欠）；② 全局进度「已填 m/X」跨所有面；③ 提交确认弹层列跨所有面未表态项，点击**自动切到所在 tab** 再高亮（jumpToBlock 跨面激活）；④ 提交时"必须决策"未确定 >0 → 弹层顶部红字「⚠️ 还有 X 个必须决策的点没确定」，主按钮变「仍要提交」。
-- **模板产出 section**：`dev-review`（需求/架构/测试）、`design-review`（`screen.section`，默认「UI 设计」，可覆盖「交互设计」；checklist→测试）。
-
----
-
-## 16. 内容可理解性协议（批次 8，2026-07-13 实战反馈落地）
-
-来源：`docs/iteration-brief-2026-07-13.md` + `docs/feedback-examples-2026-07-13.md`（Michael 实战 4 轮）。
-根因：**没有背景的决策块不是"没人答"，而是产出零质量的伪决策**——用户照样点推荐项，作者不敢采信，白费一轮。
-
-### 16.1 决策块结构化（创始人加权·最高 UX 优先级）
-协议与渲染层仍把字段定义为**可选**，缺失字段不渲染，以保证历史 workspace 向后兼容；但新内容走 `present` 时必须满足 §16.2 的完整性硬校验：
-
-| 字段 | 含义 |
+| 保留 | 原因 |
 |---|---|
-| `background` | 背景：这东西是谁做的、现在什么状态、为什么突然要处置它（一句话本质类比优先） |
-| `why` | 为什么需要你定、为什么是现在（含四维自评：有无标准答案 / 置信度 / 重要性 / **可回退性**） |
-| `options[].pros` / `.cons` | 选项**利弊**：讲后果，不讲机制（替代把一切塞进 `desc`） |
-| `recommendReason` | 推荐理由 |
+| 文件系统事实源与 storage 收口 | 可冷启动接管，已具备原子写不变量 |
+| protocol、原生前端、零依赖 | 协议可共享，浏览器无需构建链 |
+| 机 A 自动续跑 | 顾问/客户反馈的核心执行能力，默认关闭以控制暴露面 |
+| 机 B inbox 租约队列 | 重建成本高，已有正确的原子租约语义，默认关闭 |
+| `/api/health` 版本与 commit | 最小的线上版本定位能力 |
 
-渲染次序：**背景 → 为什么需要你定 → 选项（各带利弊）→ 推荐及理由**。
-四字段均进 `blockFingerprint` → AI 补了背景，该轮标 CHANGED。
+| 已砍 | 原因 |
+|---|---|
+| 不可变发布包、manifest、三机 commit/SHA 比对 | 超出工作台职责，属于 D7 明确拒绝的部署自动化 |
+| 全量六边形、每端点一个 use case、全量 DI | 会增加空抽象；简单读接口直接使用 storage |
+| protocol 多版本迁移引擎 | 当前只需兼容性字段，不需要迁移系统 |
+| journal 回放/事件溯源引擎 | 文件已经是事实源，追加记录不等于引入事件溯源 |
 
-### 16.2 作者侧 lint（`src/protocol/lint.mjs`）
-`present`/`render` 都会把普通 lint warning 打到 stderr。7 条规则全部对应真实病例：
-`missing-background` · `missing-why` · `missing-proscons` · `missing-recommend-reason` · `editable-for-confirm` · `multi-question` · `unexplained-jargon`。
+## 13. 运维恢复顺序
 
-`present` 对其中的决策完整性要求执行硬阻断：所有 `needsDecision:true` 块必须有非空 `background`/`why`；choice 的每个 option 必须同时有非空 `pros`/`cons`；`hasRecommendation:true` 时必须有非空 `recommendReason`。失败时按块列出 id 与缺失字段，拒绝写入新轮次并以非 0 退出。`--allow-incomplete-decisions` 可显式临时绕过，仍保留 warning，并在 stdout JSON 标记 `lintBypassed:true`。
+1. 先读取 `workspace/<session>/round-<n>/`、`status.json` 和 `error.json`，判断事实状态。
+2. 检查 `/api/health` 的 `version` 与 `commit`；`commit: "unknown"` 表示部署元数据缺失，不表示服务不健康。
+3. 在默认关闭状态，确认反馈已落盘后由人工处理；需要自动续跑时，设置 `WB_CLOUD_AI=on` 并重启相应服务。
+4. 机 A 用 listener reconcile 扫描恢复；机 B 让过期租约回到 pending 后由正确执行器领取。
 
-硬校验只挂在新内容的 `present` 调用链：`render` 默认仍只 warning，`serve` 与已有 workspace 轮次不回溯校验，`needsDecision:false` 完全不受影响。
-规范见 `docs/authoring-guide.md`。
-
-### 16.3 受众分层
-块可选 `audience: "decider" | "tech"`。`tech` → 整块折叠进「🔧 技术细节（决策者可跳过）」。
-依据：`needsDecision:false` **不等于"不占注意力"**（病例 2）。
-
-### 16.4 live 实时系统标识
-`embed` / `prototype(iframe)` 可选 `live: true` → 红框 + 「⚡ 实时系统 · 就地操作会真实生效」角标。
-依据：**文案救不了 affordance**——标题写了"真实产物"用户仍当样例（病例 7）。实时性感知必须靠视觉层。
-
-### 16.5 会话级留言
-渲染页常驻「💬 给 AI 留言」输入区 → `feedback.sessionComment`（string，可空）。
-依据：用户被迫把给工作台的全局反馈挂在不相干块的批注里（病例 6）。
-
-### 16.6 确认场景低摩擦
-`editable` 提供「✓ 保持原样即确认」一键 → feedback `type: 'confirm'`（**看了不改**），与 `unanswered`（**没看**）语义区分。
-依据：行为数据——预填 editable 连续两轮无人应答，改 verdict 后当轮通过（病例 5）。
-
-### 16.7 embed 代理支持非 GET（P0 bug 修复）
-`/api/proxy` 支持 GET/POST/PUT/DELETE：透传 method / body / Content-Type，回传真实状态码与 content-type；
-`rewriteEmbedHtml` 把**表单 action 与 fetch/XHR 改写回代理通道**（此前 `<base href>` 让它们直接打回原站 → 字段/凭证丢失，实证 bug）。
-
-### 16.8 富渲染最后一公里
-- `scripts/import-prd-project.mjs` 补 `convertUI`：prd-studio 的 `ui.screens[]` → `prototype(mode:'iframe', src, frame:'phone')`（此前整个 convertUI 缺失，10 个高保真屏进不来）。
-- `prototype` 新增可选 `frame: 'phone'` → 360×740 手机壳呈现（`box-sizing: content-box`，内宽正好 360）。
-- import 自动打 `section` → 六面 tab（需求/架构/UI 设计/交互设计/测试/风险）。
-- 渲染页支持 `?facet=<面名|序号>` 深链，可分享某一面。
-
-### 16.9 线框原型：手机壳 + 「编辑」模式（复刻 prd-studio）
-
-融合时曾把 prd-studio 的 wireframe 拖拽编辑判为"可弃用"，实测用户需要它。本次补回：
-
-- **手机壳**：`prototype` 的 `frame: 'phone'` 现在 **wireframe 与 iframe 都支持** → 360×740 + 10px 黑边 + **刘海 `.proto-notch`**（对齐 prd-studio 的 `.phone`/`.notch`）。import 的 `convertProto` 自动打 `frame:'phone'`。
-- **模式工具条**（仅 wireframe）：`🖊 批注` / `✥ 编辑（移动控件）` / `↺ 复位`。
-  - 批注模式：SVG overlay 捕获点击落 pin（原行为）。
-  - 编辑模式：overlay 让位（`pointer-events:none`），控件显示虚线轮廓 + 右下角缩放柄，可**拖动移位 / 拖角缩放**。
-- **零依赖实现**：不引 interact.js，用原生 pointer events（`pointerdown/move/up` + `setPointerCapture`，带 try/catch 防无效 pointerId）；`touch-action:none` 保证移动端可拖。
-- **反馈协议**：`FEEDBACK_TYPES` 新增 `move` → `{blockId, type:'move', value:{widgetId, x, y, w, h}}`，坐标**归一化 0-1**（与 block 的 widget 坐标同制）。草稿存 `draft[blockId].moves`，跨刷新可还原，可一键复位。
-- 真机 dogfood（chrome-devtools）：点编辑 → 画布 `data-mode=edit`；拖动 title 控件 → `top 4.44% → 20.23%`、草稿写入 `moves:{title:{x,y,w,h}}`；复位还原。
-
-### 16.10 会话资产自托管（去掉外部服务依赖）
-
-问题：高保真 UI 稿原住在 prd-studio 仓库，Vibe 通过 `http://127.0.0.1:8088` 代理去取 —— **prd-studio 的服务不开，UI 面就空了**。
-
-- **新路由** `GET /assets/<session>/<path>` → `workspace/<session>/assets/<path>`。
-  - session 名白名单 `^[A-Za-z0-9._-]+$`；子路径 `path.resolve` 后必须仍在 `assets/` 内（防穿越）；`Cache-Control: no-store`。
-  - 参与者只按最新轮可见 block 的严格本地引用授权；`/api/assets` 与直读支持可选 `round` 选择旧轮。外站 URL、相对路径、编码路由前缀和无法解析的形式默认不授权。
-  - 资产目录及路径中间组件拒绝 symlink；直读用 `O_NOFOLLOW` 打开并在同一 fd 上 `fstat`、读取，避免 realpath 校验与路径读取之间的竞态。
-  - 语义：**资产属于 session 内容**（runtime 数据，gitignore），不污染工具仓库。
-- **import 默认自托管**：`convertUI` 把 `public/ui/*.html` **拷进** `workspace/<session>/assets/ui/`，块的 `src` 写成 `/assets/<session>/ui/<file>`。传 `--ui-base http://…` 才改为引用外部 URL。
-- **renderPrototype(iframe)**：`src` 为**同源相对路径 → 直连**（不绕 `/api/proxy`，更快，且 iframe 同源便于后续文字锚定批注）；外站**绝对 URL 仍走代理**（绕过 X-Frame-Options）。
-- 实证：关闭 prd-studio（:8088 → 000）后，UI 面 10 个高保真屏仍正常渲染（iframe src = `/assets/prd-recorder/ui/b-home.html`，200）。
+本文件只描述现行架构与明确边界。设计推演、历史故障复盘和未来讨论请新增独立设计文档，不在末尾追加“覆盖本文件”的章节。
