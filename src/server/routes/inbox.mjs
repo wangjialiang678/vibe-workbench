@@ -6,6 +6,10 @@ import { respondInboxError } from '../route-utils.mjs';
 export function inbox(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath.startsWith('/api/inbox/')) {
+    if (!runtimeState.cloudAiEnabled) {
+      json(res, 503, { ok: false, error: '云端 AI 未启用' });
+      return;
+    }
     // 拉取执行器必须显式持有管理员口令；本地无口令的兼容 owner 不获得队列权限。
     if (!expectedToken || identity.role !== 'owner') {
       json(res, 403, { ok: false, error: '仅管理员执行器可访问收件箱' });

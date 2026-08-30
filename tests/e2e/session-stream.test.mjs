@@ -13,7 +13,7 @@ const PARTICIPANT = {
   token: 'session-stream-alice-token',
   createdAt: '2026-07-23T00:00:00.000Z',
 };
-const ENV_KEYS = ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK'];
+const ENV_KEYS = ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK', 'WB_CLOUD_AI'];
 
 let tmpDir;
 let participantsFile;
@@ -106,6 +106,7 @@ before(async () => {
 
   process.env.WB_WORKSPACE = tmpDir;
   process.env.WORKBENCH_TOKEN = OWNER_TOKEN;
+  process.env.WB_CLOUD_AI = 'on';
   delete process.env.WORKBENCH_EVENT_WEBHOOK;
 
   ({ startServer } = await import('../../src/server/server.mjs'));

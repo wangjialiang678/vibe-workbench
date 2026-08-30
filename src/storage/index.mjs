@@ -26,6 +26,87 @@ function atomicWrite(target, data) { const dir = path.dirname(target); nodeFs.mk
 function writeJson(p, obj) { atomicWrite(p, JSON.stringify(obj, null, 2)); }
 function readTextFile(p, def = null) { try { return nodeFs.readFileSync(p, 'utf8'); } catch { return def; } }
 function writeTextFile(p, text) { atomicWrite(p, text); }
+
+function feedbackClaimPath(session, round, token, options) {
+  return path.join(roundDir(session, round, options), `.feedback.claim-${token}.json`);
+}
+
+function archivedAckPath(session, round, token, options) {
+  return path.join(roundDir(session, round, options), `ack.expired-${token}.json`);
+}
+
+/**
+ * 以 feedback.json 的 rename 作为唯一竞争点认领一轮。
+ * rename 成功者先写带 owner/lease 的 ack，再把 feedback 原样放回；后来者即使在
+ * 恢复窗口拿到 feedback，也会二次检查 ack 并归还文件，因此不会双领。
+ */
+export function claimFeedbackRound(session, round, {
+  workerId = `pid-${process.pid}`,
+  leaseMs = 5 * 60 * 1000,
+  now = new Date(),
+  exactSession = false,
+} = {}) {
+  const options = { exactSession };
+  const ackPath = paths.ack(session, round, options);
+  const responsePath = paths.response(session, round, options);
+  const errorPath = paths.error(session, round, options);
+  const feedbackPath = paths.feedback(session, round, options);
+  const nowDate = now instanceof Date ? now : new Date(now);
+  const nowMs = nowDate.getTime();
+  if (!Number.isFinite(nowMs)) throw new Error('claim now 必须是有效时间');
+  if (exists(responsePath) || exists(errorPath)) return null;
+
+  const existing = readJson(ackPath, null);
+  if (existing) {
+    const expiresAt = Date.parse(existing.leaseExpiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt > nowMs) return null;
+    // 过期 ack 保留为审计件，随后允许新 worker 接管。
+    try { nodeFs.renameSync(ackPath, archivedAckPath(session, round, `${nowMs}-${process.hrtime.bigint().toString(36)}`, options)); }
+    catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }
+
+  const token = `${nowMs}-${process.pid}-${process.hrtime.bigint().toString(36)}`;
+  const claimPath = feedbackClaimPath(session, round, token, options);
+  try {
+    nodeFs.renameSync(feedbackPath, claimPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+
+  try {
+    // 认领后的二次检查封住 "首个 worker 已恢复 feedback，第二个刚好 rename" 的窗口。
+    if (exists(ackPath) || exists(responsePath) || exists(errorPath)) return null;
+    const claimedAt = nowDate.toISOString();
+    const leaseExpiresAt = new Date(nowMs + leaseMs).toISOString();
+    const ack = { owner: workerId, claimedAt, leaseExpiresAt, pid: process.pid };
+    writeJson(ackPath, ack);
+    return { ...ack, feedback: readJson(claimPath, null) };
+  } finally {
+    // 未完成前 feedback 仍是事实源；无论成功还是输掉竞争都恢复它。
+    try {
+      if (nodeFs.existsSync(claimPath) && !nodeFs.existsSync(feedbackPath)) nodeFs.renameSync(claimPath, feedbackPath);
+    } catch { /* 下一次 reconcile 会以文件事实源继续对账 */ }
+  }
+}
+
+/** 只释放租约过期的 ack，供冷启动 reconcile 调用。 */
+export function releaseExpiredFeedbackClaim(session, round, { now = new Date(), exactSession = false } = {}) {
+  const options = { exactSession };
+  const ackPath = paths.ack(session, round, options);
+  const ack = readJson(ackPath, null);
+  if (!ack || exists(paths.response(session, round, options)) || exists(paths.error(session, round, options))) return false;
+  const nowMs = (now instanceof Date ? now : new Date(now)).getTime();
+  const expiresAt = Date.parse(ack.leaseExpiresAt);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(expiresAt) || expiresAt > nowMs) return false;
+  try {
+    nodeFs.renameSync(ackPath, archivedAckPath(session, round, `${nowMs}-${process.hrtime.bigint().toString(36)}`, options));
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
 export function readRound(session, round, options) { return readJson(paths.content(session, round, options)); }
 export function readFeedback(session, round, options) { return readJson(paths.feedback(session, round, options)); }
 export function readStatus(s, options) { return readJson(paths.status(s, options)); }

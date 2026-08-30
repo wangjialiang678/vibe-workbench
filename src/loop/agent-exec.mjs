@@ -3,6 +3,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import { disk } from '../storage/index.mjs';
 import path from 'node:path';
+import { cloudAiAuthMode } from '../cloud-ai.mjs';
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const AGENTS = new Set(['claude', 'workbuddy', 'codex']);
@@ -416,13 +417,37 @@ export async function runClaude({
   cwd,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawnImpl = nodeSpawn,
+  auth,
+  vaultResolver,
+  env = process.env,
 }) {
   const argv = buildArgv(prompt, sessionId);
-  const inheritedEnv = copyEnvironment(process.env);
+  const inheritedEnv = copyEnvironment(env);
   const apiKey = inheritedEnv.ANTHROPIC_API_KEY;
   const hasApiKey = typeof apiKey === 'string' && apiKey.trim().length > 0;
   const subscriptionEnv = { ...inheritedEnv };
   delete subscriptionEnv.ANTHROPIC_API_KEY;
+
+  // 新契约的两种模式由 workbench-continue 显式传入；未传 auth 保留旧的
+  // "订阅优先、API key 单次托底" API，避免直接使用 runClaude 的旧调用方行为变化。
+  if (auth === 'subscription') {
+    try {
+      const result = await runAdapterOnce({ binary: 'claude', label: 'claude', argv, parseOutput: parseStreamJson, parseErrorLabel: 'parseStreamJson', cwd, timeoutMs, spawnImpl, env: subscriptionEnv });
+      return { ...result, driverSource: 'subscription' };
+    } catch (error) { throw publicError(error, 'subscription'); }
+  }
+  if (auth === 'apikey') {
+    let resolved;
+    try { resolved = await vaultResolver?.(); } catch (error) {
+      throw { kind: 'auth', message: redactSecrets(error?.message || '无法解析 Anthropic API 凭据', inheritedEnv), driverSource: 'apikey' };
+    }
+    const key = typeof resolved === 'string' ? resolved.trim() : '';
+    if (!key) throw { kind: 'auth', message: 'Anthropic API 凭据缺失或无效', driverSource: 'apikey' };
+    try {
+      const result = await runAdapterOnce({ binary: 'claude', label: 'claude', argv, parseOutput: parseStreamJson, parseErrorLabel: 'parseStreamJson', cwd, timeoutMs, spawnImpl, env: { ...subscriptionEnv, ANTHROPIC_API_KEY: key } });
+      return { ...result, driverSource: 'apikey' };
+    } catch (error) { throw publicError(error, 'apikey'); }
+  }
 
   try {
     const result = await runAdapterOnce({
@@ -570,6 +595,9 @@ export async function runAgent({
   cwd,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawnImpl = nodeSpawn,
+  auth,
+  vaultResolver,
+  env,
 }) {
   let selected;
   try {
@@ -583,7 +611,7 @@ export async function runAgent({
 
   try {
     if (selected.agent === 'claude') {
-      return await runClaude({ prompt, sessionId, cwd, timeoutMs, spawnImpl });
+      return await runClaude({ prompt, sessionId, cwd, timeoutMs, spawnImpl, auth, vaultResolver, env });
     }
     if (selected.agent === 'workbuddy') {
       return await runWorkBuddy({
@@ -606,4 +634,24 @@ export async function runAgent({
   } catch (error) {
     throw { ...error, agent: selected.agent };
   }
+}
+
+/**
+ * 机 A 的 Claude 续接适配器。只有 Claude 读取 WB_CLOUD_AI_AUTH；Codex/WorkBuddy
+ * 保持各自 CLI 登录态，绝不接触 Anthropic key。
+ */
+export function createWorkbenchContinueDriver({
+  agent = 'claude',
+  env = process.env,
+  vaultResolver,
+  spawnImpl = nodeSpawn,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+} = {}) {
+  return {
+    name: 'workbench-continue',
+    async process({ prompt, sessionId, cwd }) {
+      const auth = agent === 'claude' ? cloudAiAuthMode(env) : undefined;
+      return runAgent({ agent, prompt, sessionId, cwd, timeoutMs, spawnImpl, env, auth, vaultResolver });
+    },
+  };
 }

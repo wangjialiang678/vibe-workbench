@@ -5,6 +5,7 @@ import {
 } from '../projects.mjs';
 import { enqueueInboxTask } from '../executor-inbox.mjs';
 import { appendStreamEntry } from '../stream.mjs';
+import { cloudAiEnabled } from '../cloud-ai.mjs';
 
 export const WEBHOOK_TIMEOUT_MS = 5000;
 
@@ -56,7 +57,9 @@ export function inboxTaskTitle(payload) {
 }
 
 // resident 保持既有 webhook；pull 落本地持久化收件箱。路由异常一律回退云端链路。
-export function dispatchExecutorEvent(webhookUrl, payload) {
+export function dispatchExecutorEvent(webhookUrl, payload, { env = process.env } = {}) {
+  // feedback/round 本身已经先写入事实源；关闭时只停止向执行面派发。
+  if (!cloudAiEnabled(env)) return { dispatched: false, reason: 'disabled' };
   let executor;
   try {
     const project = registeredProjectForSession(payload.session);
@@ -64,12 +67,12 @@ export function dispatchExecutorEvent(webhookUrl, payload) {
   } catch (error) {
     console.error('[workbench:dispatch] 执行面解析失败，回退 resident webhook：', error.message);
     emitWebhook(webhookUrl, payload);
-    return;
+    return { dispatched: true, transport: 'webhook' };
   }
 
   if (!executor || executor.kind === 'resident') {
     emitWebhook(webhookUrl, payload);
-    return;
+    return { dispatched: true, transport: 'webhook' };
   }
 
   try {
@@ -98,4 +101,5 @@ export function dispatchExecutorEvent(webhookUrl, payload) {
       error: error.message,
     });
   }
+  return { dispatched: true, transport: 'inbox' };
 }
