@@ -33,3 +33,22 @@
 - protocol 的多版本迁移机制（只加 version 字段做保险）
 - journal 的事件回放/事件溯源引擎（只 append 那几个状态变更）
 - 不可变发布包 + manifest + 三机 SHA 比对（见 D7）
+
+---
+
+## 追加决策（2026-08-30，评估之后）
+
+| # | 议题 | 决定 |
+|---|---|---|
+| D11 | 云端 AI 凭据模式 | **订阅 / API Key 可切换。** 配置项 `WB_CLOUD_AI_AUTH=subscription\|apikey`（默认 subscription）。subscription 模式沿用现 `claude -p`（登录态）；apikey 模式给 spawn 的进程注入 `ANTHROPIC_API_KEY`（来源走 api-vault，不硬编码）。理由：无人值守给顾问/客户跑时 API Key 更稳（不受个人额度波动、不混上下文），自己调试时订阅更省。落在 driver 适配器层，天然可测。 |
+| D12 | 澄清：云端 AI ≠ inbox 任务队列 | 评估核实：**"云端 AI 自动续跑"是反馈驱动**（`loop/listener.mjs` 本机 + `scripts/resident-worker.mjs` 云端，后者已在东京机运行、轮询 `/api/feedback`）。**inbox 任务队列（executor-inbox + routes/inbox，约 1500 行，pending/claimed/done）是另一套、从未使用、消费者仅控制塔。** 02 §4 原把两者混写为一条链，属错误，需改。 |
+| D13 | inbox 任务队列去留 | **建议砍**（与 D2 不冲突：D2 要保留的是反馈驱动的云端 AI，不是 inbox 队列）。inbox 与云端 AI 无关、零使用；控制塔依赖它则一并降级。**待创始人最终确认；未否决即按砍执行。** |
+
+## 由 D11/D12 引出的设计与测试影响
+
+- **02 架构**：§3 执行面改写——明确"反馈驱动自动续跑"为保留主体（listener + resident-worker 两实现），
+  inbox 队列按 D13 处理；driver 适配器新增凭据模式维度（subscription/apikey）。
+- **03 测试**：执行面假 driver 链路的入口从"present→inbox→claim"更正为
+  "feedback 落盘 → listener 扫到(有feedback 无ack 无response) → driver → response → 下一轮"；
+  新增 driver 凭据模式契约测试：subscription 模式 argv 含 `-p --resume <id>` 且不带 API key；
+  apikey 模式 spawn 环境含 `ANTHROPIC_API_KEY` 且不依赖登录态。两种模式都用假 driver 验证选择逻辑，不需真实凭据。
