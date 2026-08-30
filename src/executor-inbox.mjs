@@ -1,5 +1,5 @@
 // 执行面收件箱：单机本地文件队列。外部 worker 只能经 HTTP API 使用，不能直读本目录。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 
@@ -111,26 +111,26 @@ function recoveryTaskPath(executor, id, nowMs) {
 
 function atomicWriteJson(target, value) {
   const directory = path.dirname(target);
-  fs.mkdirSync(directory, { recursive: true });
+  disk.mkdirSync(directory, { recursive: true });
   const temporary = path.join(
     directory,
     `.${path.basename(target)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
   );
   try {
-    fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
+    disk.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     });
-    fs.renameSync(temporary, target);
+    disk.renameSync(temporary, target);
   } finally {
-    try { fs.rmSync(temporary, { force: true }); } catch {}
+    try { disk.rmSync(temporary, { force: true }); } catch {}
   }
 }
 
 function parseStoredTask(target, expected = {}) {
   let task;
   try {
-    task = JSON.parse(fs.readFileSync(target, 'utf8'));
+    task = JSON.parse(disk.readFileSync(target, 'utf8'));
   } catch (error) {
     throw inboxError('INBOX_CORRUPT', `任务文件损坏：${error.message}`);
   }
@@ -159,7 +159,7 @@ function canonicalLocations(id) {
   return EXECUTORS.flatMap(({ id: executor }) => {
     const target = canonicalTaskPath(executor, cleanId);
     try {
-      return fs.statSync(target).isFile() ? [{ executor, target }] : [];
+      return disk.statSync(target).isFile() ? [{ executor, target }] : [];
     } catch {
       return [];
     }
@@ -172,7 +172,7 @@ function activeClaimArtifacts(id) {
     const directory = executorDirectory(executor);
     let names;
     try {
-      names = fs.readdirSync(directory);
+      names = disk.readdirSync(directory);
     } catch {
       return [];
     }
@@ -198,7 +198,7 @@ function acquireTaskFile(id, nowMs) {
     const claimedPath = claimTaskPath(executor, cleanId, nowMs);
     try {
       // 核心竞态纪律：先用 rename 赢得任务文件，再读取/解析内容。
-      fs.renameSync(target, claimedPath);
+      disk.renameSync(target, claimedPath);
       return { id: cleanId, executor, target, claimedPath };
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
@@ -212,8 +212,8 @@ function acquireTaskFile(id, nowMs) {
 
 function restoreClaimedFile(lock) {
   try {
-    if (fs.existsSync(lock.claimedPath) && !fs.existsSync(lock.target)) {
-      fs.renameSync(lock.claimedPath, lock.target);
+    if (disk.existsSync(lock.claimedPath) && !disk.existsSync(lock.target)) {
+      disk.renameSync(lock.claimedPath, lock.target);
     }
   } catch {}
 }
@@ -225,7 +225,7 @@ function withLockedTask(id, nowMs, mutate) {
     task = parseStoredTask(lock.claimedPath, { id: lock.id, executor: lock.executor });
     const outcome = mutate(task);
     if (outcome.task !== task) atomicWriteJson(lock.claimedPath, outcome.task);
-    fs.renameSync(lock.claimedPath, lock.target);
+    disk.renameSync(lock.claimedPath, lock.target);
     return outcome;
   } catch (error) {
     restoreClaimedFile(lock);
@@ -237,7 +237,7 @@ function taskIds(executor) {
   const directory = executorDirectory(executor);
   let names;
   try {
-    names = fs.readdirSync(directory);
+    names = disk.readdirSync(directory);
   } catch {
     return [];
   }
@@ -273,7 +273,7 @@ function recoverExpiredClaimArtifacts(nowDate, claimTimeoutMs) {
     const directory = executorDirectory(executor);
     let names;
     try {
-      names = fs.readdirSync(directory);
+      names = disk.readdirSync(directory);
     } catch {
       continue;
     }
@@ -286,7 +286,7 @@ function recoverExpiredClaimArtifacts(nowDate, claimTimeoutMs) {
       const claimedPath = path.join(directory, name);
       const recoveryPath = recoveryTaskPath(executor, id, nowMs);
       try {
-        fs.renameSync(claimedPath, recoveryPath);
+        disk.renameSync(claimedPath, recoveryPath);
       } catch (error) {
         if (error?.code === 'ENOENT') continue;
         throw error;
@@ -301,15 +301,15 @@ function recoverExpiredClaimArtifacts(nowDate, claimTimeoutMs) {
         const recoveredTask = shouldReset ? resetClaimedTask(task, at) : task;
         if (recoveredTask !== task) atomicWriteJson(recoveryPath, recoveredTask);
         const target = canonicalTaskPath(executor, id);
-        if (fs.existsSync(target)) {
+        if (disk.existsSync(target)) {
           throw inboxError('INBOX_CORRUPT', `恢复任务 ${id} 时发现重复 canonical 文件`);
         }
-        fs.renameSync(recoveryPath, target);
+        disk.renameSync(recoveryPath, target);
         if (shouldReset) recovered += 1;
       } catch (error) {
         try {
-          if (fs.existsSync(recoveryPath) && !fs.existsSync(claimedPath)) {
-            fs.renameSync(recoveryPath, claimedPath);
+          if (disk.existsSync(recoveryPath) && !disk.existsSync(claimedPath)) {
+            disk.renameSync(recoveryPath, claimedPath);
           }
         } catch {}
         throw error;

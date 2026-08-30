@@ -1,5 +1,5 @@
 // 云端文档库文件契约：每篇文档一个带 frontmatter 的 Markdown 文件。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 
 import { isValidSessionName, sessionDir } from './workspace.mjs';
@@ -145,22 +145,22 @@ export function publishDocument(input, { exactSession = true, now } = {}) {
   const file = documentPath(session, category, slug, { exactSession });
   let previous = null;
   try {
-    previous = parseStoredDocument(fs.readFileSync(file, 'utf8'), category, slug);
+    previous = parseStoredDocument(disk.readFileSync(file, 'utf8'), category, slug);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
 
   const updatedAt = nextUpdatedAt(previous?.updatedAt, now);
   const document = { category, slug, title, updatedAt, body };
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, serializeDocument(document), 'utf8');
+  disk.mkdirSync(path.dirname(file), { recursive: true });
+  disk.writeFileSync(file, serializeDocument(document), 'utf8');
   return { created: previous == null, document };
 }
 
 function readDocumentInCategory(session, category, slug, { exactSession }) {
   const file = documentPath(session, category, slug, { exactSession });
   try {
-    return parseStoredDocument(fs.readFileSync(file, 'utf8'), category, slug);
+    return parseStoredDocument(disk.readFileSync(file, 'utf8'), category, slug);
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
@@ -198,7 +198,7 @@ export function listDocuments(session, { exactSession = true } = {}) {
     const categoryDir = path.join(sessionDir(session, { exactSession }), 'documents', category);
     let entries;
     try {
-      entries = fs.readdirSync(categoryDir, { withFileTypes: true });
+      entries = disk.readdirSync(categoryDir, { withFileTypes: true });
     } catch (error) {
       if (error?.code === 'ENOENT') continue;
       throw error;

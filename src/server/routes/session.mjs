@@ -32,6 +32,7 @@ import {
   feedbackVisibilityForIdentity,
   filterFeedbackForIdentity,
 } from '../server.mjs';
+import { presentRound } from '../../core/present.mjs';
 
 export function rounds(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
@@ -84,7 +85,7 @@ export function rounds(ctx) {
         const registeredProject = content.round === 1
           ? registeredProjectForSession(content.session)
           : null;
-        const saved = writeRound(content.session, content, { allowOverwrite: false, exactSession: true });
+        const saved = presentRound(content.session, content, { exactSession: true });
         if (content.round === 1) {
           updateSessionMetadata(saved.session, {
             ...(typeof content.title === 'string' && content.title.trim()
