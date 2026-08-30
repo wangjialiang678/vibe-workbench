@@ -1,7 +1,7 @@
 node_modules/
 workspace/
+version.json
 .DS_Store
 *.log
 config/participants.json
 .claude/workflow/archive_*/
-

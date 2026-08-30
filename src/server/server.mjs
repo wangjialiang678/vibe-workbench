@@ -10,6 +10,7 @@ import { cors, json, noReferrer, parseQuery, readBody, readRawBody, readRawBodyL
 import { OWNER_IDENTITY, isControlPage, requestTokens, requiresPageToken, resolveRequestIdentity } from './auth.mjs';
 import { configuredClaimTimeoutMs, inboxSweepIntervalMs } from './route-utils.mjs';
 import { cloudAiEnabled } from '../cloud-ai.mjs';
+import { readHealthVersion } from './version.mjs';
 
 export { rewriteEmbedHtml } from './proxy-html.mjs';
 export { safeTokenEqual, requiresPageToken } from './auth.mjs';
@@ -30,7 +31,7 @@ function handleRequest(req, res, expectedToken = '', eventWebhook = '', particip
 }
 
 export function startServer(port, host = '127.0.0.1', { participantsFile = DEFAULT_PARTICIPANTS_FILE, env = process.env } = {}) {
-  const listenHost = host || '127.0.0.1'; const token = env.WORKBENCH_TOKEN || ''; const eventWebhook = env.WORKBENCH_EVENT_WEBHOOK || ''; const inboxClaimTimeoutMs = configuredClaimTimeoutMs(env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS); const runtimeState = { workerHeartbeat: null, inboxClaimTimeoutMs, cloudAiEnabled: cloudAiEnabled(env), cloudAiExplicitlyDisabled: env.WB_CLOUD_AI === 'off' }; runtimeState.controlTowerService = createControlTowerService({ runtimeState });
+  const listenHost = host || '127.0.0.1'; const token = env.WORKBENCH_TOKEN || ''; const eventWebhook = env.WORKBENCH_EVENT_WEBHOOK || ''; const inboxClaimTimeoutMs = configuredClaimTimeoutMs(env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS); const runtimeState = { workerHeartbeat: null, inboxClaimTimeoutMs, cloudAiEnabled: cloudAiEnabled(env), cloudAiExplicitlyDisabled: env.WB_CLOUD_AI === 'off', healthVersion: readHealthVersion() }; runtimeState.controlTowerService = createControlTowerService({ runtimeState });
   if (listenHost.toLowerCase() !== '127.0.0.1' && listenHost.toLowerCase() !== 'localhost' && !token) throw new Error('拒绝监听非本机地址：请先设置 WORKBENCH_TOKEN 访问令牌');
   const server = http.createServer((req, res) => handleRequest(req, res, token, eventWebhook, participantsFile, runtimeState));
   const inboxTimer = setInterval(() => { try { const reset = resetExpiredInboxClaims({ claimTimeoutMs: inboxClaimTimeoutMs }); if (reset > 0) console.error(`[workbench:inbox] 已回退 ${reset} 个超时租约`); } catch (error) { console.error('[workbench:inbox] 超时租约扫描失败：', error.message); } }, inboxSweepIntervalMs(inboxClaimTimeoutMs));
