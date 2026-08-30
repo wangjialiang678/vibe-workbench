@@ -1,0 +1,1 @@
+{"session":"golden-diagram","round":1,"blocks":[{"id":"flow","type":"diagram","title":"Flow","body":"flowchart LR\nA-->B","rationale":"A leads to B"}]}

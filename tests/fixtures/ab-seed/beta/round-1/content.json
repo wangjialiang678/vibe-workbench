@@ -1,0 +1,9 @@
+{
+  "session": "beta",
+  "round": 1,
+  "title": "Beta prototype",
+  "blocks": [
+    { "id": "prototype", "type": "prototype", "mode": "wireframe", "screen": { "name": "Fixture screen", "widgets": [] } },
+    { "id": "flow", "type": "diagram", "body": "flowchart LR\nA-->B" }
+  ]
+}

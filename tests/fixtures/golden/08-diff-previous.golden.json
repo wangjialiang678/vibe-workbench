@@ -1,0 +1,58 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"keep\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>same</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"keep\">\n  <button class=\"comment-btn\" data-block-id=\"keep\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"keep\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"keep\">\n      <textarea class=\"comment-input\" data-comment-for=\"keep\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"keep\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"keep\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"keep\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"keep\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"keep\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"keep\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"change\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>before</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"change\">\n  <button class=\"comment-btn\" data-block-id=\"change\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"change\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"change\">\n      <textarea class=\"comment-input\" data-comment-for=\"change\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"change\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"change\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"change\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"change\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"change\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"change\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"remove\" data-type=\"verdict\" data-change=\"new\" class=\"block block-verdict\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n<div class=\"block-body\"><p>gone</p></div>\n\n<div class=\"block-content\"><div class=\"verdict-group\" role=\"group\" aria-label=\"表态\">\n  <button class=\"verdict-btn\" data-verdict=\"赞成\" data-block-id=\"remove\" aria-label=\"赞成\">✓赞成</button>\n  <button class=\"verdict-btn\" data-verdict=\"异议\" data-block-id=\"remove\" aria-label=\"异议\">✗异议</button>\n  <button class=\"verdict-btn\" data-verdict=\"疑问\" data-block-id=\"remove\" aria-label=\"疑问\">?疑问</button>\n</div>\n<div class=\"verdict-comment\" hidden>\n  <textarea class=\"verdict-reason\" placeholder=\"请说明理由（推荐填写）\" data-block-id=\"remove\" rows=\"2\"></textarea>\n</div></div>\n\n<div class=\"comment-area\" data-comment-area=\"remove\">\n  <button class=\"comment-btn\" data-block-id=\"remove\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"remove\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"remove\">\n      <textarea class=\"comment-input\" data-comment-for=\"remove\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"remove\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"remove\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"remove\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"remove\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"remove\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"remove\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "same",
+      "id": "keep",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "body": "before",
+      "id": "change",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "body": "gone",
+      "id": "remove",
+      "type": "verdict"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "body": "same",
+        "id": "keep",
+        "type": "markdown"
+      },
+      {
+        "_change": "new",
+        "body": "before",
+        "id": "change",
+        "type": "markdown"
+      },
+      {
+        "_change": "new",
+        "body": "gone",
+        "id": "remove",
+        "type": "verdict"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

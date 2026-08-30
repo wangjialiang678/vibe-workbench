@@ -1,0 +1,36 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"frame\" data-type=\"prototype\" data-change=\"new\" class=\"block block-prototype\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"proto-container\" data-proto=\"frame\"><div class=\"proto-iframe-wrap\" style=\"position:relative;height:480px\">\n  <iframe class=\"proto-iframe\" src=\"/assets/golden-iframe/mock.html\"\n    style=\"width:100%;height:100%;border:0\" title=\"/assets/golden-iframe/mock.html\"></iframe>\n  <svg class=\"proto-overlay\" data-proto-overlay=\"frame\" xmlns=\"http://www.w3.org/2000/svg\"\n  style=\"position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:all;overflow:visible\">\n  <g class=\"proto-pins\" data-proto-pins=\"frame\"></g>\n</svg>\n</div><div class=\"proto-hint\" style=\"font-size:12px;color:var(--color-text-muted);margin-top:4px\">点击图上任意位置落 pin 批注；点已有 pin 编辑或删除</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"frame\">\n  <button class=\"comment-btn\" data-block-id=\"frame\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"frame\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"frame\">\n      <textarea class=\"comment-input\" data-comment-for=\"frame\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"frame\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"frame\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"frame\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"frame\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"frame\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"frame\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "height": 480,
+      "id": "frame",
+      "mode": "iframe",
+      "src": "/assets/golden-iframe/mock.html",
+      "type": "prototype"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "height": 480,
+        "id": "frame",
+        "mode": "iframe",
+        "src": "/assets/golden-iframe/mock.html",
+        "type": "prototype"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

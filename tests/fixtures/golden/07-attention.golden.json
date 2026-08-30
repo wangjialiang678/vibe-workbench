@@ -1,0 +1,119 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"context\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>Context</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"context\">\n  <button class=\"comment-btn\" data-block-id=\"context\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"context\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"context\">\n      <textarea class=\"comment-input\" data-comment-for=\"context\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"context\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"context\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"context\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"context\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"context\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"context\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"must\" data-type=\"verdict\" data-change=\"new\" class=\"block block-verdict\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"verdict-group\" role=\"group\" aria-label=\"表态\">\n  <button class=\"verdict-btn\" data-verdict=\"赞成\" data-block-id=\"must\" aria-label=\"赞成\">✓赞成</button>\n  <button class=\"verdict-btn\" data-verdict=\"异议\" data-block-id=\"must\" aria-label=\"异议\">✗异议</button>\n  <button class=\"verdict-btn\" data-verdict=\"疑问\" data-block-id=\"must\" aria-label=\"疑问\">?疑问</button>\n</div>\n<div class=\"verdict-comment\" hidden>\n  <textarea class=\"verdict-reason\" placeholder=\"请说明理由（推荐填写）\" data-block-id=\"must\" rows=\"2\"></textarea>\n</div></div>\n\n<div class=\"comment-area\" data-comment-area=\"must\">\n  <button class=\"comment-btn\" data-block-id=\"must\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"must\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"must\">\n      <textarea class=\"comment-input\" data-comment-for=\"must\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"must\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"must\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"must\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"must\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"must\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"must\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"recommended\" data-type=\"choice\" data-change=\"new\" class=\"block block-choice\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"choice-group\" role=\"group\"><div class=\"choice-item\">\n<label class=\"choice-option choice-recommended\" data-recommended=\"true\">\n  <input type=\"radio\" name=\"choice-recommended\" value=\"yes\" data-default-check>\n  <span class=\"opt-label\">Yes <span class=\"rec-label\">推荐</span></span>\n</label>\n<div class=\"opt-proscons\">\n<ul class=\"opt-pros\" aria-label=\"好处\"><li class=\"pro\">Good</li></ul>\n<ul class=\"opt-cons\" aria-label=\"代价 / 风险\"><li class=\"con\">Cost</li></ul>\n</div>\n</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"recommended\">\n  <button class=\"comment-btn\" data-block-id=\"recommended\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"recommended\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"recommended\">\n      <textarea class=\"comment-input\" data-comment-for=\"recommended\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"recommended\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"recommended\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"recommended\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"recommended\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"recommended\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"recommended\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"fyi\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"></div>\n\n<div class=\"comment-area\" data-comment-area=\"fyi\">\n  <button class=\"comment-btn\" data-block-id=\"fyi\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"fyi\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"fyi\">\n      <textarea class=\"comment-input\" data-comment-for=\"fyi\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"fyi\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"fyi\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"fyi\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"fyi\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"fyi\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"fyi\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"settled\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>Old</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"settled\">\n  <button class=\"comment-btn\" data-block-id=\"settled\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"settled\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"settled\">\n      <textarea class=\"comment-input\" data-comment-for=\"settled\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"settled\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"settled\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"settled\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"settled\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"settled\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"settled\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "Context",
+      "id": "context",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "id": "must",
+      "importance": "high",
+      "needsDecision": true,
+      "type": "verdict"
+    },
+    {
+      "_change": "new",
+      "hasRecommendation": true,
+      "id": "recommended",
+      "needsDecision": true,
+      "options": [
+        {
+          "cons": [
+            "Cost"
+          ],
+          "id": "yes",
+          "label": "Yes",
+          "pros": [
+            "Good"
+          ]
+        }
+      ],
+      "recommendation": "yes",
+      "type": "choice"
+    },
+    {
+      "_change": "new",
+      "default": "Read",
+      "id": "fyi",
+      "importance": "high",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "body": "Old",
+      "id": "settled",
+      "type": "markdown"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [
+      {
+        "_change": "new",
+        "id": "must",
+        "importance": "high",
+        "needsDecision": true,
+        "type": "verdict"
+      }
+    ],
+    "zoneB": [
+      {
+        "_change": "new",
+        "hasRecommendation": true,
+        "id": "recommended",
+        "needsDecision": true,
+        "options": [
+          {
+            "cons": [
+              "Cost"
+            ],
+            "id": "yes",
+            "label": "Yes",
+            "pros": [
+              "Good"
+            ]
+          }
+        ],
+        "recommendation": "yes",
+        "type": "choice"
+      }
+    ],
+    "zoneCFyi": [],
+    "zoneCReview": [
+      {
+        "_change": "new",
+        "default": "Read",
+        "id": "fyi",
+        "importance": "high",
+        "type": "markdown"
+      }
+    ],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "body": "Context",
+        "id": "context",
+        "type": "markdown"
+      },
+      {
+        "_change": "new",
+        "body": "Old",
+        "id": "settled",
+        "type": "markdown"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}
