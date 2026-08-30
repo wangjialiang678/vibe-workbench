@@ -52,8 +52,8 @@ storage 所有写入遵守统一原子协议（以 inbox 现有实现为范本�
 
 1. **每个 server 各持一份夹具副本**：把只读种子夹具 `cp -r` 成两份独立可写目录，
    基线 server 指向副本 A、工作副本 server 指向副本 B。
-2. **基线 = 冻结 SHA**：基线 server 从 `git worktree` 检出 **`29efa23`**（tag pre-rearch-2026-08-30 的实际 commit），
-   不用当前工作树（回应评估"基线未冻结"）。
+2. **基线 = 冻结 tag**：基线 server 从 `git worktree` 检出 **`refactor-baseline-2026-08-30`（5a68737，phase0 安全修复后的冻结点）**，
+   不用当前工作树（回应评估"基线未冻结"）。⚠️ 不用更早的 `pre-rearch-2026-08-30`(29efa23)——那早于 phase0 的故意安全变更（sessions/projects 过滤、_lab 删除），拿它当基线会把安全修复误报成差异。
 3. **请求分两类**：
    - GET/只读：直接逐条 diff。
    - POST/写：成对执行同一请求，diff **响应 + 该请求在两副本产生的文件树变化**（状态迁移对拍），
