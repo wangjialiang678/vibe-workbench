@@ -21,7 +21,7 @@ description: 用网页工作台（Vibe Workbench）跟用户确认方案 / 做�
 | **UI / 交互设计评审** | `design-review` | prototype(线框/截图/高保真，SVG 定位批注) + verdict/choice + checklist |
 | **审阅 / 共创文档** · brainstorm | `think-discuss` | markdown + editable(就地改写) + verdict + 批注 |
 
-## 一句话流程（默认模式①：IDE 内辅助，安全、无 §3.7 风险）
+## 一句话流程（默认模式①：IDE 内辅助）
 
 `present 渲染一轮 → 把 URL 发给用户 → 后台 wait → 用户提交即唤醒你 → 读 feedback 续跑`
 
@@ -146,8 +146,8 @@ process.stdout.write(JSON.stringify({session:"ses1",round:1,title:"X",blocks}));
 
 ## 模式②（可选）：全自动 web 驱动
 
-`node "$WB/bin/workbench.mjs" up --port 8099` 起 serve + 常驻 listener；用户纯在网页交互，提交后 listener 用 `claude -p --resume` 自动驱动续跑（适合离开电脑/移动/无人值守）。
-⚠️ 用订阅跑自动化触及 Anthropic 消费者条款 §3.7（有封号先例）——仅在你知情接受时用于无人值守场景；交互式协作请用模式①。
+`node "$WB/bin/workbench.mjs" up --port 8099` 起 serve + 常驻 listener；用户纯在网页交互，提交后 listener 用 `claude -p --resume` 自动驱动续跑（适合离开电脑/移动/无人值守）。这是给顾问/客户在线改动反馈、由云端 AI 自动续跑的核心模式。
+> 说明（2026-08-30 王佳梁订正）：此前此处写「用订阅跑自动化触及消费者条款 §3.7、有封号先例」——**该说法有误，已删除**。订阅额度驱动的无人值守自动化是被允许的用法。
 
 ## 万一卡住了怎么办
 
