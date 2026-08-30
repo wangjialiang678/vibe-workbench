@@ -1,0 +1,1 @@
+{"session":"golden-diff","round":2,"prevRound":1,"blocks":[{"id":"keep","type":"markdown","body":"same"},{"id":"change","type":"markdown","body":"after"},{"id":"new","type":"choice","needsDecision":true,"options":[{"id":"x","label":"X","pros":["P"],"cons":["C"]}]}]}

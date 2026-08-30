@@ -1,0 +1,88 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"choose\" data-type=\"choice\" data-change=\"new\" class=\"block block-choice\">\n<h3 class=\"block-title\">Choose<span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></h3>\n\n\n<div class=\"decision-context\"><section class=\"decision-seg decision-bg\">\n  <h4 class=\"decision-h\">背景</h4>\n  <div class=\"decision-text\"><p>Context</p></div>\n</section>\n<section class=\"decision-seg decision-why\">\n  <h4 class=\"decision-h\">为什么需要你定</h4>\n  <div class=\"decision-text\"><p>A decision is needed</p></div>\n</section></div>\n<div class=\"block-content\"><div class=\"choice-group\" role=\"group\"><div class=\"choice-item\">\n<label class=\"choice-option choice-recommended\" data-recommended=\"true\">\n  <input type=\"radio\" name=\"choice-choose\" value=\"a\" data-default-check>\n  <span class=\"opt-label\">Option A <span class=\"rec-label\">推荐</span></span>\n</label>\n<div class=\"opt-proscons\">\n<ul class=\"opt-pros\" aria-label=\"好处\"><li class=\"pro\">Safe</li></ul>\n<ul class=\"opt-cons\" aria-label=\"代价 / 风险\"><li class=\"con\">Slow</li></ul>\n</div>\n</div>\n<div class=\"choice-item\">\n<label class=\"choice-option\">\n  <input type=\"radio\" name=\"choice-choose\" value=\"b\">\n  <span class=\"opt-label\">Option B</span>\n</label>\n<div class=\"opt-proscons\">\n<ul class=\"opt-pros\" aria-label=\"好处\"><li class=\"pro\">Fast</li></ul>\n<ul class=\"opt-cons\" aria-label=\"代价 / 风险\"><li class=\"con\">Risk</li></ul>\n</div>\n</div></div></div>\n<section class=\"decision-seg decision-rec\">\n  <h4 class=\"decision-h\">推荐及理由</h4>\n  <div class=\"decision-text\"><p>Lower risk</p></div>\n</section>\n<div class=\"comment-area\" data-comment-area=\"choose\">\n  <button class=\"comment-btn\" data-block-id=\"choose\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"choose\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"choose\">\n      <textarea class=\"comment-input\" data-comment-for=\"choose\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"choose\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"choose\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"choose\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"choose\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"choose\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"choose\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "background": "Context",
+      "hasRecommendation": true,
+      "id": "choose",
+      "needsDecision": true,
+      "options": [
+        {
+          "cons": [
+            "Slow"
+          ],
+          "id": "a",
+          "label": "Option A",
+          "pros": [
+            "Safe"
+          ]
+        },
+        {
+          "cons": [
+            "Risk"
+          ],
+          "id": "b",
+          "label": "Option B",
+          "pros": [
+            "Fast"
+          ]
+        }
+      ],
+      "recommendReason": "Lower risk",
+      "recommendation": "a",
+      "title": "Choose",
+      "type": "choice",
+      "why": "A decision is needed"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [
+      {
+        "_change": "new",
+        "background": "Context",
+        "hasRecommendation": true,
+        "id": "choose",
+        "needsDecision": true,
+        "options": [
+          {
+            "cons": [
+              "Slow"
+            ],
+            "id": "a",
+            "label": "Option A",
+            "pros": [
+              "Safe"
+            ]
+          },
+          {
+            "cons": [
+              "Risk"
+            ],
+            "id": "b",
+            "label": "Option B",
+            "pros": [
+              "Fast"
+            ]
+          }
+        ],
+        "recommendReason": "Lower risk",
+        "recommendation": "a",
+        "title": "Choose",
+        "type": "choice",
+        "why": "A decision is needed"
+      }
+    ],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

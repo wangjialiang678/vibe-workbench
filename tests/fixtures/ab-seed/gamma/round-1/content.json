@@ -1,0 +1,8 @@
+{
+  "session": "gamma",
+  "round": 1,
+  "title": "Gamma notes",
+  "blocks": [
+    { "id": "notes", "type": "markdown", "body": "No customer data lives in this fixture." }
+  ]
+}

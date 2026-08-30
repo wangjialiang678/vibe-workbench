@@ -1,0 +1,36 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"flow\" data-type=\"diagram\" data-change=\"new\" class=\"block block-diagram\">\n<h3 class=\"block-title\">Flow<span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></h3>\n\n\n\n<div class=\"block-content\"><pre class=\"mermaid\">flowchart LR\nA--&gt;B</pre><details class=\"diagram-rationale\"><summary>设计依据</summary><div><p>A leads to B</p></div></details></div>\n\n<div class=\"comment-area\" data-comment-area=\"flow\">\n  <button class=\"comment-btn\" data-block-id=\"flow\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"flow\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"flow\">\n      <textarea class=\"comment-input\" data-comment-for=\"flow\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"flow\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"flow\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"flow\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"flow\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"flow\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"flow\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "flowchart LR\nA-->B",
+      "id": "flow",
+      "rationale": "A leads to B",
+      "title": "Flow",
+      "type": "diagram"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "body": "flowchart LR\nA-->B",
+        "id": "flow",
+        "rationale": "A leads to B",
+        "title": "Flow",
+        "type": "diagram"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

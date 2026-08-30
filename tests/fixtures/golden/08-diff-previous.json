@@ -1,0 +1,1 @@
+{"session":"golden-diff","round":1,"blocks":[{"id":"keep","type":"markdown","body":"same"},{"id":"change","type":"markdown","body":"before"},{"id":"remove","type":"verdict","body":"gone"}]}

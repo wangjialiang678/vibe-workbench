@@ -1,0 +1,64 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"wire\" data-type=\"prototype\" data-change=\"new\" class=\"block block-prototype\">\n<h3 class=\"block-title\">Wireframe<span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></h3>\n\n\n\n<div class=\"block-content\"><div class=\"proto-container\" data-proto=\"wire\"><div class=\"proto-modes\" data-proto-modes=\"wire\">\n  <button type=\"button\" class=\"proto-mode-btn active\" data-proto-mode=\"annotate\">🖊 批注</button>\n  <button type=\"button\" class=\"proto-mode-btn\" data-proto-mode=\"edit\">✥ 编辑（移动控件）</button>\n  <button type=\"button\" class=\"proto-reset\" data-proto-reset=\"wire\" hidden>↺ 复位</button>\n  <span class=\"proto-mode-hint\" data-proto-hint=\"wire\">点图上任意处落 pin 批注</span>\n</div>\n<div class=\"proto-wireframe-canvas proto-phone\" data-proto-canvas=\"wire\" data-mode=\"annotate\">\n  <div class=\"proto-notch\" aria-hidden=\"true\"></div>\n  <div class=\"proto-widgets\"><div class=\"proto-widget proto-widget-button\" data-proto-widget=\"wire\" data-widget-id=\"button\"\n  style=\"left:10%;top:20%;width:50%;height:10%\" title=\"Continue\"><span class=\"pw-text\">Continue</span><span class=\"pw-resize\" data-proto-resize aria-hidden=\"true\"></span></div></div>\n  <svg class=\"proto-overlay\" data-proto-overlay=\"wire\" xmlns=\"http://www.w3.org/2000/svg\"\n  style=\"position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:all;overflow:visible\">\n  <g class=\"proto-pins\" data-proto-pins=\"wire\"></g>\n</svg>\n</div><div class=\"proto-hint\" style=\"font-size:12px;color:var(--color-text-muted);margin-top:4px\">点击图上任意位置落 pin 批注；点已有 pin 编辑或删除</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"wire\">\n  <button class=\"comment-btn\" data-block-id=\"wire\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"wire\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"wire\">\n      <textarea class=\"comment-input\" data-comment-for=\"wire\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"wire\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"wire\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"wire\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"wire\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"wire\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"wire\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "frame": "phone",
+      "id": "wire",
+      "mode": "wireframe",
+      "screen": {
+        "name": "Home",
+        "widgets": [
+          {
+            "cls": "button",
+            "h": 0.1,
+            "id": "button",
+            "text": "Continue",
+            "w": 0.5,
+            "x": 0.1,
+            "y": 0.2
+          }
+        ]
+      },
+      "title": "Wireframe",
+      "type": "prototype"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "frame": "phone",
+        "id": "wire",
+        "mode": "wireframe",
+        "screen": {
+          "name": "Home",
+          "widgets": [
+            {
+              "cls": "button",
+              "h": 0.1,
+              "id": "button",
+              "text": "Continue",
+              "w": 0.5,
+              "x": 0.1,
+              "y": 0.2
+            }
+          ]
+        },
+        "title": "Wireframe",
+        "type": "prototype"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

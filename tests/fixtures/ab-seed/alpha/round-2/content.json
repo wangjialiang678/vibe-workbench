@@ -1,0 +1,12 @@
+{
+  "session": "alpha",
+  "round": 2,
+  "title": "Alpha second round",
+  "blocks": [
+    { "id": "overview", "type": "markdown", "body": "The fixture changed here." },
+    { "id": "plan", "type": "choice", "title": "Choose a plan", "needsDecision": true, "hasRecommendation": true, "recommendation": "safe", "options": [
+      { "id": "safe", "label": "Safe plan", "pros": ["Stable"], "cons": ["Slower"] },
+      { "id": "fast", "label": "Fast plan", "pros": ["Quick"], "cons": ["Riskier"] }
+    ] }
+  ]
+}

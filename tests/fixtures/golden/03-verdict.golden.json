@@ -1,0 +1,38 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"verdict\" data-type=\"verdict\" data-change=\"new\" class=\"block block-verdict\">\n<h3 class=\"block-title\">Approve?<span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></h3>\n\n<div class=\"block-body\"><p>Review the decision.</p></div>\n\n<div class=\"block-content\"><div class=\"verdict-group\" role=\"group\" aria-label=\"表态\">\n  <button class=\"verdict-btn\" data-verdict=\"赞成\" data-block-id=\"verdict\" aria-label=\"赞成\">✓赞成</button>\n  <button class=\"verdict-btn\" data-verdict=\"异议\" data-block-id=\"verdict\" aria-label=\"异议\">✗异议</button>\n  <button class=\"verdict-btn\" data-verdict=\"疑问\" data-block-id=\"verdict\" aria-label=\"疑问\">?疑问</button>\n</div>\n<div class=\"verdict-comment\" hidden>\n  <textarea class=\"verdict-reason\" placeholder=\"请说明理由（推荐填写）\" data-block-id=\"verdict\" rows=\"2\"></textarea>\n</div></div>\n\n<div class=\"comment-area\" data-comment-area=\"verdict\">\n  <button class=\"comment-btn\" data-block-id=\"verdict\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"verdict\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"verdict\">\n      <textarea class=\"comment-input\" data-comment-for=\"verdict\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"verdict\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"verdict\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"verdict\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"verdict\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"verdict\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"verdict\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "Review the decision.",
+      "id": "verdict",
+      "importance": "high",
+      "needsDecision": true,
+      "title": "Approve?",
+      "type": "verdict"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [
+      {
+        "_change": "new",
+        "body": "Review the decision.",
+        "id": "verdict",
+        "importance": "high",
+        "needsDecision": true,
+        "title": "Approve?",
+        "type": "verdict"
+      }
+    ],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

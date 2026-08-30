@@ -1,0 +1,9 @@
+{
+  "session": "alpha",
+  "round": 1,
+  "title": "Alpha first round",
+  "blocks": [
+    { "id": "overview", "type": "markdown", "body": "The fixture starts here." },
+    { "id": "approve", "type": "verdict", "title": "Approve baseline?", "needsDecision": true }
+  ]
+}

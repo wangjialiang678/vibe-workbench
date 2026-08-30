@@ -1,0 +1,108 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"keep\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>same</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"keep\">\n  <button class=\"comment-btn\" data-block-id=\"keep\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"keep\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"keep\">\n      <textarea class=\"comment-input\" data-comment-for=\"keep\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"keep\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"keep\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"keep\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"keep\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"keep\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"keep\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"change\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>after</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"change\">\n  <button class=\"comment-btn\" data-block-id=\"change\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"change\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"change\">\n      <textarea class=\"comment-input\" data-comment-for=\"change\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"change\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"change\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"change\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"change\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"change\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"change\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"new\" data-type=\"choice\" data-change=\"new\" class=\"block block-choice\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"choice-group\" role=\"group\"><div class=\"choice-item\">\n<label class=\"choice-option\">\n  <input type=\"radio\" name=\"choice-new\" value=\"x\">\n  <span class=\"opt-label\">X</span>\n</label>\n<div class=\"opt-proscons\">\n<ul class=\"opt-pros\" aria-label=\"好处\"><li class=\"pro\">P</li></ul>\n<ul class=\"opt-cons\" aria-label=\"代价 / 风险\"><li class=\"con\">C</li></ul>\n</div>\n</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"new\">\n  <button class=\"comment-btn\" data-block-id=\"new\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"new\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"new\">\n      <textarea class=\"comment-input\" data-comment-for=\"new\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"new\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"new\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"new\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"new\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"new\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"new\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "unchanged",
+      "body": "same",
+      "id": "keep",
+      "type": "markdown"
+    },
+    {
+      "_change": "changed",
+      "_changedFields": [
+        "body"
+      ],
+      "_prev": {
+        "body": "before",
+        "default": null,
+        "options": null,
+        "recommendation": null,
+        "title": null,
+        "type": "markdown",
+        "value": null
+      },
+      "body": "after",
+      "id": "change",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "id": "new",
+      "needsDecision": true,
+      "options": [
+        {
+          "cons": [
+            "C"
+          ],
+          "id": "x",
+          "label": "X",
+          "pros": [
+            "P"
+          ]
+        }
+      ],
+      "type": "choice"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [
+      {
+        "_change": "new",
+        "id": "new",
+        "needsDecision": true,
+        "options": [
+          {
+            "cons": [
+              "C"
+            ],
+            "id": "x",
+            "label": "X",
+            "pros": [
+              "P"
+            ]
+          }
+        ],
+        "type": "choice"
+      }
+    ],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "changed",
+        "_changedFields": [
+          "body"
+        ],
+        "_prev": {
+          "body": "before",
+          "default": null,
+          "options": null,
+          "recommendation": null,
+          "title": null,
+          "type": "markdown",
+          "value": null
+        },
+        "body": "after",
+        "id": "change",
+        "type": "markdown"
+      }
+    ],
+    "zoneSettled": [
+      {
+        "_change": "unchanged",
+        "body": "same",
+        "id": "keep",
+        "type": "markdown"
+      }
+    ]
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

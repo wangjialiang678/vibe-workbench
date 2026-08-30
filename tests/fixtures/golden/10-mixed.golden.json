@@ -1,0 +1,113 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"md\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><p>Text</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"md\">\n  <button class=\"comment-btn\" data-block-id=\"md\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"md\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"md\">\n      <textarea class=\"comment-input\" data-comment-for=\"md\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"md\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"md\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"md\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"md\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"md\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"md\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"decision\" data-type=\"choice\" data-change=\"new\" class=\"block block-choice\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"choice-group\" role=\"group\"><div class=\"choice-item\">\n<label class=\"choice-option\">\n  <input type=\"radio\" name=\"choice-decision\" value=\"one\">\n  <span class=\"opt-label\">One</span>\n</label>\n<div class=\"opt-proscons\">\n<ul class=\"opt-pros\" aria-label=\"好处\"><li class=\"pro\">Pro</li></ul>\n<ul class=\"opt-cons\" aria-label=\"代价 / 风险\"><li class=\"con\">Con</li></ul>\n</div>\n</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"decision\">\n  <button class=\"comment-btn\" data-block-id=\"decision\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"decision\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"decision\">\n      <textarea class=\"comment-input\" data-comment-for=\"decision\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"decision\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"decision\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"decision\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"decision\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"decision\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"decision\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"verdict\" data-type=\"verdict\" data-change=\"new\" class=\"block block-verdict\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"verdict-group\" role=\"group\" aria-label=\"表态\">\n  <button class=\"verdict-btn\" data-verdict=\"赞成\" data-block-id=\"verdict\" aria-label=\"赞成\">✓赞成</button>\n  <button class=\"verdict-btn\" data-verdict=\"异议\" data-block-id=\"verdict\" aria-label=\"异议\">✗异议</button>\n  <button class=\"verdict-btn\" data-verdict=\"疑问\" data-block-id=\"verdict\" aria-label=\"疑问\">?疑问</button>\n</div>\n<div class=\"verdict-comment\" hidden>\n  <textarea class=\"verdict-reason\" placeholder=\"请说明理由（推荐填写）\" data-block-id=\"verdict\" rows=\"2\"></textarea>\n</div></div>\n\n<div class=\"comment-area\" data-comment-area=\"verdict\">\n  <button class=\"comment-btn\" data-block-id=\"verdict\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"verdict\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"verdict\">\n      <textarea class=\"comment-input\" data-comment-for=\"verdict\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"verdict\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"verdict\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"verdict\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"verdict\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"verdict\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"verdict\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"diagram\" data-type=\"diagram\" data-change=\"new\" class=\"block block-diagram\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><pre class=\"mermaid\">sequenceDiagram\nA-&gt;&gt;B: ping</pre></div>\n\n<div class=\"comment-area\" data-comment-area=\"diagram\">\n  <button class=\"comment-btn\" data-block-id=\"diagram\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"diagram\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"diagram\">\n      <textarea class=\"comment-input\" data-comment-for=\"diagram\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"diagram\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"diagram\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"diagram\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"diagram\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"diagram\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"diagram\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>",
+    "<section data-block-id=\"prototype\" data-type=\"prototype\" data-change=\"new\" class=\"block block-prototype\">\n<div class=\"change-badge-solo\"><span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></div>\n\n\n\n<div class=\"block-content\"><div class=\"proto-container\" data-proto=\"prototype\"><div class=\"proto-image-wrap\" style=\"position:relative;display:inline-block;max-width:100%\">\n  <img class=\"proto-image\" src=\"/assets/image.png\" alt=\"原型截图\"\n    style=\"display:block;max-width:100%;height:auto\">\n  <svg class=\"proto-overlay\" data-proto-overlay=\"prototype\" xmlns=\"http://www.w3.org/2000/svg\"\n  style=\"position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:all;overflow:visible\">\n  <g class=\"proto-pins\" data-proto-pins=\"prototype\"></g>\n</svg>\n</div><div class=\"proto-hint\" style=\"font-size:12px;color:var(--color-text-muted);margin-top:4px\">点击图上任意位置落 pin 批注；点已有 pin 编辑或删除</div></div></div>\n\n<div class=\"comment-area\" data-comment-area=\"prototype\">\n  <button class=\"comment-btn\" data-block-id=\"prototype\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"prototype\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"prototype\">\n      <textarea class=\"comment-input\" data-comment-for=\"prototype\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"prototype\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"prototype\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"prototype\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"prototype\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"prototype\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"prototype\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "Text",
+      "id": "md",
+      "type": "markdown"
+    },
+    {
+      "_change": "new",
+      "hasRecommendation": false,
+      "id": "decision",
+      "needsDecision": true,
+      "options": [
+        {
+          "cons": [
+            "Con"
+          ],
+          "id": "one",
+          "label": "One",
+          "pros": [
+            "Pro"
+          ]
+        }
+      ],
+      "type": "choice"
+    },
+    {
+      "_change": "new",
+      "id": "verdict",
+      "needsDecision": true,
+      "type": "verdict"
+    },
+    {
+      "_change": "new",
+      "body": "sequenceDiagram\nA->>B: ping",
+      "id": "diagram",
+      "type": "diagram"
+    },
+    {
+      "_change": "new",
+      "id": "prototype",
+      "imageUrl": "/assets/image.png",
+      "mode": "image",
+      "type": "prototype"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [
+      {
+        "_change": "new",
+        "hasRecommendation": false,
+        "id": "decision",
+        "needsDecision": true,
+        "options": [
+          {
+            "cons": [
+              "Con"
+            ],
+            "id": "one",
+            "label": "One",
+            "pros": [
+              "Pro"
+            ]
+          }
+        ],
+        "type": "choice"
+      },
+      {
+        "_change": "new",
+        "id": "verdict",
+        "needsDecision": true,
+        "type": "verdict"
+      }
+    ],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "body": "Text",
+        "id": "md",
+        "type": "markdown"
+      },
+      {
+        "_change": "new",
+        "body": "sequenceDiagram\nA->>B: ping",
+        "id": "diagram",
+        "type": "diagram"
+      },
+      {
+        "_change": "new",
+        "id": "prototype",
+        "imageUrl": "/assets/image.png",
+        "mode": "image",
+        "type": "prototype"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}

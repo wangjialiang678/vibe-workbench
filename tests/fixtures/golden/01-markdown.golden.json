@@ -1,0 +1,34 @@
+{
+  "blockHtml": [
+    "<section data-block-id=\"intro\" data-type=\"markdown\" data-change=\"new\" class=\"block block-markdown\">\n<h3 class=\"block-title\">Intro<span class=\"change-badge\"><span class=\"badge badge-new\" aria-label=\"新增\">＋NEW</span></span></h3>\n\n\n\n<div class=\"block-content\"><h1>Hello</h1>\n<p>Golden markdown.</p></div>\n\n<div class=\"comment-area\" data-comment-area=\"intro\">\n  <button class=\"comment-btn\" data-block-id=\"intro\" aria-expanded=\"false\" aria-label=\"添加批注\">+批注</button>\n  <div class=\"comment-box\" data-comment-box=\"intro\" hidden>\n    <div class=\"comment-edit\" data-comment-edit=\"intro\">\n      <textarea class=\"comment-input\" data-comment-for=\"intro\" rows=\"2\" placeholder=\"写下你的批注…\"></textarea>\n      <div class=\"comment-actions\">\n        <button class=\"comment-save\" data-comment-save=\"intro\" type=\"button\">保存</button>\n        <button class=\"comment-delete\" data-comment-del=\"intro\" type=\"button\">删除</button>\n      </div>\n    </div>\n    <div class=\"comment-read\" data-comment-read=\"intro\" hidden>\n      <div class=\"comment-read-text\" data-comment-text=\"intro\"></div>\n      <div class=\"comment-actions\">\n        <button class=\"comment-edit-btn\" data-comment-edit-btn=\"intro\" type=\"button\">编辑</button>\n        <button class=\"comment-delete\" data-comment-del=\"intro\" type=\"button\">删除</button>\n      </div>\n    </div>\n  </div>\n</div>\n</section>"
+  ],
+  "computeDiff": [
+    {
+      "_change": "new",
+      "body": "# Hello\n\nGolden markdown.",
+      "id": "intro",
+      "title": "Intro",
+      "type": "markdown"
+    }
+  ],
+  "routeBlocks": {
+    "zoneA": [],
+    "zoneB": [],
+    "zoneCFyi": [],
+    "zoneCReview": [],
+    "zoneContext": [
+      {
+        "_change": "new",
+        "body": "# Hello\n\nGolden markdown.",
+        "id": "intro",
+        "title": "Intro",
+        "type": "markdown"
+      }
+    ],
+    "zoneSettled": []
+  },
+  "validateContent": {
+    "errors": [],
+    "ok": true
+  }
+}
