@@ -1,7 +1,7 @@
 // listener.mjs — 异步唤醒回路（DESIGN §6.3 + §7 + §13 P0-2）
 import {
   paths,
-  readJSON, writeJSON, writeText,
+  appendJournal, readJSON, writeJSON, writeText,
   exists, claimFeedbackRound, releaseExpiredFeedbackClaim,
   readStatus, writeStatus,
   listSessions, listRounds,
@@ -14,6 +14,11 @@ import { presentRound } from '../core/present.mjs';
 export { configuredAgentName } from './agent-exec.mjs';
 
 const SDK_FALLBACK_NOTICE = '（本次由 SDK 托底执行，走 API 计费）';
+
+function recordJournal(session, event) {
+  try { appendJournal(session, event, { exactSession: true }); }
+  catch (error) { console.error('[workbench:journal]', { session, round: event.round, actor: event.actor, op: event.event, outcome: 'journal-failed', error: error.message }); }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // 内部工具
@@ -53,9 +58,12 @@ export async function processRound(session, round, { driver, memory = null, work
   const claim = claimFeedbackRound(session, round, { workerId });
   if (!claim) return { status: 'skipped' };
   const claimedAt = claim.claimedAt;
+  const actor = workerId || `pid-${process.pid}`;
 
   // 更新状态 → claimed
   writeStatus(session, { state: 'claimed', claimedAt, round, driverSource: null });
+  recordJournal(session, { event: 'round.claimed', round, actor, workerId: actor, outcome: 'success' });
+  console.info('[workbench:listener]', { session, round, actor, op: 'round.claim', outcome: 'success' });
 
   // 组装 prompt
   const prompt = buildPrompt(session, round);
@@ -92,7 +100,7 @@ export async function processRound(session, round, { driver, memory = null, work
 
     // 下一轮只能由 AI 侧的 shared core 用例创建，driver 不直接写 content.json。
     if (result.content && typeof result.content === 'object') {
-      presentRound(session, { ...result.content, round: undefined }, { exactSession: true });
+      presentRound(session, { ...result.content, round: undefined }, { exactSession: true, journal: { actor: 'ai' } });
     }
 
     // 更新 session（续接 id）
@@ -102,6 +110,8 @@ export async function processRound(session, round, { driver, memory = null, work
 
     // 更新状态 → responded
     writeStatus(session, { state: 'responded', driverSource });
+    recordJournal(session, { event: 'round.responded', round, actor, workerId: actor, driverSource, outcome: 'success' });
+    console.info('[workbench:listener]', { session, round, actor, op: 'round.respond', outcome: 'success', driverSource });
 
     return { status: 'responded', driverSource };
   } catch (err) {
@@ -127,6 +137,8 @@ export async function processRound(session, round, { driver, memory = null, work
     });
 
     writeStatus(session, { state: 'error', driverSource });
+    recordJournal(session, { event: 'round.failed', round, actor, workerId: actor, driverSource, errorKind: kind, outcome: 'error' });
+    console.error('[workbench:listener]', { session, round, actor, op: 'round.respond', outcome: 'error', errorKind: kind });
 
     // 不再抛出（单轮异常不拖垮进程）
     return { status: 'error', driverSource };

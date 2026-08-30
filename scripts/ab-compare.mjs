@@ -16,6 +16,8 @@ const OWNER_TOKEN = 'ab-owner-token';
 const PARTICIPANT_TOKEN = 'ab-participant-token';
 const TIMEOUT_MS = 2_000;
 const FROZEN_NOW = '2026-08-30T12:00:00.000Z';
+// 第 6 期唯一新增 POST 写盘副作用：诊断索引，不是状态事实源。
+const EXPECTED_POST_FILE_CHANGES = Object.freeze(['journal.jsonl']);
 
 function parseArgs(argv) {
   const args = { base: DEFAULT_BASE, selfTest: false };
@@ -84,6 +86,10 @@ function treeDelta(before, after) {
   return [...paths].sort().flatMap((file) => (
     before[file] === after[file] ? [] : [{ file, before: before[file] ?? null, after: after[file] ?? null }]
   ));
+}
+
+function withoutExpectedFileChanges(delta, expectedChanges = []) {
+  return delta.filter(({ file }) => !expectedChanges.includes(path.basename(file)));
 }
 
 // 只根据对拍契约规范化 body 的两个字段；不要把真实行为差异“清洗”掉。
@@ -206,6 +212,7 @@ function endpointCases() {
     identity, method, path: requestPath, body, headers, write: method !== 'GET',
     // 第 5 期唯一允许的协议变化：health 新增部署可调试字段。
     expectedChange: method === 'GET' && requestPath === '/api/health' ? 'health-version-fields' : null,
+    expectedFileChanges: method !== 'GET' ? EXPECTED_POST_FILE_CHANGES : [],
   })));
 }
 
@@ -264,8 +271,8 @@ async function compareRequest(pair, baseUrl, workUrl, baseFixture, workFixture, 
   if (baseline.termination === 'timeout' || working.termination === 'timeout') differences.push('hard timeout');
   if (!equal(baseline, working)) differences.push({ response: { baseline, working } });
   if (pair.write) {
-    const baseDelta = treeDelta(before[0], after[0]);
-    const workDelta = treeDelta(before[1], after[1]);
+    const baseDelta = withoutExpectedFileChanges(treeDelta(before[0], after[0]), pair.expectedFileChanges);
+    const workDelta = withoutExpectedFileChanges(treeDelta(before[1], after[1]), pair.expectedFileChanges);
     if (!equal(baseDelta, workDelta)) differences.push({ fileTree: { baseline: baseDelta, working: workDelta } });
   }
   return differences;
@@ -297,7 +304,7 @@ async function run({ base, selfTest }) {
     const workUrl = `http://127.0.0.1:${workPort}`;
     const cases = selfTest
       ? [{ identity: 'owner', method: 'GET', path: '/api/health', write: false }]
-      : [...endpointCases(), { identity: 'owner', method: 'POST', path: '/api/retry?session=gamma&round=1', body: {}, write: true }];
+      : [...endpointCases(), { identity: 'owner', method: 'POST', path: '/api/retry?session=gamma&round=1', body: {}, write: true, expectedFileChanges: EXPECTED_POST_FILE_CHANGES }];
     assert.ok(cases.length >= 60 || selfTest, `request list must contain >=60 cases, got ${cases.length}`);
     const failures = [];
     for (const item of cases) {

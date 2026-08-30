@@ -149,6 +149,8 @@ process.stdout.write(JSON.stringify({session:"ses1",round:1,title:"X",blocks}));
 `node "$WB/bin/workbench.mjs" up --port 8099` 起 serve + 常驻 listener；用户纯在网页交互，提交后 listener 用 `claude -p --resume` 自动驱动续跑（适合离开电脑/移动/无人值守）。这是给顾问/客户在线改动反馈、由云端 AI 自动续跑的核心模式。
 > 说明（2026-08-30 王佳梁订正）：此前此处写「用订阅跑自动化触及消费者条款 §3.7、有封号先例」——**该说法有误，已删除**。订阅额度驱动的无人值守自动化是被允许的用法。
 
+`WB_CLOUD_AI` 默认是关闭的；未设置或设为 `off` 时，反馈照常落盘，但 listener/inbox 不会自动认领。需要无人值守时，在相关服务环境中设 `WB_CLOUD_AI=on`；`WB_CLOUD_AI_AUTH=subscription`（默认）使用已登录的 Claude 订阅，设为 `apikey` 则从 api-vault 注入 Anthropic API key。完整启用、服务管理和验证步骤见 [05-上线与启用云端AI.md](../../docs/design/2026-08-30-架构重设计/05-上线与启用云端AI.md)。
+
 ## 万一卡住了怎么办
 
 工作台有几个地方容易出岔子，但都有同一条退路：

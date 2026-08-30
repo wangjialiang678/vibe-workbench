@@ -4,7 +4,7 @@ import { MESSAGE_BODY_LIMIT, INBOX_REQUEST_LIMIT, AI_IDENTITY } from '../limits.
 import { respondInboxError } from '../route-utils.mjs';
 
 export function inbox(ctx) {
-  const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
+  const { req, res, requestId, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath.startsWith('/api/inbox/')) {
     if (!runtimeState.cloudAiEnabled) {
       json(res, 503, { ok: false, error: '云端 AI 未启用' });
@@ -35,7 +35,8 @@ export function inbox(ctx) {
       readBody(req, INBOX_REQUEST_LIMIT).then((body) => {
         try {
           const task = enqueueInboxTask(body);
-          console.error('[workbench:inbox] 任务入队：', {
+          console.info('[workbench:inbox]', {
+            requestId, op: 'task.enqueue', outcome: 'success', actor: identity.id,
             id: task.id,
             executor: task.executor,
             session: task.session,
@@ -64,7 +65,8 @@ export function inbox(ctx) {
         try {
           if (action === 'claim') {
             const task = claimInboxTask(id, body?.claimedBy, inboxOptions);
-            console.error('[workbench:inbox] 租约已领取：', {
+            console.info('[workbench:inbox]', {
+              requestId, op: 'task.claim', outcome: 'success', actor: body?.claimedBy,
               id: task.id,
               claimedBy: task.claimedBy,
               leaseExpiresAt: task.leaseExpiresAt,
@@ -74,7 +76,8 @@ export function inbox(ctx) {
           }
           if (action === 'renew') {
             const task = renewInboxTask(id, body?.claimedBy, inboxOptions);
-            console.error('[workbench:inbox] 租约已续期：', {
+            console.info('[workbench:inbox]', {
+              requestId, op: 'task.renew', outcome: 'success', actor: body?.claimedBy,
               id: task.id,
               claimedBy: task.claimedBy,
               leaseExpiresAt: task.leaseExpiresAt,
@@ -92,7 +95,8 @@ export function inbox(ctx) {
                 ? `任务执行完成：${completed.task.result.summary}`
                 : `任务执行失败：${completed.task.result.summary}`,
             }, { exactSession: true });
-            console.error('[workbench:inbox] 任务已完成：', {
+            console.info('[workbench:inbox]', {
+              requestId, op: 'task.complete', outcome: 'success', actor: identity.id,
               id: completed.task.id,
               status: completed.task.status,
               session: completed.task.session,
