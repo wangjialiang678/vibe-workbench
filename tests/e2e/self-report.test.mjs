@@ -59,7 +59,7 @@ function seedRound(session) {
 }
 
 before(async () => {
-  for (const key of ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+  for (const key of ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK', 'WB_CLOUD_AI']) {
     savedEnv[key] = process.env[key];
   }
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-self-report-e2e-'));
@@ -68,6 +68,7 @@ before(async () => {
   fs.writeFileSync(participantsFile, `${JSON.stringify(PARTICIPANTS, null, 2)}\n`, 'utf8');
   process.env.WB_WORKSPACE = tmpDir;
   process.env.WORKBENCH_TOKEN = OWNER_TOKEN;
+  process.env.WB_CLOUD_AI = 'on';
   delete process.env.WORKBENCH_EVENT_WEBHOOK;
 
   ({ paths, readJSON, writeJSON, writeStatus } = await import('../../src/workspace.mjs'));
@@ -81,7 +82,7 @@ before(async () => {
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  for (const key of ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+  for (const key of ['WB_WORKSPACE', 'WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK', 'WB_CLOUD_AI']) {
     if (savedEnv[key] == null) delete process.env[key];
     else process.env[key] = savedEnv[key];
   }

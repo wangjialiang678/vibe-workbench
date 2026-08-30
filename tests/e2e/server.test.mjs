@@ -23,13 +23,14 @@ const savedServerEnv = {};
 
 // Setup: create temp workspace, start server on ephemeral port
 before(async () => {
-  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK', 'WB_CLOUD_AI']) {
     savedServerEnv[key] = process.env[key];
     delete process.env[key];
   }
   // Create temp dir for workspace
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-e2e-'));
   process.env.WB_WORKSPACE = tmpDir;
+  process.env.WB_CLOUD_AI = 'on';
 
   // Now import (dynamic, so env var is picked up)
   const ws = await import('../../src/workspace.mjs');
@@ -58,7 +59,7 @@ before(async () => {
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK']) {
+  for (const key of ['WORKBENCH_TOKEN', 'WORKBENCH_EVENT_WEBHOOK', 'WB_CLOUD_AI']) {
     if (savedServerEnv[key] == null) delete process.env[key];
     else process.env[key] = savedServerEnv[key];
   }

@@ -2,12 +2,14 @@
 import {
   paths,
   readJSON, writeJSON, writeText,
-  exists,
+  exists, claimFeedbackRound, releaseExpiredFeedbackClaim,
   readStatus, writeStatus,
   listSessions, listRounds,
 } from '../workspace.mjs';
 import { getSession, getSessionId, setSessionId, getCwd } from './session-store.mjs';
-import { configuredAgentName, driverHelp, resolveAgent, runAgent } from './agent-exec.mjs';
+import { configuredAgentName, driverHelp, resolveAgent, runAgent, createWorkbenchContinueDriver } from './agent-exec.mjs';
+import { cloudAiEnabled } from '../cloud-ai.mjs';
+import { presentRound } from '../core/present.mjs';
 
 export { configuredAgentName } from './agent-exec.mjs';
 
@@ -47,24 +49,17 @@ function buildPrompt(session, round) {
  * @param {{ driver?: Function }} opts
  * @returns {Promise<{ status: 'skipped'|'responded'|'error', driverSource?: 'subscription'|'sdk-fallback' }>}
  */
-export async function processRound(session, round, { driver } = {}) {
-  const ackPath = paths.ack(session, round);
-
-  // 幂等锁：已认领则跳过
-  if (exists(ackPath)) {
-    return { status: 'skipped' };
-  }
-
-  const claimedAt = new Date().toISOString();
-
-  // 写 ack（认领凭证）
-  writeJSON(ackPath, { claimedAt, pid: process.pid });
+export async function processRound(session, round, { driver, memory = null, workerId } = {}) {
+  const claim = claimFeedbackRound(session, round, { workerId });
+  if (!claim) return { status: 'skipped' };
+  const claimedAt = claim.claimedAt;
 
   // 更新状态 → claimed
   writeStatus(session, { state: 'claimed', claimedAt, round, driverSource: null });
 
   // 组装 prompt
   const prompt = buildPrompt(session, round);
+  const feedback = claim.feedback || readJSON(paths.feedback(session, round), null);
 
   // 取 session 元数据。注入 driver 时维持原契约，直接传历史续接 ID。
   const sessionData = getSession(session);
@@ -75,16 +70,18 @@ export async function processRound(session, round, { driver } = {}) {
     let activeDriver = driver;
     let agentSessionId = sessionData?.claudeSessionId || null;
 
-    if (typeof activeDriver !== 'function') {
+    if (!activeDriver) {
       activeAgent = resolveAgent().agent;
       agentSessionId = getSessionId(session, activeAgent);
-      activeDriver = (args) => runAgent({ ...args, agent: activeAgent });
+      activeDriver = createWorkbenchContinueDriver({ agent: activeAgent });
     }
-
-    const result = await activeDriver({ prompt, sessionId: agentSessionId, cwd });
+    const driverArgs = { session, round, feedback, memory, prompt, sessionId: agentSessionId, cwd };
+    const result = typeof activeDriver === 'function'
+      ? await activeDriver(driverArgs)
+      : await activeDriver.process(driverArgs);
     // 测试/自定义 driver 未声明来源时，按产品路径命名视为 subscription。
-    const driverSource = result.driverSource === 'sdk-fallback'
-      ? 'sdk-fallback'
+    const driverSource = ['sdk-fallback', 'apikey'].includes(result.driverSource)
+      ? result.driverSource
       : 'subscription';
 
     // 写 response.md
@@ -92,6 +89,11 @@ export async function processRound(session, round, { driver } = {}) {
       ? `${SDK_FALLBACK_NOTICE}\n\n${result.text || ''}`
       : (result.text || '');
     writeText(paths.response(session, round), responseText);
+
+    // 下一轮只能由 AI 侧的 shared core 用例创建，driver 不直接写 content.json。
+    if (result.content && typeof result.content === 'object') {
+      presentRound(session, { ...result.content, round: undefined }, { exactSession: true });
+    }
 
     // 更新 session（续接 id）
     if (result.sessionId) {
@@ -106,8 +108,8 @@ export async function processRound(session, round, { driver } = {}) {
     // err 是 { kind, message } 或普通 Error
     const kind = err.kind || 'unknown';
     const message = err.message || String(err);
-    const driverSource = err.driverSource === 'sdk-fallback'
-      ? 'sdk-fallback'
+    const driverSource = ['sdk-fallback', 'apikey'].includes(err.driverSource)
+      ? err.driverSource
       : 'subscription';
 
     // 按 DESIGN §13 P1：按 kind 写 userMessage/suggestedAction
@@ -168,19 +170,20 @@ function kindToUserFacing(kind, agent = null) {
  * @param {{ driver?: Function }} opts
  * @returns {Promise<Array<{ session: string, round: number, status: string }>>}
  */
-export async function reconcile({ driver } = {}) {
+export async function reconcile({ driver, memory, workerId } = {}) {
   const processed = [];
   const sessions = listSessions();
 
   for (const session of sessions) {
     const rounds = listRounds(session);
     for (const round of rounds) {
+      releaseExpiredFeedbackClaim(session, round);
       const hasFeedback = exists(paths.feedback(session, round));
       const hasAck = exists(paths.ack(session, round));
       const hasResponse = exists(paths.response(session, round));
 
       if (hasFeedback && !hasAck && !hasResponse) {
-        const result = await processRound(session, round, { driver });
+        const result = await processRound(session, round, { driver, memory, workerId });
         processed.push({ session, round, status: result.status });
       }
     }
@@ -216,7 +219,8 @@ export function markDead(session) {
  * }} opts
  * @returns {{ stop: () => void }}
  */
-export function startListener({ driver, intervalMs = 2000, heartbeatMs = 10000 } = {}) {
+export function startListener({ driver, intervalMs = 2000, heartbeatMs = 10000, env = process.env } = {}) {
+  if (!cloudAiEnabled(env)) return { stop() {}, enabled: false };
   // ① 心跳：独立定时，写所有活动 session 的心跳（不 await 任何 IO 密集操作）
   const heartbeatTimer = setInterval(() => {
     try {
@@ -250,5 +254,5 @@ export function startListener({ driver, intervalMs = 2000, heartbeatMs = 10000 }
     clearInterval(reconcileTimer);
   }
 
-  return { stop };
+  return { stop, enabled: true };
 }

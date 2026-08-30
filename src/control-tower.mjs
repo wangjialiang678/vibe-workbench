@@ -538,6 +538,13 @@ function latestCompletedTask(tasks, executor) {
 }
 
 function collectExecutionHealth(tasks, runtimeState, now) {
+  if (runtimeState?.cloudAiExplicitlyDisabled) {
+    return {
+      cloudWorker: { state: '未启用', at: null, label: null },
+      localListener: { state: '未启用', at: null },
+      githubActions: { state: '未启用', at: null },
+    };
+  }
   const heartbeatAt = runtimeState?.workerHeartbeat?.at;
   const heartbeatMs = Date.parse(heartbeatAt);
   const workerOnline = Number.isFinite(heartbeatMs) && now - heartbeatMs < WORKER_HEARTBEAT_STALE_MS;

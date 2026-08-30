@@ -18,6 +18,7 @@ const ENV_KEYS = [
   'WORKBENCH_TOKEN',
   'WORKBENCH_EVENT_WEBHOOK',
   'WORKBENCH_INBOX_CLAIM_TIMEOUT_MS',
+  'WB_CLOUD_AI',
 ];
 const PAYLOAD_LIMIT = 64 * 1024;
 
@@ -129,6 +130,7 @@ before(async () => {
   process.env.WB_WORKSPACE = tmpDir;
   process.env.WORKBENCH_TOKEN = OWNER_TOKEN;
   process.env.WORKBENCH_INBOX_CLAIM_TIMEOUT_MS = '60000';
+  process.env.WB_CLOUD_AI = 'on';
   delete process.env.WORKBENCH_EVENT_WEBHOOK;
 
   ({ startServer } = await import('../../src/server/server.mjs'));

@@ -220,6 +220,9 @@ async function startServer(sourceRoot, workspace, port, clockFile) {
       WB_PARTICIPANTS_FILE: path.join(workspace, 'config', 'participants.json'),
       WORKBENCH_TOKEN: OWNER_TOKEN,
       WORKBENCH_EVENT_WEBHOOK: '',
+      // 对拍的是冻结版已公开的 HTTP 协议；执行面默认关态另由 cloud-ai-loop
+      // 覆盖。两侧显式 on 才能逐字节比较历史 inbox/dispatch 行为。
+      WB_CLOUD_AI: 'on',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

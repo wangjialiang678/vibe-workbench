@@ -27,6 +27,14 @@ const MEMORY_TOTAL_CHARACTERS = 8000;
 const HUMAN_ROLES = new Set(['owner', 'participant']);
 const SESSION_NAME_RE = /^[A-Za-z0-9._-]{1,80}$/;
 
+// code-exec 只使用 Codex 自有鉴权；不读取 Anthropic 的 WB_CLOUD_AI_AUTH。
+export function createCodeExecDriver({ run = runCodex, options = {} } = {}) {
+  return {
+    name: 'code-exec',
+    process({ prompt, memory, cwd }) { return run(prompt || memory || '', { ...options, cwd }); },
+  };
+}
+
 function emptyState() {
   return { perSession: {} };
 }
@@ -149,6 +157,7 @@ export function loadConfig(env = process.env) {
     pollMs: positiveInteger(env.POLL_MS, DEFAULT_POLL_MS, 'POLL_MS'),
     eventPort: portNumber(env.WORKER_EVENT_PORT, DEFAULT_EVENT_PORT, 'WORKER_EVENT_PORT'),
     workerLabel: env.WORKER_LABEL?.trim() || DEFAULT_WORKER_LABEL,
+    cloudAiEnabled: env.WB_CLOUD_AI === 'on',
   };
 }
 
@@ -986,6 +995,7 @@ async function processTask(task, config, {
   now,
   setIntervalImpl,
   clearIntervalImpl,
+  driver,
 }) {
   const summary = summarizeEvents(task.events);
   const taskStartedAt = new Date().toISOString();
@@ -1019,7 +1029,7 @@ async function processTask(task, config, {
   logger.log(
     `[resident-worker] 启动 Codex：session=${task.session} events=${task.events.length} cwd=${executionCwd}`,
   );
-  const codexPromise = runCodex(brief, {
+  const codeExecOptions = {
     model: config.model,
     workerHome: config.workerHome,
     cwd: executionCwd,
@@ -1036,6 +1046,15 @@ async function processTask(task, config, {
         ? { WORKBENCH_PROJECT: executionContext.primaryProject.id }
         : {}),
     },
+  };
+  const activeDriver = driver || createCodeExecDriver({ options: codeExecOptions });
+  const codexPromise = activeDriver.process({
+    session: task.session,
+    round: task.round,
+    feedback: memory.latestFeedback,
+    memory: brief,
+    prompt: brief,
+    cwd: executionCwd,
   });
   const stopTaskProgressHeartbeat = startTaskProgressHeartbeat(config, task.session, {
     fetchImpl,
@@ -1135,6 +1154,7 @@ export async function runOnce(config = loadConfig(), {
   now = Date.now,
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval,
+  driver,
 } = {}) {
   const stateFile = path.join(config.workerHome, 'state.json');
   const stateFileExists = fs.existsSync(stateFile);
@@ -1195,6 +1215,7 @@ export async function runOnce(config = loadConfig(), {
       now,
       setIntervalImpl,
       clearIntervalImpl,
+      driver,
     });
     processed += 1;
   }
@@ -1401,6 +1422,10 @@ export async function runWorkerLoop(config, {
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval,
 } = {}) {
+  if (config.cloudAiEnabled === false) {
+    logger.log('[resident-worker] 云端 AI 未启用，未认领任务');
+    return { enabled: false };
+  }
   const stopHeartbeat = startWorkerHeartbeat(config, {
     fetchImpl,
     logger,
@@ -1463,6 +1488,11 @@ export async function main(argv = process.argv.slice(2)) {
     + `home=${config.workerHome} poll=${config.pollMs}ms event=127.0.0.1:${config.eventPort} `
     + `once=${once}`,
   );
+
+  if (!config.cloudAiEnabled) {
+    console.log('[resident-worker] 云端 AI 未启用，已退出');
+    return;
+  }
 
   if (once) {
     await sendWorkerHeartbeat(config);
