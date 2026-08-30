@@ -9,6 +9,13 @@ import {
 export function sessions(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/sessions' && method === 'GET') {
+    // 会话总清单是 owner 专属：参与者 token 不绑定具体会话（见 participants.mjs），
+    // 靠直达链接 ?session=X&token=Y 进入，不应拿到全部会话名。
+    // 历史上此处无过滤 → 客户能在下拉框看到别家客户的会话名（2026-08-30 修）。
+    if (identity.role !== 'owner') {
+      json(res, 200, { ok: true, sessions: [] });
+      return;
+    }
     json(res, 200, { ok: true, sessions: listSessions() });
     return;
   }
@@ -19,6 +26,11 @@ export function sessions(ctx) {
 export function projects(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/projects' && method === 'GET') {
+    // 同 /api/sessions：项目目录（含所有会话标题）owner 专属，参与者返回空目录。
+    if (identity.role !== 'owner') {
+      json(res, 200, { ok: true, projects: [], sessions: [] });
+      return;
+    }
     try {
       json(res, 200, { ok: true, ...projectCatalog() });
     } catch (error) {
