@@ -1,10 +1,6 @@
-import {
-  fs,
-  path,
-  SRC_ROOT,
-  MIME,
-  assetsVersion,
-} from '../server.mjs';
+import path from 'node:path';
+import { disk as fs } from '../../storage/index.mjs';
+import { SRC_ROOT, MIME, assetsVersion } from '../static.mjs';
 
 export function pages(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

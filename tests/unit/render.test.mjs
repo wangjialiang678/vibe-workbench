@@ -1417,11 +1417,13 @@ test('mermaid 脚本加载竞态有补渲染钩子（内容先就绪时不再裸
 // 病史：渲染页只就地换内容、从不重载 JS——用户几天前打开的旧标签页永远跑老代码，
 // 已修故障（mermaid 炸弹图）在旧页面"复发"（页面显示 mermaid 10.9.1，磁盘已是 11.15.0）。
 // 修法：/api/status 带 assetsVersion（关键渲染资产最新 mtime），页面轮询比对，变了自刷新。
-const serverSrc = readFileSync(path.resolve(__dirname, '../../src/server/server.mjs'), 'utf8');
+const staticSrc = readFileSync(path.resolve(__dirname, '../../src/server/static.mjs'), 'utf8');
+const sessionRouteSrc = readFileSync(path.resolve(__dirname, '../../src/server/routes/session.mjs'), 'utf8');
+const pagesRouteSrc = readFileSync(path.resolve(__dirname, '../../src/server/routes/pages.mjs'), 'utf8');
 
 test('版本握手：/api/status 必须带 assetsVersion，页面比对后自动整页刷新', () => {
-  assert.match(serverSrc, /export function assetsVersion/, '服务端 assetsVersion 计算函数不可删');
-  assert.match(serverSrc, /assetsVersion: assetsVersion\(\)/, '/api/status 响应必须包含 assetsVersion');
+  assert.match(staticSrc, /export function assetsVersion/, '静态托管模块的 assetsVersion 计算函数不可删');
+  assert.match(sessionRouteSrc, /assetsVersion: assetsVersion\(\)/, '/api/status 响应必须包含 assetsVersion');
   assert.match(renderApp, /__wbAssetsVersion/, '页面必须记录并比对资产版本');
   assert.match(renderApp, /location\.reload/, '版本变化必须触发整页刷新（草稿在 localStorage，无损）');
 });
@@ -1437,8 +1439,8 @@ test('资产版本注入：HTML 模板化 + import map + Clear-Site-Data，资�
   assert.match(renderIndex, /mermaid\.min\.js\?v=/, 'vendor 必须带版本参数');
   assert.match(renderIndex, /import\('\.\/app\.mjs\?v='/, 'app.mjs 必须以版本化动态 import 加载');
   assert.doesNotMatch(renderIndex, /src="app\.mjs"/, '禁止回退到无版本的静态 script 标签');
-  assert.match(serverSrc, /replaceAll\('__WB_ASSETS_V__'/, '服务端必须注入真实版本');
-  assert.match(serverSrc, /Clear-Site-Data/, '服务端必须在 HTML 响应发 Clear-Site-Data 清历史缓存');
+  assert.match(pagesRouteSrc, /replaceAll\('__WB_ASSETS_V__'/, '静态页面路由必须注入真实版本');
+  assert.match(pagesRouteSrc, /Clear-Site-Data/, '服务端必须在 HTML 响应发 Clear-Site-Data 清历史缓存');
 });
 
 // ---------- embed 同源直连 + 客户门户标题（2026-08-14 sirui round1 独立验证回归锁）----------
@@ -1452,6 +1454,6 @@ test('embed 同源相对路径直连 iframe，仅外站绝对 URL 走代理（�
 
 test('页面标题可由 WORKBENCH_TITLE 注入（客户门户不得显示内部工具名）', () => {
   assert.match(renderIndex, /__WB_TITLE__/, 'index.html 必须带标题占位符');
-  assert.match(serverSrc, /WORKBENCH_TITLE/, '服务端必须支持标题环境变量注入');
+  assert.match(pagesRouteSrc, /WORKBENCH_TITLE/, '服务端必须支持标题环境变量注入');
   assert.match(renderApp, /__WB_TITLE/, 'app.mjs 动态标题必须使用注入值');
 });

@@ -1,18 +1,9 @@
-import {
-  path,
-  workspaceDir,
-  isValidSessionName,
-  ATTACHMENT_BODY_LIMIT,
-  ATTACHMENT_TYPES,
-  MIME,
-  normalizeAssetSubpath,
-  readAssetFile,
-  visibleAssetPathsForIdentity,
-  assetServiceOrigin,
-  listSessionAssets,
-  writeAttachment,
-  validRoundQuery,
-} from '../server.mjs';
+import path from 'node:path';
+import { workspaceDir, isValidSessionName } from '../../workspace.mjs';
+import { ATTACHMENT_BODY_LIMIT, ATTACHMENT_TYPES } from '../limits.mjs';
+import { MIME } from '../static.mjs';
+import { normalizeAssetSubpath, readAssetFile, visibleAssetPathsForIdentity, assetServiceOrigin, listSessionAssets, writeAttachment } from '../assets.mjs';
+import { validRoundQuery } from '../route-utils.mjs';
 
 export function attachments(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

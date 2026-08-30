@@ -1,0 +1,8 @@
+export function rewriteEmbedHtml(html, targetUrl, selfOrigin = '', token = '') {
+  let result = html.replace(/<meta[^>]+http-equiv\s*=\s*["']?X-Frame-Options["']?[^>]*\/?>/gi, '').replace(/<meta[^>]+http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*\/?>/gi, '');
+  const proxyBase = `${selfOrigin}/api/proxy?${token ? `token=${encodeURIComponent(token)}&` : ''}url=`;
+  const toProxy = (url) => { try { return proxyBase + encodeURIComponent(new URL(url, targetUrl).href); } catch { return url; } };
+  result = result.replace(/<form\b([^>]*)>/gi, (_tag, attrs) => { const match = attrs.match(/\saction\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i); const action = match ? (match[1] ?? match[2] ?? match[3] ?? '') : ''; return `<form${match ? attrs.replace(match[0], '') : attrs} action="${toProxy(action || targetUrl)}">`; });
+  const patch = `<base href="${targetUrl}">\n<script>(function(){\n  var T=${JSON.stringify(targetUrl)}, P=${JSON.stringify(proxyBase)}, O;\n  try{ O=new URL(T).origin; }catch(e){ return; }\n  function px(u){ try{ var a=new URL(u,T); if(a.origin===O) return P+encodeURIComponent(a.href); }catch(e){} return u; }\n  var f=window.fetch;\n  if(f) window.fetch=function(i,init){\n    try{ if(typeof i==='string') i=px(i); else if(i&&i.url) i=new Request(px(i.url),i); }catch(e){}\n    return f.call(window,i,init);\n  };\n  var xo=XMLHttpRequest.prototype.open;\n  XMLHttpRequest.prototype.open=function(m,u){ try{ arguments[1]=px(u); }catch(e){} return xo.apply(this,arguments); };\n})();</script>`;
+  const head = result.match(/<head(?:\s[^>]*)?>/i); return head ? result.slice(0, result.indexOf(head[0]) + head[0].length) + patch + result.slice(result.indexOf(head[0]) + head[0].length) : patch + result;
+}
