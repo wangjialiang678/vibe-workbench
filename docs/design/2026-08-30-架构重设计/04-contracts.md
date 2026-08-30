@@ -23,10 +23,16 @@
 | `src/server/server.mjs` | 21 处（上传 open/close/fstat、realpath 等） | 上传落盘 **并入 storage/**（writeAttachment）；其余静态相关移入下条 |
 | `src/server/routes/pages.mjs` | createReadStream/read/readdir/stat | **例外：`adapters/server/static.mjs`**（HTTP 静态托管；只读、限 SRC 下、禁 .mjs 源码可取） |
 | `src/loop/agent-exec.mjs` | accessSync/statSync（探测 CLI 可执行文件是否存在） | **例外：driver 适配器**——探测二进制是可执行文件解析，非业务数据 I/O；单列白名单，仅允许 access/stat 只读探测 |
-| `bin/workbench.mjs` | 读入 content.json 参数 | **例外：CLI 入口**（仅读参数；写盘转调 storage） |
+| `bin/workbench.mjs` | 读入 content.json 参数（具名 import） | **例外：CLI 入口**（仅读参数；写盘转调 storage） |
+| `scripts/import-prd-project.mjs` | 具名 import：readFile/mkdir/writeFile/copyFile；读外部 PRD、写 workspace 轮次、拷贝资产 | **例外：CLI 导入工具**——workspace 轮次写入**转调 storage.createRound**（不裸 writeFileSync）；仅"读外部 PRD 文件 + 拷贝资产到 assets"作为工具自有 I/O 留在白名单 |
 | `scripts/local-listener.mjs`、`scripts/resident-worker.mjs` | 状态文件/租约 I/O | **例外：独立进程状态**——其 worker 本地状态（lastFeedbackKey 等）不属工作台事实源；单列白名单，或改调 storage 的 worker-state API（二选一，见 §6） |
 
 无第三类。任何新增文件要碰 fs → 要么进 storage，要么进本表新增一条例外并说明理由，否则守卫红。
+
+**守卫扫描范围（关键）**：`fs-boundary.test.mjs` 必须同时匹配两种用法——
+`fs.<call>`（命名空间）**和** `import { … } from 'node:fs'` / `from 'fs'`（具名 import）。
+本表的穷尽性正是靠具名 import 才补全（import-prd/bin 都用具名，`fs.` grep 会漏）。
+扫描范围 = `src/**`、`scripts/**`、`bin/**` 的 `.mjs`（测试夹具目录除外），逐文件比对白名单。
 
 ## 二、storage 原子写契约（回应评估"writeFileSync 非原子、中断测试会测假"）
 
