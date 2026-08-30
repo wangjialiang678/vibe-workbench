@@ -86,7 +86,7 @@ function treeDelta(before, after) {
   ));
 }
 
-// 只根据对拍契约规范化两个字段；不要把真实行为差异“清洗”掉。
+// 只根据对拍契约规范化 body 的两个字段；不要把真实行为差异“清洗”掉。
 function normalize(value) {
   if (Array.isArray(value)) return value.map(normalize);
   if (!value || typeof value !== 'object') return value;
@@ -94,6 +94,22 @@ function normalize(value) {
     key,
     key === 'ts' || key === 'assetsVersion' ? '<normalized>' : normalize(item),
   ]));
+}
+
+// rawHeaders 是 [name, value, name, value...]；HTTP Date 是传输时间，不是行为结果。
+// 转为大小写无关的对象后只归一化 Date，重复头仍保留为数组以避免吞掉其他头差异。
+function normalizeHeaders(rawHeaders = []) {
+  const normalized = {};
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const name = String(rawHeaders[index] ?? '').toLowerCase();
+    const value = name === 'date' ? '<normalized>' : String(rawHeaders[index + 1] ?? '');
+    if (Object.hasOwn(normalized, name)) {
+      normalized[name] = Array.isArray(normalized[name])
+        ? [...normalized[name], value]
+        : [normalized[name], value];
+    } else normalized[name] = value;
+  }
+  return normalized;
 }
 
 function equal(left, right) {
@@ -133,7 +149,32 @@ function request(baseUrl, spec) {
 function normalResponse(result) {
   let parsed = result.body;
   try { parsed = JSON.parse(result.body); } catch { /* HTML/static files remain strings */ }
-  return normalize({ termination: result.termination, status: result.status, headers: result.headers, body: parsed });
+  return {
+    termination: result.termination,
+    status: result.status,
+    headers: normalizeHeaders(result.headers),
+    body: normalize(parsed),
+  };
+}
+
+function assertHeaderNormalization() {
+  const baseline = normalResponse({
+    termination: 'ended', status: 200,
+    headers: ['Date', 'Sun, 30 Aug 2026 12:00:00 GMT', 'X-Probe', 'same'],
+    body: '{"ok":true,"ts":1}',
+  });
+  const dateOnlyChanged = normalResponse({
+    termination: 'ended', status: 200,
+    headers: ['date', 'Sun, 30 Aug 2026 12:00:01 GMT', 'x-probe', 'same'],
+    body: '{"ok":true,"ts":2}',
+  });
+  const realHeaderChanged = normalResponse({
+    termination: 'ended', status: 200,
+    headers: ['DATE', 'Sun, 30 Aug 2026 12:00:01 GMT', 'X-Probe', 'different'],
+    body: '{"ok":true,"ts":2}',
+  });
+  assert.ok(equal(baseline, dateOnlyChanged), 'Date-only response differences must be ignored');
+  assert.ok(!equal(baseline, realHeaderChanged), 'a non-Date response header difference must remain visible');
 }
 
 function endpointCases() {
@@ -231,6 +272,7 @@ async function run({ base, selfTest }) {
   const clockSource = `const RealDate = Date; const frozen = RealDate.parse(${JSON.stringify(FROZEN_NOW)}); global.Date = class FrozenDate extends RealDate { constructor(...args) { super(...(args.length ? args : [frozen])); } static now() { return frozen; } }; const crypto = require('node:crypto'); let sequence = 0; crypto.randomUUID = () => { sequence += 1; return \`00000000-0000-4000-8000-\${sequence.toString(16).padStart(12, '0')}\`; }; crypto.randomBytes = (size) => { sequence += 1; return Buffer.from(Array.from({ length: size }, (_, i) => (sequence + i) & 255)); };`;
   let baseServer; let workServer; let worktreeAdded = false;
   try {
+    if (selfTest) assertHeaderNormalization();
     await fs.writeFile(clockFile, clockSource);
     await command('git', ['worktree', 'add', '--detach', baselineRoot, base]);
     worktreeAdded = true;
