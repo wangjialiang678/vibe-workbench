@@ -1,11 +1,6 @@
-import {
-  addParticipant,
-  listParticipants,
-  revokeParticipant,
-  isValidSessionName,
-  publicParticipant,
-  participantInviteUrl,
-} from '../server.mjs';
+import { isValidSessionName } from '../../workspace.mjs';
+import { addParticipant, listParticipants, revokeParticipant } from '../../participants.mjs';
+import { publicParticipant, participantInviteUrl } from '../auth.mjs';
 
 export function participantsPublic(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

@@ -1,6 +1,4 @@
-import {
-  WORKER_HEARTBEAT_BODY_LIMIT,
-} from '../server.mjs';
+import { WORKER_HEARTBEAT_BODY_LIMIT } from '../limits.mjs';
 
 export function worker(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

@@ -1,10 +1,5 @@
-import {
-  listSessions,
-  isValidSessionName,
-  executionContextForSession,
-  projectCatalog,
-  sessionExists,
-} from '../server.mjs';
+import { listSessions, isValidSessionName } from '../../workspace.mjs';
+import { executionContextForSession, projectCatalog, sessionExists } from '../../projects.mjs';
 
 export function sessions(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

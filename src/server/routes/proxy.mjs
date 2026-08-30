@@ -1,6 +1,4 @@
-import {
-  rewriteEmbedHtml,
-} from '../server.mjs';
+import { rewriteEmbedHtml } from '../proxy-html.mjs';
 
 export function proxy(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;

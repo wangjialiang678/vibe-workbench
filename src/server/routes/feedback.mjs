@@ -1,24 +1,20 @@
-import {
-  TERMINAL_OR_PROCESSING_STATES,
-  selfReportSlug,
-  sharedDisplayName,
-  validateFeedback,
-  paths,
-  readJSON,
-  writeJSON,
-  writeText,
-  readStatus,
-  writeStatus,
-  isValidSessionName,
-  appendStreamEntry,
-  dispatchExecutorEvent,
-  AI_IDENTITY,
-  validRoundQuery,
-  acceptedSelfReport,
-  feedbackVisibilityForIdentity,
-  feedbackView,
-  feedbackToMd,
-} from '../server.mjs';
+import { validateFeedback } from '../../protocol/schema.mjs';
+import { paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
+import { appendStreamEntry } from '../../stream.mjs';
+import { dispatchExecutorEvent } from '../notify.mjs';
+import { AI_IDENTITY } from '../limits.mjs';
+import { validRoundQuery } from '../route-utils.mjs';
+import { acceptedSelfReport, selfReportSlug, sharedDisplayName } from '../auth.mjs';
+import { TERMINAL_OR_PROCESSING_STATES, feedbackVisibilityForIdentity, feedbackView } from '../visibility.mjs';
+
+function feedbackToMd(fb) {
+  const lines = [`# Feedback — session ${fb.session} round ${fb.round}`, `Submitted: ${fb.submittedAt}`, ''];
+  if (fb.summary) lines.push(`**Summary:** ${fb.summary}`, '');
+  if (fb.sessionComment) lines.push('## 💬 会话级留言（不针对具体块）', '', fb.sessionComment, '');
+  if (Array.isArray(fb.unanswered) && fb.unanswered.length) lines.push(`**未表态（没看/未操作）:** ${fb.unanswered.join(', ')}`, '');
+  for (const item of fb.items || []) { lines.push(`## Block: ${item.blockId}`); if (item.type) lines.push(`- type: ${item.type}`); if (item.value != null) lines.push(`- value: ${JSON.stringify(item.value)}`); if (item.comment) lines.push(`- comment: ${item.comment}`); lines.push(''); }
+  return lines.join('\n');
+}
 
 export function feedbackGet(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
@@ -169,7 +165,12 @@ export function feedbackPost(ctx) {
         at: now,
       });
     }).catch((e) => {
-      json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
+      if (e instanceof SyntaxError) {
+        json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
+      } else {
+        console.error('[workbench:feedback] 写入失败：', e);
+        json(res, 500, { ok: false, error: '反馈写入失败' });
+      }
     });
     return;
   }
