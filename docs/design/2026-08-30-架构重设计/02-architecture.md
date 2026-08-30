@@ -44,13 +44,16 @@
 
 评估核实：这里其实是**两套互不相干的状态机**，此前本文误写为一条链。都保留、都默认关、都补测试。
 
-### 机 A · 反馈驱动的自动续跑（= 你要的"云端 AI"，D2/D3）
-- 触发：`storage` 出现 `feedback 且无 ack 无 response` 的轮。
-- 两个实现共用同一状态机：`loop/listener.mjs`（本机 `claude -p`）与 `scripts/resident-worker.mjs`（东京机 `codex exec`，已在跑、轮询 `/api/feedback`）。
-- 落盘：`ack.json`（认领）→ `response.md`（AI 产出）→ 触发 AI 端 present 下一轮。
-- **"下一轮"的所有者 = AI 侧**（present 只能由 `core.presentRound` 产生，见 §四）；worker 不直接写 content。
-- **凭据模式（D11）**：driver 适配器读 `WB_CLOUD_AI_AUTH=subscription|apikey`（默认 subscription）。
-  subscription→沿用 `claude -p --resume <id>`（登录态）；apikey→给 spawn 进程注入 `ANTHROPIC_API_KEY`（取自 api-vault，不硬编码）。
+### 机 A · 反馈驱动（= 你要的"云端 AI"，D2/D3）——一个触发 + 可插拔 driver
+- 触发（共享）：`storage` 出现 `feedback 且无 ack 无 response` 的轮。
+- 认领（共享）：storage 原子 rename 竞争写 `ack.json`（非现 listener 的非原子 exists→writeJSON）。
+- **两个 driver 实现，不是"一套状态机的两个实现"**（评估纠正）：
+  - `workbench-continue`：`loop/listener.mjs`，`claude -p` 生成工作台下一轮 → 写 response.md。
+  - `code-exec`：`scripts/resident-worker.mjs`（东京机已在跑），`codex exec` 在目标 repo 改代码 → commit + receipt。
+  二者只共享"反馈触发+认领"，行为与写回不同。完整契约见 04 §6。
+- **"下一轮"所有者 = AI 侧**，只能经 `core.presentRound`（§四）；worker 不直接写 content。
+- **凭据（D11）**：`workbench-continue`(claude) 读 `WB_CLOUD_AI_AUTH=subscription|apikey`；
+  `code-exec`(codex) 用 Codex 自有鉴权，不受该开关影响。边界与不泄漏契约见 04 §4/§7。
 
 ### 机 B · inbox 任务队列（多执行器路由，D13 保留但默认关）
 - 触发：反馈/消息事件经 `dispatchExecutorEvent` 查会话所属项目的 `executor`；`resident`→发 webhook（走机 A），`pull`/`external-review`→入队 `workspace/inbox/<executor>/`。
