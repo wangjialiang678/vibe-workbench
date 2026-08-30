@@ -18,7 +18,7 @@ export function isValidSessionName(value) { return typeof value === 'string' && 
 export function sessionDir(s, { exactSession = false } = {}) { const value = String(s || ''); const legacy = path.join(workspaceDir(), legacySafe(value)); if (!isValidSessionName(value)) return legacy; const exact = path.join(workspaceDir(), value); return exactSession || (exact !== legacy && exists(exact)) ? exact : legacy; }
 export function roundDir(s, r, options) { return path.join(sessionDir(s, options), `round-${r}`); }
 export const paths = {
-  content: (s, r, options) => path.join(roundDir(s, r, options), 'content.json'), contentMd: (s, r, options) => path.join(roundDir(s, r, options), 'content.md'), feedback: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.json'), participantFeedback: (s, r, id, options) => path.join(roundDir(s, r, options), `feedback-${id}.json`), feedbackHistory: (s, r, stamp, id, options) => path.join(roundDir(s, r, options), 'feedback-history', `${stamp}-${id}${options?.selfReportSlug ? `-${options.selfReportSlug}` : ''}.json`), feedbackMd: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.md'), ack: (s, r, options) => path.join(roundDir(s, r, options), 'ack.json'), response: (s, r, options) => path.join(roundDir(s, r, options), 'response.md'), error: (s, r, options) => path.join(roundDir(s, r, options), 'error.json'), status: (s, options) => path.join(sessionDir(s, options), 'status.json'), session: (s, options) => path.join(sessionDir(s, options), 'session.json'),
+  content: (s, r, options) => path.join(roundDir(s, r, options), 'content.json'), contentMd: (s, r, options) => path.join(roundDir(s, r, options), 'content.md'), feedback: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.json'), participantFeedback: (s, r, id, options) => path.join(roundDir(s, r, options), `feedback-${id}.json`), feedbackHistory: (s, r, stamp, id, options) => path.join(roundDir(s, r, options), 'feedback-history', `${stamp}-${id}${options?.selfReportSlug ? `-${options.selfReportSlug}` : ''}.json`), feedbackMd: (s, r, options) => path.join(roundDir(s, r, options), 'feedback.md'), ack: (s, r, options) => path.join(roundDir(s, r, options), 'ack.json'), response: (s, r, options) => path.join(roundDir(s, r, options), 'response.md'), error: (s, r, options) => path.join(roundDir(s, r, options), 'error.json'), status: (s, options) => path.join(sessionDir(s, options), 'status.json'), session: (s, options) => path.join(sessionDir(s, options), 'session.json'), journal: (s, options) => path.join(sessionDir(s, options), 'journal.jsonl'),
 };
 export function exists(p) { try { nodeFs.accessSync(p); return true; } catch { return false; } }
 function readJson(p, def = null) { try { return JSON.parse(nodeFs.readFileSync(p, 'utf8')); } catch { return def; } }
@@ -119,5 +119,24 @@ export function prepareRound(session, contentObj, { exactSession = false } = {})
 export function createRound(session, contentObj, { exactSession = false } = {}) { const content = prepareRound(session, contentObj, { exactSession }); const options = { exactSession }; nodeFs.mkdirSync(sessionDir(session, options), { recursive: true }); const dir = roundDir(session, content.round, options); try { nodeFs.mkdirSync(dir); } catch (error) { if (error?.code === 'EEXIST') { const conflict = new Error(`round ${content.round} 已存在，不允许覆盖`); conflict.code = 'ROUND_EXISTS'; conflict.session = session; conflict.round = content.round; throw conflict; } throw error; } try { writeJson(paths.content(session, content.round, options), content); writeTextFile(paths.contentMd(session, content.round, options), blocksToMarkdown(content)); writeStatus(session, { state: 'rendered', round: content.round }, undefined, options); return { session, round: content.round, content }; } catch (error) { try { nodeFs.rmSync(dir, { recursive: true, force: true }); } catch {} throw error; } }
 export function writeRound(session, contentObj, options = {}) { if (options.allowOverwrite === false) return createRound(session, contentObj, options); const content = prepareRound(session, contentObj, options); const o = { exactSession: options.exactSession }; writeJson(paths.content(session, content.round, o), content); writeTextFile(paths.contentMd(session, content.round, o), blocksToMarkdown(content)); writeStatus(session, { state: 'rendered', round: content.round }, undefined, o); return { session, round: content.round, content }; }
 export function appendFeedback(session, round, saved, { identitySlug = 'owner', selfReportSlug, exactSession = true, statusPatch = { state: 'submitted', round, error: null } } = {}) { const options = { exactSession, ...(selfReportSlug ? { selfReportSlug } : {}) }; const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.hrtime.bigint().toString(36)}`; writeJson(paths.feedbackHistory(session, round, stamp, identitySlug, options), saved); writeJson(paths.feedback(session, round, { exactSession }), saved); writeStatus(session, statusPatch, undefined, { exactSession }); return saved; }
+
+// Journal 是追加诊断索引，round/status/feedback 等现有文件仍是唯一事实源。
+// 只保留可定位事件的白名单字段，拒绝正文、附件和错误详情进入第二份持久化副本。
+const JOURNAL_FIELDS = ['event', 'round', 'actor', 'requestId', 'outcome', 'driverSource', 'workerId', 'errorKind'];
+export function appendJournal(session, event, { exactSession = true } = {}) {
+  const source = typeof event === 'string' ? { event } : event;
+  if (!source || typeof source.event !== 'string' || !source.event) throw new Error('journal event 必须含 event');
+  if (!Number.isSafeInteger(source.round) || source.round < 1) throw new Error('journal event 必须含有效 round');
+  if (typeof source.actor !== 'string' || !source.actor.trim()) throw new Error('journal event 必须含 actor');
+  const entry = { ts: new Date().toISOString() };
+  for (const key of JOURNAL_FIELDS) {
+    const value = source[key];
+    if (value != null && value !== '') entry[key] = value;
+  }
+  const target = paths.journal(session, { exactSession });
+  nodeFs.mkdirSync(path.dirname(target), { recursive: true });
+  nodeFs.appendFileSync(target, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'a' });
+  return entry;
+}
 // 旧 API 只为平稳迁移保留；实现仍为 storage 内部原子写。
 export const readJSON = readJson; export const writeJSON = writeJson; export const readText = readTextFile; export const writeText = writeTextFile; export function removeFile(p) { try { nodeFs.rmSync(p); return true; } catch { return false; } }

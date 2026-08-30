@@ -1,5 +1,5 @@
 import { validateFeedback } from '../../protocol/schema.mjs';
-import { paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
+import { appendJournal, paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
 import { appendStreamEntry } from '../../stream.mjs';
 import { dispatchExecutorEvent } from '../notify.mjs';
 import { AI_IDENTITY } from '../limits.mjs';
@@ -38,7 +38,7 @@ export function feedbackGet(ctx) {
 }
 
 export function feedbackPost(ctx) {
-  const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
+  const { req, res, requestId, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/feedback' && method === 'POST') {
     readBody(req).then((fb) => {
       if (!fb) { json(res, 400, { ok: false, error: 'body required' }); return; }
@@ -60,7 +60,7 @@ export function feedbackPost(ctx) {
           json(res, 400, { ok: false, error: error.message });
           return;
         }
-        console.error('[workbench:feedback] 自报身份校验失败：', error.message);
+        console.error('[workbench:feedback]', { requestId, actor: identity.id, op: 'feedback.submit', outcome: 'error', error: error.message });
         json(res, 500, { ok: false, error: '参与者名册无法读取' });
         return;
       }
@@ -82,12 +82,7 @@ export function feedbackPost(ctx) {
             )),
         )];
         if (forbiddenBlockIds.length) {
-          console.error('[workbench:feedback] 拒绝参与者提交不可见块反馈：', {
-            session,
-            round,
-            participant: identity.id,
-            blockIds: forbiddenBlockIds,
-          });
+          console.info('[workbench:feedback]', { requestId, session, round, actor: identity.id, op: 'feedback.submit', outcome: 'rejected-invisible-blocks', blockIds: forbiddenBlockIds });
           json(res, 403, {
             ok: false,
             error: `反馈包含不可见块：${forbiddenBlockIds.join('、')}`,
@@ -155,6 +150,14 @@ export function feedbackPost(ctx) {
         ...(selfReportedBy ? { selfReportedBy } : {}),
         refs: { round },
       }, pathOptions);
+      try {
+        appendJournal(session, {
+          event: 'feedback.submitted', round, actor: identity.id, requestId, outcome: 'success',
+        }, pathOptions);
+      } catch (error) {
+        console.error('[workbench:journal]', { requestId, session, round, actor: identity.id, op: 'feedback.submit', outcome: 'journal-failed', error: error.message });
+      }
+      console.info('[workbench:feedback]', { requestId, session, round, actor: identity.id, op: 'feedback.submit', outcome: 'success' });
       json(res, 200, { ok: true, count: (fb.items || []).length });
       dispatchExecutorEvent(eventWebhook, {
         event: 'feedback-submitted',
@@ -163,12 +166,12 @@ export function feedbackPost(ctx) {
         submittedBy,
         ...(selfReportedBy ? { selfReportedBy } : {}),
         at: now,
-      });
+      }, { requestId });
     }).catch((e) => {
       if (e instanceof SyntaxError) {
         json(res, 400, { ok: false, error: 'invalid JSON: ' + e.message });
       } else {
-        console.error('[workbench:feedback] 写入失败：', e);
+        console.error('[workbench:feedback]', { requestId, op: 'feedback.submit', outcome: 'error', error: e.message });
         json(res, 500, { ok: false, error: '反馈写入失败' });
       }
     });

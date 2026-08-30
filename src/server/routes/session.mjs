@@ -14,7 +14,7 @@ import { visibleBlocksForIdentity, feedbackVisibilityForIdentity, filterFeedback
 import { presentRound } from '../../core/present.mjs';
 
 export function rounds(ctx) {
-  const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
+  const { req, res, requestId, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/rounds' && method === 'POST') {
     // 出题权只属于管理员（owner）：参与者的职责是判断，不是发起新一轮
     if (expectedToken && identity.role !== 'owner') {
@@ -58,13 +58,13 @@ export function rounds(ctx) {
       }
 
       const warnings = lintContent(content);
-      if (warnings.length) console.error(formatLint(warnings));
+      if (warnings.length) console.info('[workbench:rounds]', { requestId, session: content.session, round: content.round, actor: identity.id, op: 'round.present', outcome: 'lint-warning', warnings: formatLint(warnings) });
 
       try {
         const registeredProject = content.round === 1
           ? registeredProjectForSession(content.session)
           : null;
-        const saved = presentRound(content.session, content, { exactSession: true });
+        const saved = presentRound(content.session, content, { exactSession: true, journal: { actor: identity.id, requestId } });
         if (content.round === 1) {
           updateSessionMetadata(saved.session, {
             ...(typeof content.title === 'string' && content.title.trim()
@@ -91,6 +91,7 @@ export function rounds(ctx) {
         if (content.round === 1 && !registeredProject) {
           response.warning = UNCLASSIFIED_SESSION_WARNING;
         }
+        console.info('[workbench:rounds]', { requestId, session: saved.session, round: saved.round, actor: identity.id, op: 'round.present', outcome: 'success' });
         json(res, 200, response);
         dispatchExecutorEvent(eventWebhook, {
           event: 'round-presented',
@@ -98,7 +99,7 @@ export function rounds(ctx) {
           round: saved.round,
           ...(typeof content.title === 'string' && content.title ? { title: content.title } : {}),
           at: new Date().toISOString(),
-        });
+        }, { requestId });
       } catch (error) {
         if (error?.code === 'ROUND_EXISTS') {
           json(res, 409, { ok: false, error: `round ${content.round} 已存在，不允许覆盖` });
@@ -108,7 +109,7 @@ export function rounds(ctx) {
           json(res, 400, { ok: false, error: `内容校验失败：${error.errors.join('; ')}`, errors: error.errors });
           return;
         }
-        console.error('[workbench:rounds] 写入失败：', error);
+        console.error('[workbench:rounds]', { requestId, session: content.session, round: content.round, actor: identity.id, op: 'round.present', outcome: 'error', error: error.message });
         json(res, 500, { ok: false, error: '轮次写入失败，请查看服务端日志' });
       }
     }).catch((error) => {
@@ -116,7 +117,7 @@ export function rounds(ctx) {
         json(res, 413, { ok: false, error: '请求体过大：上限为 2 MB' });
         return;
       }
-      console.error('[workbench:rounds] 请求处理失败：', error);
+      console.error('[workbench:rounds]', { requestId, op: 'round.present', outcome: 'error', error: error.message });
       json(res, 400, { ok: false, error: `无效 JSON：${error.message}` });
     });
     return;

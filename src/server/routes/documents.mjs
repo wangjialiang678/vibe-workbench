@@ -51,7 +51,7 @@ export function documentsGet(ctx) {
 }
 
 export function documentsPost(ctx) {
-  const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
+  const { req, res, requestId, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/documents' && method === 'POST') {
     if (identity.role !== 'owner') {
       json(res, 403, { ok: false, error: '仅管理员可发布文档' });
@@ -65,7 +65,8 @@ export function documentsPost(ctx) {
           kind: 'receipt',
           text: `文档已更新：${saved.document.title}`,
         }, { exactSession: true });
-        console.error('[workbench:documents] 文档写入成功：', {
+        console.info('[workbench:documents]', {
+          requestId, actor: identity.id, op: 'document.publish', outcome: 'success',
           session: body.session,
           category: saved.document.category,
           slug: saved.document.slug,

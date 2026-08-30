@@ -32,6 +32,12 @@ open "http://127.0.0.1:8099/control?token=<WORKBENCH_TOKEN>"   # 仅管理员口
 
 提交反馈后，`watch` 的 listener 会自动认领并唤醒你的 AI 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。用哪个 AI 由 `WORKBENCH_AGENT` 决定（`claude` / `workbuddy` / `codex`），不设则自动探测——详见 [integrations/README.md](integrations/README.md)。
 
+## 架构与调试安全网
+
+运行时代码按 `protocol → storage → core → adapters → render` 五层组织：protocol 是无 I/O 的共享规则，storage 是工作区唯一事实源，core 收敛跨入口用例，server/CLI/loop 是适配器，render 只消费 protocol。反馈自动续跑与 inbox 任务队列是两套独立状态机；`WB_CLOUD_AI` 默认关闭，开启方式见 [上线与启用云端 AI](docs/design/2026-08-30-架构重设计/05-上线与启用云端AI.md)。
+
+三条结构守卫持续检查分层无环、文件系统边界和零依赖；`node scripts/ab-compare.mjs` 则把当前 HTTP 行为与冻结基线逐项对拍。排查现场时以 `workspace/<session>/` 的状态文件为准，`journal.jsonl` 仅追加记录轮次、反馈与 worker 生命周期，方便串联诊断而不成为第二事实源。
+
 ## 公网部署与共享口令
 
 本机行为不变：不设置 `WORKBENCH_TOKEN` 时只能监听 `127.0.0.1` 或 `localhost`。绑定其他地址必须设置共享口令，否则服务会拒绝启动：

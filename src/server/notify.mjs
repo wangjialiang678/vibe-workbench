@@ -57,7 +57,7 @@ export function inboxTaskTitle(payload) {
 }
 
 // resident 保持既有 webhook；pull 落本地持久化收件箱。路由异常一律回退云端链路。
-export function dispatchExecutorEvent(webhookUrl, payload, { env = process.env } = {}) {
+export function dispatchExecutorEvent(webhookUrl, payload, { env = process.env, requestId } = {}) {
   // feedback/round 本身已经先写入事实源；关闭时只停止向执行面派发。
   if (!cloudAiEnabled(env)) return { dispatched: false, reason: 'disabled' };
   let executor;
@@ -65,7 +65,7 @@ export function dispatchExecutorEvent(webhookUrl, payload, { env = process.env }
     const project = registeredProjectForSession(payload.session);
     executor = executorById(project?.executor || DEFAULT_EXECUTOR_ID);
   } catch (error) {
-    console.error('[workbench:dispatch] 执行面解析失败，回退 resident webhook：', error.message);
+    console.error('[workbench:dispatch]', { requestId, session: payload.session, round: payload.round, op: 'executor.dispatch', outcome: 'fallback-webhook', error: error.message });
     emitWebhook(webhookUrl, payload);
     return { dispatched: true, transport: 'webhook' };
   }
@@ -88,14 +88,16 @@ export function dispatchExecutorEvent(webhookUrl, payload, { env = process.env }
       kind: 'progress',
       text: `已入队待本地执行：${task.title}`,
     }, { exactSession: true });
-    console.error('[workbench:dispatch] pull 任务已入队：', {
+    console.info('[workbench:dispatch]', {
+      requestId, op: 'executor.dispatch', outcome: 'queued',
       id: task.id,
       executor: task.executor,
       session: task.session,
       type: task.type,
     });
   } catch (error) {
-    console.error('[workbench:dispatch] pull 任务入队失败：', {
+    console.error('[workbench:dispatch]', {
+      requestId, op: 'executor.dispatch', outcome: 'error',
       session: payload.session,
       event: payload.event,
       error: error.message,
