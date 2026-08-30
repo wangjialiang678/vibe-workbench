@@ -1,9 +1,12 @@
 // 零依赖 HTTP server（DESIGN §8 + §13）。ESM，node:http only.
 import http from 'node:http';
-import fs from 'node:fs';
+import { disk } from '../storage/index.mjs';
 import path from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+
+// 静态页路由仍通过历史导出名取得只读文件句柄；底层实现归 storage。
+const fs = disk;
 
 import { computeDiff, removedBlocks, diffSanity } from '../protocol/diff.mjs';
 import { validateContent, validateFeedback } from '../protocol/schema.mjs';
@@ -94,7 +97,7 @@ export function assetsVersion() {
   let latest = 0;
   for (const rel of ASSET_VERSION_FILES) {
     try {
-      const t = fs.statSync(path.join(SRC_ROOT, rel)).mtimeMs;
+      const t = disk.statSync(path.join(SRC_ROOT, rel)).mtimeMs;
       if (t > latest) latest = t;
     } catch { /* 允许个别文件缺省 */ }
   }
@@ -301,14 +304,14 @@ function safeUploadStem(value) {
 
 function writeAttachment(session, originalName, extension, body) {
   const uploadsDir = path.resolve(workspaceDir(), session, 'assets', 'uploads');
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  disk.mkdirSync(uploadsDir, { recursive: true });
   const stem = safeUploadStem(originalName);
   let timestamp = Date.now();
   for (;;) {
     const filename = `${stem}-${timestamp}${extension}`;
     const target = path.join(uploadsDir, filename);
     try {
-      fs.writeFileSync(target, body, { flag: 'wx' });
+      disk.writeFileSync(target, body, { flag: 'wx' });
       return filename;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
@@ -345,7 +348,7 @@ const assetInventoryCache = new Map();
 
 function fileVersion(target) {
   try {
-    const stat = fs.lstatSync(target, { bigint: true });
+    const stat = disk.lstatSync(target, { bigint: true });
     return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.mode].join(':');
   } catch (error) {
     return 'missing:' + (error?.code || 'unknown');
@@ -481,7 +484,7 @@ function listSessionAssets(session, allowedPaths = null) {
 
   function walk(directory, relativeDirectory = '') {
     directories.set(directory, fileVersion(directory));
-    const entries = fs.readdirSync(directory, { withFileTypes: true })
+    const entries = disk.readdirSync(directory, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     for (const entry of entries) {
       // 不跟随软链接，避免资产索引越出会话目录。
@@ -493,7 +496,7 @@ function listSessionAssets(session, allowedPaths = null) {
       if (entry.isDirectory()) {
         walk(absolutePath, relativePath);
       } else if (entry.isFile()) {
-        const stat = fs.lstatSync(absolutePath);
+        const stat = disk.lstatSync(absolutePath);
         if (!stat.isFile()) continue;
         files.push({
           path: relativePath,
@@ -505,7 +508,7 @@ function listSessionAssets(session, allowedPaths = null) {
   }
 
   try {
-    const rootStat = fs.lstatSync(root);
+    const rootStat = disk.lstatSync(root);
     if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return [];
     walk(root);
   } catch (error) {
@@ -536,7 +539,7 @@ function assertNoSymlinkComponents(root, relativePath) {
   let current = workspaceRoot;
   for (const component of rootRelative.split(path.sep).filter(Boolean)) {
     current = path.join(current, component);
-    const stat = fs.lstatSync(current);
+    const stat = disk.lstatSync(current);
     if (stat.isSymbolicLink()) {
       const error = new Error('asset path contains a symbolic link');
       error.code = 'ASSET_FORBIDDEN';
@@ -551,7 +554,7 @@ function assertNoSymlinkComponents(root, relativePath) {
   const parts = relativePath.split('/');
   for (const [index, component] of parts.entries()) {
     current = path.join(current, component);
-    const stat = fs.lstatSync(current);
+    const stat = disk.lstatSync(current);
     if (stat.isSymbolicLink()) {
       const error = new Error('asset path contains a symbolic link');
       error.code = 'ASSET_FORBIDDEN';
@@ -566,8 +569,8 @@ function assertNoSymlinkComponents(root, relativePath) {
 }
 
 function readAssetFile(root, normalizedSub) {
-  const workspaceRoot = fs.realpathSync(workspaceDir());
-  const realRoot = fs.realpathSync(root);
+  const workspaceRoot = disk.realpathSync(workspaceDir());
+  const realRoot = disk.realpathSync(root);
   if (!realRoot.startsWith(workspaceRoot + path.sep)) {
     const error = new Error('asset root outside workspace');
     error.code = 'ASSET_FORBIDDEN';
@@ -576,24 +579,24 @@ function readAssetFile(root, normalizedSub) {
   assertNoSymlinkComponents(root, normalizedSub);
 
   const abs = path.resolve(root, normalizedSub);
-  const noFollow = fs.constants.O_NOFOLLOW || 0;
+  const noFollow = disk.constants.O_NOFOLLOW || 0;
   let fd;
   try {
     // lstat 逐个组件拒绝中间 symlink，O_NOFOLLOW 再拒绝最终组件；校验和读取都基于同一 fd。
-    fd = fs.openSync(abs, fs.constants.O_RDONLY | noFollow);
-    const stat = fs.fstatSync(fd);
+    fd = disk.openSync(abs, disk.constants.O_RDONLY | noFollow);
+    const stat = disk.fstatSync(fd);
     if (!stat.isFile()) {
       const error = new Error('asset is not a regular file');
       error.code = 'ASSET_NOT_FILE';
       throw error;
     }
-    return fs.readFileSync(fd);
+    return disk.readFileSync(fd);
   } catch (error) {
     if (error?.code === 'ELOOP') error.code = 'ASSET_FORBIDDEN';
     throw error;
   } finally {
     if (fd != null) {
-      try { fs.closeSync(fd); } catch {}
+      try { disk.closeSync(fd); } catch {}
     }
   }
 }
@@ -800,7 +803,7 @@ function participantFeedbackEntries(session, round) {
   const dir = path.dirname(paths.feedback(session, round, { exactSession: true }));
   let filenames;
   try {
-    filenames = fs.readdirSync(dir).filter((name) => /^feedback-[A-Za-z0-9_-]+\.json$/.test(name)).sort();
+    filenames = disk.readdirSync(dir).filter((name) => /^feedback-[A-Za-z0-9_-]+\.json$/.test(name)).sort();
   } catch {
     return [];
   }

@@ -30,8 +30,9 @@ const {
   readJSON,
   writeStatus,
   exists,
-  writeRound,
 } = await importRootModule('src/workspace.mjs');
+
+const { presentRound } = await importRootModule('src/core/present.mjs');
 
 const {
   lintContent,
@@ -66,7 +67,7 @@ const {
  * @returns {{ session: string, round: number }}
  */
 export async function cmdRender(session, contentObj) {
-  const result = writeRound(session, contentObj);
+  const result = presentRound(session, contentObj);
 
   // 作者侧 lint（iteration-brief P1）：warn 不阻断，打 stderr（保持 stdout 的 JSON 干净）
   const warnings = lintContent(result.content);

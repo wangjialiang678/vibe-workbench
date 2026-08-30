@@ -1,5 +1,5 @@
 // 会话流数据契约：每个 session 一个 append-only JSONL 文件。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -159,9 +159,9 @@ export function streamPath(session, { exactSession = false } = {}) {
 export function appendStreamEntry(session, input, { exactSession = false } = {}) {
   const file = streamPath(session, { exactSession });
   const entry = normalizeEntry(input);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  disk.mkdirSync(path.dirname(file), { recursive: true });
   // O_APPEND 语义确保同一进程内并发请求不会互相覆盖已有内容。
-  fs.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
+  disk.appendFileSync(file, `${JSON.stringify(entry)}\n`, 'utf8');
   return entry;
 }
 
@@ -174,7 +174,7 @@ function streamProtocolError(code, message) {
 function readAllEntries(file) {
   let raw;
   try {
-    raw = fs.readFileSync(file, 'utf8');
+    raw = disk.readFileSync(file, 'utf8');
   } catch (error) {
     if (error?.code === 'ENOENT') return [];
     throw error;
@@ -298,7 +298,7 @@ export function migrateSessionComments(session, { exactSession = true } = {}) {
     const feedbackFile = paths.feedback(session, round, { exactSession });
     let feedback;
     try {
-      feedback = JSON.parse(fs.readFileSync(feedbackFile, 'utf8'));
+      feedback = JSON.parse(disk.readFileSync(feedbackFile, 'utf8'));
     } catch {
       skipped += 1;
       continue;
@@ -315,7 +315,7 @@ export function migrateSessionComments(session, { exactSession = true } = {}) {
     }
     let at = feedback.submittedAt;
     if (typeof at !== 'string' || Number.isNaN(Date.parse(at))) {
-      at = fs.statSync(feedbackFile).mtime.toISOString();
+      at = disk.statSync(feedbackFile).mtime.toISOString();
     }
     appendStreamEntry(session, {
       id,

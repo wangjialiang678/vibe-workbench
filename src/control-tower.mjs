@@ -1,5 +1,5 @@
 // 控制塔的纯数据处理与页面片段：不持有口令，也不写入任何业务状态。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -366,7 +366,7 @@ function latestContentDecisionEvents(project, sessions) {
     const content = readJSON(paths.content(session, round, { exactSession: true }), null);
     if (!Array.isArray(content?.blocks)) return [];
     let at;
-    try { at = fs.statSync(paths.content(session, round, { exactSession: true })).mtime.toISOString(); }
+    try { at = disk.statSync(paths.content(session, round, { exactSession: true })).mtime.toISOString(); }
     catch { return []; }
     return content.blocks.flatMap((block) => {
       if (!block?.needsDecision) return [];
@@ -477,7 +477,7 @@ function collectSystemdServices(registry) {
 
 function collectDiskHealth() {
   try {
-    const stat = fs.statfsSync(workspaceDir());
+    const stat = disk.statfsSync(workspaceDir());
     const total = Number(stat.blocks) * Number(stat.bsize);
     const available = Number(stat.bavail) * Number(stat.bsize);
     if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(available)) throw new Error('invalid statfs');
@@ -497,11 +497,11 @@ function collectLogHealth() {
   let usedBytes = 0;
   const visit = (target) => {
     if (files > 10_000) throw new Error('too many log files');
-    const stat = fs.lstatSync(target);
+    const stat = disk.lstatSync(target);
     if (stat.isSymbolicLink()) return;
     if (stat.isFile()) { files += 1; usedBytes += stat.size; return; }
     if (!stat.isDirectory()) return;
-    for (const entry of fs.readdirSync(target, { withFileTypes: true })) visit(path.join(target, entry.name));
+    for (const entry of disk.readdirSync(target, { withFileTypes: true })) visit(path.join(target, entry.name));
   };
   try {
     visit(root);
@@ -515,8 +515,8 @@ function collectWatchdog() {
   const target = process.env.CONTROL_TOWER_WATCHDOG_FILE;
   if (!target) return { availability: 'unknown', result: '未知', at: null };
   try {
-    if (fs.statSync(target).size > 64 * 1024) throw new Error('too large');
-    const value = JSON.parse(fs.readFileSync(target, 'utf8'));
+    if (disk.statSync(target).size > 64 * 1024) throw new Error('too large');
+    const value = JSON.parse(disk.readFileSync(target, 'utf8'));
     return {
       availability: 'available',
       result: value?.ok === true ? '正常' : cleanText(value?.result, '异常'),

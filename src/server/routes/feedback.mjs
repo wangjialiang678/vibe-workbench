@@ -20,8 +20,6 @@ import {
   feedbackToMd,
 } from '../server.mjs';
 
-let feedbackHistorySeq = 0;
-
 export function feedbackGet(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/feedback' && method === 'GET') {
@@ -128,7 +126,7 @@ export function feedbackPost(ctx) {
       writeJSON(paths.feedbackHistory(
         session,
         round,
-        `${now.replace(/[:.]/g, '-')}-${(feedbackHistorySeq += 1).toString(36)}`,
+        `${now.replace(/[:.]/g, '-')}-${process.hrtime.bigint().toString(36)}`,
         identity.id,
         { ...pathOptions, ...(selfReportedBy ? { selfReportSlug: selfReportSlug(selfReportedBy.name) } : {}) },
       ), saved);

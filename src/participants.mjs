@@ -1,5 +1,5 @@
 // 参与者私密名册：magic-link token 只落本地文件，列表/API 永不回显。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -42,7 +42,7 @@ function validateRoster(value) {
 export function readParticipants(filePath) {
   const target = rosterPath(filePath);
   try {
-    return validateRoster(JSON.parse(fs.readFileSync(target, 'utf8')));
+    return validateRoster(JSON.parse(disk.readFileSync(target, 'utf8')));
   } catch (error) {
     if (error?.code === 'ENOENT') return [];
     if (/参与者名册损坏/.test(error?.message || '')) throw error;
@@ -53,13 +53,13 @@ export function readParticipants(filePath) {
 function writeParticipants(participants, filePath) {
   const target = rosterPath(filePath);
   const dir = path.dirname(target);
-  fs.mkdirSync(dir, { recursive: true });
+  disk.mkdirSync(dir, { recursive: true });
   const temp = path.join(dir, `.${path.basename(target)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
   try {
-    fs.writeFileSync(temp, `${JSON.stringify(participants, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(temp, target);
+    disk.writeFileSync(temp, `${JSON.stringify(participants, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    disk.renameSync(temp, target);
   } finally {
-    try { fs.rmSync(temp, { force: true }); } catch { /* rename 成功后临时文件已不存在 */ }
+    try { disk.rmSync(temp, { force: true }); } catch { /* rename 成功后临时文件已不存在 */ }
   }
 }
 

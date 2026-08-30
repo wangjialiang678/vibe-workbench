@@ -1,6 +1,6 @@
 // 项目与会话目录契约。
 // 项目必须显式注册；会话目录仍保留旧 ID，并通过 session.json 追加归属、标题和归档状态。
-import fs from 'node:fs';
+import { disk } from './storage/index.mjs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -236,10 +236,10 @@ export function normalizeProjectRegistry(value) {
 
 function atomicWriteJson(target, value) {
   const directory = path.dirname(target);
-  fs.mkdirSync(directory, { recursive: true });
+  disk.mkdirSync(directory, { recursive: true });
   const serialized = `${JSON.stringify(value, null, 2)}\n`;
   try {
-    if (fs.readFileSync(target, 'utf8') === serialized) return false;
+    if (disk.readFileSync(target, 'utf8') === serialized) return false;
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
@@ -248,21 +248,21 @@ function atomicWriteJson(target, value) {
     `.${path.basename(target)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`,
   );
   try {
-    fs.writeFileSync(temporary, serialized, {
+    disk.writeFileSync(temporary, serialized, {
       encoding: 'utf8',
       mode: 0o600,
     });
-    fs.renameSync(temporary, target);
+    disk.renameSync(temporary, target);
     return true;
   } finally {
-    try { fs.rmSync(temporary, { force: true }); } catch {}
+    try { disk.rmSync(temporary, { force: true }); } catch {}
   }
 }
 
 export function readProjectRegistry() {
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(projectRegistryPath(), 'utf8'));
+    raw = JSON.parse(disk.readFileSync(projectRegistryPath(), 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') return { version: 1, projects: [] };
     throw new Error(`项目注册表损坏：${error.message}`);
@@ -465,5 +465,5 @@ export function executionContextForSession(session) {
 
 export function sessionExists(session) {
   return isValidSessionName(session)
-    && fs.existsSync(sessionDir(session, { exactSession: true }));
+    && disk.existsSync(sessionDir(session, { exactSession: true }));
 }

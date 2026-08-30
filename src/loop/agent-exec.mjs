@@ -1,7 +1,7 @@
 // agent-exec.mjs — Claude Code / WorkBuddy / Codex 本地订阅统一 driver
 // 零依赖，子进程实现可注入，便于离线测试。
 import { spawn as nodeSpawn } from 'node:child_process';
-import fs from 'node:fs';
+import { disk } from '../storage/index.mjs';
 import path from 'node:path';
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -92,8 +92,8 @@ export function redactSecrets(value, env = process.env) {
 function isExecutable(candidate) {
   if (typeof candidate !== 'string' || !candidate) return false;
   try {
-    fs.accessSync(candidate, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK);
-    return fs.statSync(candidate).isFile();
+    disk.accessSync(candidate, process.platform === 'win32' ? disk.constants.F_OK : disk.constants.X_OK);
+    return disk.statSync(candidate).isFile();
   } catch {
     return false;
   }
