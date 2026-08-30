@@ -42,7 +42,7 @@
 |---|---|---|
 | D11 | 云端 AI 凭据模式 | **订阅 / API Key 可切换。** 配置项 `WB_CLOUD_AI_AUTH=subscription\|apikey`（默认 subscription）。subscription 模式沿用现 `claude -p`（登录态）；apikey 模式给 spawn 的进程注入 `ANTHROPIC_API_KEY`（来源走 api-vault，不硬编码）。理由：无人值守给顾问/客户跑时 API Key 更稳（不受个人额度波动、不混上下文），自己调试时订阅更省。落在 driver 适配器层，天然可测。 |
 | D12 | 澄清：云端 AI ≠ inbox 任务队列 | 评估核实：**"云端 AI 自动续跑"是反馈驱动**（`loop/listener.mjs` 本机 + `scripts/resident-worker.mjs` 云端，后者已在东京机运行、轮询 `/api/feedback`）。**inbox 任务队列（executor-inbox + routes/inbox，约 1500 行，pending/claimed/done）是另一套、从未使用、消费者仅控制塔。** 02 §4 原把两者混写为一条链，属错误，需改。 |
-| D13 | inbox 任务队列去留 | **建议砍**（与 D2 不冲突：D2 要保留的是反馈驱动的云端 AI，不是 inbox 队列）。inbox 与云端 AI 无关、零使用；控制塔依赖它则一并降级。**待创始人最终确认；未否决即按砍执行。** |
+| D13 | inbox 任务队列去留 | **保留 + 折进新架构 + 默认关 + 补端到端测试**（创始人 2026-08-30 拍板）。判据不是"现在用不用"，而是"重建是否大架构改动"——结论：目标架构里重建是**加法**（storage 加队列动作 + adapter 加路由/worker + 派发点加分支 + 项目模型加 executor 字段），不动分层，但会丢掉已正确、已测的租约逻辑与"全仓唯一做对原子写的实现"。故留着折进新架构比"砍了将来重写 1500 行含并发租约"更划算。默认关压住 RCE 面（D4 已接受）。inbox 的原子写(temp+rename)反过来作为 storage 层原子写的范本。 |
 
 ## 由 D11/D12 引出的设计与测试影响
 

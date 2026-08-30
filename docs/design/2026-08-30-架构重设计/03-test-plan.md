@@ -38,23 +38,37 @@
 | 崩溃原子性 | 在每个写点后注入进程中断再重启：文件可读、无半个 content（临时文件 rename 保证） |
 | 写盘失败传真因 | 磁盘写失败返回 5xx 且 message 含真实原因——今天被统一翻译成 "invalid JSON"（反调试） |
 
-## 四、执行面测试（第 4 期 · D2 引出的重头）
+## 四、执行面测试（第 4 期 · D2/D12/D13 引出的重头）
 
-执行面过去 0 端到端验证。这次补齐，核心是 **driver 可注入**：
+执行面过去 0 端到端验证。两套状态机分开测（02 §3），核心是 **driver 可注入**：
 
 ```
 假 driver（不调真 AI、不联网）：接收 {session, round, feedback} → 返回预设的下一轮 content
 ```
 
+### 机 A · 反馈驱动自动续跑（listener + resident-worker）
 | 测试 | 断言 |
 |---|---|
-| 开关 off（默认） | listener 不启动自动驱动；`POST /api/inbox/tasks` 返回 503；present→feedback 落盘照常 |
-| 开关 on | 同链路自动驱动启动 |
-| 全链路（假 driver） | present 一轮 → 提交 feedback → loop 认领(claim) → 假 driver 执行 → 写回 response → 下一轮 content 落盘 → `workbench wait` 返回。全程无真实 AI、无网络 |
-| claim 幂等 | 两个 worker 同时认领同一轮，只有一个成功（ack 锁） |
-| reconcile 对账 | listener 崩溃后重启，未完成的轮被重新认领处理，不重复、不丢 |
-| driver 失败落盘 | 假 driver 抛错 → error.json 写入且状态置 error，可重试 |
-| 冷启动接管 | 只给夹具文件（无内存状态），开启后能处理完一轮——验证"文件即事实源" |
+| 全链路（假 driver） | feedback 落盘 → listener 扫到「有 feedback 无 ack 无 response」→ 假 driver 执行 → 写 ack/response → AI 侧 present 下一轮落盘 → `workbench wait` 返回。全程无真实 AI、无网络 |
+| claim 幂等 | 两 worker 并发认领同一轮只一个成功。**注意现码是非原子 exists→writeJSON（listener.mjs:50-64），须先改 storage rename 竞争再测**（04 §四） |
+| reconcile 对账 | worker 崩溃重启，未完成轮被重新处理，不重复不丢 |
+| driver 失败落盘 | 假 driver 抛错 → error.json + 状态 error，可重试 |
+| 冷启动接管 | 只给夹具文件（无内存状态）能处理完一轮——验证文件即事实源 |
+| 凭据模式（D11） | subscription：argv 含 `-p --resume <id>`、无 API key；apikey：spawn 环境含 `ANTHROPIC_API_KEY`。均用假 driver 验证**选择逻辑**，不需真凭据（04 §四） |
+
+### 机 B · inbox 任务队列（默认关）
+| 测试 | 断言 |
+|---|---|
+| 开关 off（默认） | `POST /api/inbox/tasks` 返回 503「未启用」；机 A 的 present→feedback 照常 |
+| 开关 on + 入队路由 | resident 型 executor → 走 webhook（机 A）；pull 型 → 入 inbox 队列 |
+| 租约状态机 | pending→claimed→done/failed；claimed 超时退回 pending；并发认领只一个成功（rename 竞争） |
+| 原子写 | inbox 写盘遵守 temp+rename（作为 storage 原子写范本，04 §二） |
+
+### 统一开关
+| 测试 | 断言 |
+|---|---|
+| WB_CLOUD_AI=off | 机 A listener/worker 不自动驱动；机 B 路由 503；control-tower 显示未启用 |
+| WB_CLOUD_AI=on | 两机按各自触发条件工作 |
 
 ## 五、安全回归（已修的固化 + 持续守卫）
 

@@ -40,17 +40,27 @@
 | `adapters/loop` | 现 loop/ | listener 改调 core.submit 的下游；driver 保持可注入。 |
 | `render/`（保持） | 现 render/ 纯模块 | 只依赖 protocol；app.mjs 后续抽薄（可延后，非本期硬指标）。 |
 
-## 三、执行面：保留 + 默认关闭 + 可测（D2/D3）
+## 三、执行面：两套独立状态机，都保留 + 默认关 + 可测（D2/D3/D11/D12/D13）
 
-执行面不删。改动只有两点：
+评估核实：这里其实是**两套互不相干的状态机**，此前本文误写为一条链。都保留、都默认关、都补测试。
 
-1. **默认关闭开关**：新增环境变量 `WB_CLOUD_AI=off|on`（默认 off）。off 时：
-   - `adapters/loop` 的 listener 不启动自动驱动；
-   - inbox 相关路由返回 503「云端 AI 未启用」（而非静默）；
-   - control-tower 页面显示"未启用"。
-   顾问/客户上线时设 `WB_CLOUD_AI=on` 即开启，代码一直在、一直被测。
-2. **driver 抽象为可注入**：把 `claude -p` / `codex exec` 的实际调用收敛到一个 `driver` 接口
-   （现 agent-exec.mjs 已接近），测试注入假 driver，让整条自动化链路可在无真实 AI、无网络下端到端跑通。
+### 机 A · 反馈驱动的自动续跑（= 你要的"云端 AI"，D2/D3）
+- 触发：`storage` 出现 `feedback 且无 ack 无 response` 的轮。
+- 两个实现共用同一状态机：`loop/listener.mjs`（本机 `claude -p`）与 `scripts/resident-worker.mjs`（东京机 `codex exec`，已在跑、轮询 `/api/feedback`）。
+- 落盘：`ack.json`（认领）→ `response.md`（AI 产出）→ 触发 AI 端 present 下一轮。
+- **"下一轮"的所有者 = AI 侧**（present 只能由 `core.presentRound` 产生，见 §四）；worker 不直接写 content。
+- **凭据模式（D11）**：driver 适配器读 `WB_CLOUD_AI_AUTH=subscription|apikey`（默认 subscription）。
+  subscription→沿用 `claude -p --resume <id>`（登录态）；apikey→给 spawn 进程注入 `ANTHROPIC_API_KEY`（取自 api-vault，不硬编码）。
+
+### 机 B · inbox 任务队列（多执行器路由，D13 保留但默认关）
+- 触发：反馈/消息事件经 `dispatchExecutorEvent` 查会话所属项目的 `executor`；`resident`→发 webhook（走机 A），`pull`/`external-review`→入队 `workspace/inbox/<executor>/`。
+- 状态机：`pending→claimed→done|failed`，`claimed` 超时退回 `pending`（租约）。
+- 消费者：拉取型执行器（local-mac / github-actions PR 评审面）——目前未激活，故默认关。
+- **保留理由**：重建是加法、但会丢掉已正确的租约逻辑与全仓唯一做对的原子写；折进 storage 层反当原子写范本。
+
+### 统一开关
+`WB_CLOUD_AI=off|on`（默认 off）。off 时：机 A 的 listener/worker 不启动自动驱动；机 B 的 `/api/inbox/*` 返回 503「未启用」；control-tower 显示"未启用"。上线给顾问/客户时置 on。
+两套都要求 driver 抽象为可注入，测试注入假 driver，全链路在无真实 AI、无网络下跑通。
 
 ## 四、一轮 present→feedback 数据流（目标态）
 
@@ -60,8 +70,9 @@
 4. `GET /api/content` → server adapter 鉴权 → `storage.readRound(r)` + `readRound(r-1)` → `protocol.computeDiff` → 按 identity 过滤可见块 → JSON。
 5. `render/app.mjs` → `protocol.routeBlocks` 分区 → `blocks.blockHtml` 出 HTML；草稿写 localStorage。
 6. `POST /api/feedback` → server adapter 解析+鉴权 → `core.submitFeedback(s,r,identity,payload)` → `storage.appendFeedback`（历史件→主件→status 原子三步）+ `storage.appendJournal(receipt)`。
-7. **[云端 AI 开启时]** loop adapter 轮询 `storage.pendingRounds()` → 注入的 driver 执行 → `storage.writeResponse` → AI 端 `workbench wait` 返回，续下一轮。
-   **[关闭时]** 第 7 步不发生；present→feedback 落盘照常，等人工或开启后处理。
+7. **[WB_CLOUD_AI=on · 机 A]** listener/worker 扫到 `feedback 且无 ack 无 response` → 注入的 driver（按 D11 凭据模式）执行 → `storage.writeAck/writeResponse` → AI 侧据此 `core.presentRound` 产生下一轮 → `workbench wait` 返回。
+   **[机 B]** 若该会话项目的 executor 是 pull 型 → 事件入 inbox 队列，由对应拉取执行器认领执行（默认关时不发生）。
+   **[WB_CLOUD_AI=off]** 两台都不自动驱动；present→feedback 落盘照常，等人工或开启后处理。
 
 任何环节崩溃，直接读 `workspace/<s>/round-N/` 下的文件即可重建状态并接管（文件即事实源，D8）。
 
@@ -73,7 +84,7 @@
 | 1 | 安全网先行 | `scripts/ab-compare.mjs`（新旧双服务器同数据对拍，≥60 请求含近似路径，2s 硬超时）+ golden fixtures（10 份代表性 content → computeDiff/routeBlocks/renderZones 落 golden）。**反向自检**：故意改坏必须报错。 |
 | 2 | storage 层收口 | fs-boundary 测试通过；present 双写路径消灭（CLI/HTTP 同一不变量，二次 present 必抛 ROUND_EXISTS，两路各测）；20 并发 feedback 零丢失；写盘失败 5xx 且含真因；ab-compare 零差异。 |
 | 3 | 服务端真拆 | layering 测试通过（无环）；server.mjs export ≤5、无 route 反向 import；ab-compare 零差异 + 冒烟。 |
-| 4 | 执行面开关+测试 | WB_CLOUD_AI 开关生效（off 时链路不启、路由 503）；假 driver 端到端跑通 present→claim→execute→writeback→next-round；关闭态回归零差异。 |
+| 4 | 执行面开关+测试 | WB_CLOUD_AI 开关生效（off 时机A不自动驱动、机B路由 503）；**机 A** 假 driver 端到端跑通 feedback→listener→driver→response→下一轮 + 凭据模式契约；**机 B** 租约状态机 + 入队路由；claim 改原子 rename 竞争。详见 04-contracts §四。关闭态回归零差异。 |
 | 5 | 收尾 | app.mjs 抽薄（软目标）；/api/health 加 version；docs/DESIGN.md 按目标态重写。 |
 
 **app.mjs 抽薄列为软目标**：它是"改造非重写"，风险收益比低于前四期，放最后，做多少看前面落地后的余量。
