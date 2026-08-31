@@ -104,6 +104,18 @@
   --block-pad-y-end: 38px;
   --panel-pad-top: 40px;
   --zone-gap: 40px;             /* 区标题上方留白 */
+
+  /* 历史轮只读与已提交草稿回执 */
+  --color-readonly-bg: #fff7ed;
+  --color-readonly-border: #fed7aa;
+  --readonly-banner-padding: 8px 20px;
+  --readonly-section-margin: 16px auto 24px;
+  --readonly-section-padding: 12px 14px;
+  --readonly-card-gap: 8px;
+  --readonly-border-width: 1px;
+  --readonly-meta-margin: 3px 0;
+  --readonly-notice-margin: 0 auto 18px;
+  --readonly-notice-padding: 8px 12px;
 }
 
 /* ── 8. 字体渲染：按屏幕像素密度分开处理 ───────────────────────────────────

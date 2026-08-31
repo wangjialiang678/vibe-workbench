@@ -21,18 +21,22 @@ PREFIX = "【思锐评审门户】"
 
 def format_event(payload):
     """workbench 事件 → 通知文本；返回 None 表示不需要通知。"""
+    payload = payload if isinstance(payload, dict) else {}
     event = payload.get("event")
     session = payload.get("session") or "?"
     at = payload.get("at") or ""
     if event == "feedback-submitted":
-        who = (payload.get("submittedBy") or {}).get("name") or "匿名"
+        submitted_by = payload.get("submittedBy")
+        who = submitted_by.get("name") if isinstance(submitted_by, dict) else None
+        who = who or "匿名"
         rnd = payload.get("round")
         return (
             f"{PREFIX}{who} 提交了第 {rnd} 轮反馈（会话 {session}，{at}）\n"
             "→ 处理：按 系统运行手册 §三 分诊（BUG→Codex｜需求变更→台账七步｜新功能→确认清单）"
         )
     if event == "message-posted":
-        author = payload.get("author") or {}
+        author = payload.get("author")
+        author = author if isinstance(author, dict) else {}
         if author.get("role") == "ai":
             return None  # 自家 AI 的回执/回访不用提醒自己
         name = author.get("name") or "有人"
@@ -44,15 +48,41 @@ def format_event(payload):
         return f"{PREFIX}第 {rnd} 轮内容已发布{suffix}（会话 {session}）"
     if event == "feedback-created" and payload.get("source") == "tms-demo":
         cat = payload.get("category") or "?"
-        page = payload.get("page") or "?"
+        page_route = payload.get("pageRoute")
+        page_route = page_route if isinstance(page_route, dict) else {}
+        route_page = page_route.get("page")
+        page = route_page if isinstance(route_page, str) and route_page else payload.get("page") or "?"
+        route_query = page_route.get("query")
+        query = route_query if isinstance(route_query, str) else ""
+        if query:
+            page = f"{page}{query if query.startswith('?') else '?' + query}"
         contact = payload.get("contact") or "未留联系方式"
-        preview = (payload.get("contentPreview") or "")[:120]
-        return (
+        preview_raw = payload.get("contentPreview")
+        preview = (preview_raw if isinstance(preview_raw, str) else str(preview_raw or ""))[:120]
+        reporter_role = payload.get("reporterRole")
+        reporter_role = reporter_role if isinstance(reporter_role, str) else ""
+        reporter_identity = payload.get("reporterIdentity")
+        reporter_identity = reporter_identity if isinstance(reporter_identity, str) else ""
+        anchor_text = payload.get("anchorText")
+        anchor_text = anchor_text[:120] if isinstance(anchor_text, str) else ""
+        build_version = payload.get("buildVersion")
+        build_version = build_version if isinstance(build_version, str) else ""
+        lines = [
             "【思锐演示系统】客户提交了新反馈（" + str(cat) + "）\n"
-            "页面：" + str(page) + "｜联系：" + str(contact) + "\n"
-            "内容：" + str(preview) + "\n"
-            "→ 全文：demo /api/feedback?status=NEW；按运行手册 §三 分诊"
-        )
+        ]
+        if reporter_identity or reporter_role:
+            reporter = reporter_identity or "未署名"
+            role_suffix = f"（{reporter_role}）" if reporter_role else ""
+            lines.append(f"提交人：{reporter}{role_suffix}\n")
+        lines.append("页面：" + str(page) + "｜联系：" + str(contact) + "\n")
+        if anchor_text:
+            lines.append("定位：" + anchor_text + "\n")
+        lines.append("内容：" + str(preview) + "\n")
+        triage = "→ 全文：demo /api/feedback?status=NEW；按运行手册 §三 分诊"
+        if build_version:
+            triage += "｜版本：" + build_version
+        lines.append(triage)
+        return "".join(lines)
     # 未知事件/手工 POST：透传 title/text 字段，便于 curl 测试
     text = payload.get("text") or payload.get("title")
     if text:

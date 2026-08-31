@@ -1701,3 +1701,74 @@ test('POST /api/feedback 每笔提交落 feedback-history 历史件，后提交�
   const resGet = await fetch(url(`/api/feedback?session=${s}&round=${r}`));
   assert.equal(resGet.status, 200);
 });
+
+test('GET /api/feedback?history=1 返回按时间排序的 submissions，保留自报身份并过滤参与者不可见块', async () => {
+  const alice = {
+    id: 'alice-history', name: '小艾', token: 'alice-history-token', createdAt: '2026-08-31T00:00:00.000Z',
+  };
+  await withIdentityServer({ participants: [alice] }, async ({ port: authPort }) => {
+    const base = `http://127.0.0.1:${authPort}`;
+    const s = 'feedback-history-view';
+    writeJSON(paths.content(s, 1, { exactSession: true }), {
+      session: s,
+      round: 1,
+      blocks: [
+        { id: 'visible', type: 'markdown', body: '所有人可见' },
+        { id: 'bob-only', type: 'markdown', body: '仅 Bob', assignee: 'bob' },
+      ],
+    });
+    writeStatus(s, { state: 'rendered', round: 1 }, undefined, { exactSession: true });
+    const post = await fetch(`${base}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-workbench-token': 'owner-secret' },
+      body: JSON.stringify({
+        session: s,
+        round: 1,
+        items: [
+          { blockId: 'visible', type: 'comment', comment: '公开意见' },
+          { blockId: 'bob-only', type: 'comment', comment: '私有意见' },
+        ],
+        sessionComment: '轮次总评',
+        selfReport: { id: alice.id, name: '小艾 / QA' },
+      }),
+    });
+    assert.equal(post.status, 200);
+    writeJSON(paths.content(s, 2, { exactSession: true }), { session: s, round: 2, blocks: [] });
+    writeStatus(s, { state: 'rendered', round: 2 }, undefined, { exactSession: true });
+
+    const ownerResponse = await fetch(`${base}/api/feedback?session=${s}&round=1&history=1`, {
+      headers: { 'x-workbench-token': 'owner-secret' },
+    });
+    assert.equal(ownerResponse.status, 200);
+    const ownerView = await ownerResponse.json();
+    assert.equal(ownerView.ok, true);
+    assert.equal(ownerView.submissions.length, 1);
+    assert.deepEqual(ownerView.submissions[0].submittedBy, { id: 'owner', name: '管理员' });
+    assert.deepEqual(ownerView.submissions[0].selfReportedBy, { id: alice.id, name: '小艾 / QA' });
+    assert.equal(ownerView.submissions[0].sessionComment, '轮次总评');
+    assert.deepEqual(Object.keys(ownerView.submissions[0]), [
+      'submittedAt', 'submittedBy', 'selfReportedBy', 'items', 'sessionComment',
+    ]);
+
+    const participantView = await fetch(`${base}/api/feedback?session=${s}&round=1&history=1`, {
+      headers: { 'x-workbench-token': alice.token },
+    }).then((response) => response.json());
+    assert.deepEqual(participantView.submissions[0].items.map((item) => item.blockId), ['visible']);
+  });
+});
+
+test('POST /api/feedback 拒绝修改旧轮并返回 ROUND_READONLY', async () => {
+  const s = 'feedback-old-round-readonly';
+  writeJSON(paths.content(s, 1, { exactSession: true }), { session: s, round: 1, blocks: [] });
+  writeJSON(paths.content(s, 2, { exactSession: true }), { session: s, round: 2, blocks: [] });
+  writeStatus(s, { state: 'rendered', round: 2 }, undefined, { exactSession: true });
+
+  const response = await fetch(url('/api/feedback'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ session: s, round: 1, items: [] }),
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'ROUND_READONLY' });
+  assert.equal(fs.existsSync(paths.feedbackHistoryDir(s, 1, { exactSession: true })), false);
+});

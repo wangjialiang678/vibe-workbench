@@ -3,6 +3,13 @@
 // 纯 DOM 事件绑定放在这里，渲染器是纯函数导入。
 import { renderZones } from './attention-view.mjs';
 import { participantFeedbackHtml } from './blocks.mjs';
+import {
+  historySessionCommentsHtml,
+  isRoundReadonly,
+  readonlyBannerText,
+  readonlyBlockFeedbackHtml,
+  submittedDraftNoticeHtml,
+} from './readonly-view.mjs';
 import { diffToggleHtml } from './diff-view.mjs';
 import { statusBadgeHtml } from './status-bar.mjs';
 import { documentsPanelHtml, historyRoundsHtml } from './documents-view.mjs';
@@ -30,7 +37,7 @@ import {
   submitStateAfterSuccess,
 } from './submit-state.mjs';
 import { resolveSelfReportSelection } from './self-report-state.mjs';
-import { draftKey, mergeDraft, readDraft, writeDraft } from './draft-store.mjs';
+import { draftKey, isSubmitted, markSubmitted, mergeDraft, readDraft, submittedAt, writeDraft } from './draft-store.mjs';
 import { nextRoundTitle, pickRound, shouldAdvance } from './round-nav.mjs';
 import { containerPinPopoverPosition, pinFromPointer, visibleBoundsInContainer } from './pin-geometry.mjs';
 import { facetBadges, pickFacet } from './facet-state.mjs';
@@ -58,6 +65,7 @@ const FOLLOW_LATEST = URL_ROUND === '';
 
 // ── 元素引用 ─────────────────────────────────────────────
 const $zones        = document.getElementById('zones-mount');
+const $readonlyBanner = document.getElementById('readonly-banner');
 const $statusMount  = document.getElementById('status-badge-mount');
 const $diffMount    = document.getElementById('diff-toggle-mount');
 const $submitBtn    = document.getElementById('submit-btn');
@@ -275,8 +283,9 @@ $sessionNav?.addEventListener('change', () => {
 
 if ($sessionComment) {
   $sessionComment.addEventListener('input', () => {
+    if (isViewingHistory()) return;
     try { localStorage.setItem(scKey(), $sessionComment.value); } catch { /* 忽略 */ }
-    markFeedbackDirty();
+    saveDraft({});
   });
 }
 
@@ -287,6 +296,17 @@ let _pinRepositionQueued = false;
 
 function isNarrowScreen() {
   return typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches;
+}
+
+function isViewingHistory() {
+  return isRoundReadonly(currentRound, _latestRound);
+}
+
+function updateSubmitVisibility() {
+  if (!$submitBtn) return;
+  const contentView = _activeView === 'documents' ? 'documents' : 'decision';
+  $submitBtn.hidden = isViewingHistory()
+    || (isNarrowScreen() ? _activeView !== 'decision' : contentView !== 'decision');
 }
 
 function setBadge($badge, count) {
@@ -321,9 +341,7 @@ function setActiveView(view, { scrollTop = false } = {}) {
   document.querySelectorAll('.mobile-tab').forEach((button) => {
     button.classList.toggle('is-active', button.dataset.view === view);
   });
-  if ($submitBtn) {
-    $submitBtn.hidden = isNarrowScreen() ? view !== 'decision' : contentView !== 'decision';
-  }
+  updateSubmitVisibility();
 
   if (view === 'stream') {
     _streamUnread = 0;
@@ -415,10 +433,7 @@ try {
 
 function syncResponsiveLayout() {
   if (!isNarrowScreen()) applyStreamWidth(_preferredStreamWidth || window.innerWidth * .33);
-  const contentView = _activeView === 'documents' ? 'documents' : 'decision';
-  if ($submitBtn) {
-    $submitBtn.hidden = isNarrowScreen() ? _activeView !== 'decision' : contentView !== 'decision';
-  }
+  updateSubmitVisibility();
 }
 
 window.addEventListener('resize', syncResponsiveLayout);
@@ -603,6 +618,7 @@ function markFeedbackDirty() {
 }
 
 function saveDraft(patch) {
+  if (isViewingHistory()) return;
   const draft = loadDraft();
   mergeDraft(draft, patch);
   writeDraft(localStorage, draftKey(SESSION, currentRound), draft);
@@ -617,6 +633,24 @@ let _currentContent = null;
 let _documentsCacheKey = '';
 let _documentsViewModel = null;
 let _historyRoundsCacheKey = '';
+
+function applyReadonlyState() {
+  const readonly = isViewingHistory();
+  $zones?.toggleAttribute('data-readonly', readonly);
+  if ($readonlyBanner) {
+    $readonlyBanner.hidden = !readonly;
+    $readonlyBanner.textContent = readonly ? readonlyBannerText(currentRound) : '';
+  }
+  if ($sessionCommentSection) $sessionCommentSection.hidden = readonly;
+  if (readonly) {
+    $zones?.querySelectorAll('input, textarea, select, button:not(.tab)').forEach((control) => {
+      control.disabled = true;
+    });
+    $zones?.querySelectorAll('iframe').forEach((frame) => frame.setAttribute('tabindex', '-1'));
+  }
+  updateSubmitVisibility();
+  return readonly;
+}
 
 async function loadAndRender() {
   let data;
@@ -643,6 +677,7 @@ async function loadAndRender() {
     element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
   });
   $zones.replaceChildren(rendered.content);
+  const readonly = applyReadonlyState();
 
   // 议题重组提示（DESIGN §5 + §13 P1）：服务端注入 sanity.suspect 时顶部横幅（前端消费）
   if (data.sanity && data.sanity.suspect) {
@@ -654,12 +689,19 @@ async function loadAndRender() {
   // 注入 diff 开关
   $diffMount.innerHTML = diffToggleHtml();
 
-  // 恢复草稿 UI（简单：遍历 textarea/input）
-  restoreDraftUI(loadDraft());
+  // 已提交草稿只保留为本地回执，不再把旧值灌回可编辑控件。
+  const draft = loadDraft();
+  if (!readonly && isSubmitted(draft)) {
+    $zones.insertAdjacentHTML('afterbegin', submittedDraftNoticeHtml(submittedAt(draft)));
+    setSubmitState('submitted');
+  } else if (!readonly) {
+    setSubmitState('ready');
+    restoreDraftUI(draft);
+  }
 
   // 恢复会话级留言草稿（P1）
   if ($sessionComment) {
-    try { $sessionComment.value = localStorage.getItem(scKey()) ?? ''; } catch { /* 忽略 */ }
+    try { $sessionComment.value = !readonly && !isSubmitted(draft) ? localStorage.getItem(scKey()) ?? '' : ''; } catch { /* 忽略 */ }
   }
 
   // 决策进度：按已恢复草稿初始化「已填 m/X」（DESIGN §13 P2）+ tab 角标
@@ -719,11 +761,29 @@ window.__renderMermaidDiagrams = renderMermaidDiagrams;
 async function loadParticipantFeedback() {
   if (!SESSION || currentRound == null) return;
   try {
-    const response = await fetch(apiUrl(`/api/feedback?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}`));
+    const readonly = isViewingHistory();
+    const historyQuery = readonly ? '&history=1' : '';
+    const response = await fetch(apiUrl(`/api/feedback?session=${encodeURIComponent(SESSION)}&round=${encodeURIComponent(currentRound)}${historyQuery}`));
     if (!response.ok) return;
     const data = await response.json();
-    $zones.querySelectorAll('.participant-feedbacks').forEach((element) => element.remove());
-    if (!data.ok || !Array.isArray(data.byParticipant)) return;
+    $zones.querySelectorAll('.participant-feedbacks, .history-session-comments').forEach((element) => element.remove());
+    if (!data.ok) return;
+    if (readonly) {
+      if (!Array.isArray(data.submissions)) return;
+      const commentsHtml = historySessionCommentsHtml(data.submissions);
+      if (commentsHtml) $zones.insertAdjacentHTML('afterbegin', commentsHtml);
+      for (const block of _blocks) {
+        const html = readonlyBlockFeedbackHtml(block, data.submissions);
+        if (!html) continue;
+        const host = $zones.querySelector(`[data-block-id="${cssEsc(block.id)}"]`);
+        if (!host) continue;
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        host.append(template.content);
+      }
+      return;
+    }
+    if (!Array.isArray(data.byParticipant)) return;
     for (const block of _blocks) {
       const html = participantFeedbackHtml(block, data.byParticipant, data.conflicts || []);
       if (!html) continue;
@@ -1690,6 +1750,7 @@ document.addEventListener('mousedown', (e) => {
 
 // ── 事件绑定 ─────────────────────────────────────────────
 function bindInteractions() {
+  if (isViewingHistory()) return;
   // verdict 按钮
   $zones.querySelectorAll('.verdict-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -1915,6 +1976,7 @@ function bindInteractions() {
 
 // ── 提交 ─────────────────────────────────────────────────
 $submitBtn.addEventListener('click', () => {
+  if (isViewingHistory()) return;
   const draft = loadDraft();
   const answeredIds = Object.keys(draft);
   const unanswered = unansweredDecisions(_blocks, answeredIds);
@@ -2147,6 +2209,7 @@ function updateFacetBadges() {
 }
 
 async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfReportSelection()) {
+  if (isViewingHistory()) return;
   const payload = submitPayload({
     session: SESSION,
     round: currentRound,
@@ -2175,7 +2238,16 @@ async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfRe
 
   if (resp.status === 409) {
     setSubmitState(submitStateAfterFailure(_submitState, previousSubmitState));
-    alert('该轮 AI 正在读取上一版反馈。你的补充已保留，请稍后再点“再次提交”。');
+    let errorCode = '';
+    try { errorCode = (await resp.json())?.error || ''; } catch { /* 忽略 */ }
+    if (errorCode === 'ROUND_READONLY') {
+      const latest = await resolveLatestRound();
+      if (latest != null) _latestRound = latest;
+      applyReadonlyState();
+      alert('该轮已成为历史轮，只能回看；如需变更请在最新轮提出。');
+    } else {
+      alert('该轮 AI 正在读取上一版反馈。你的补充已保留，请稍后再点“再次提交”。');
+    }
     return;
   }
 
@@ -2193,6 +2265,7 @@ async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfRe
     sessionStorage.setItem(toastKey, '1');
     showToast('提交成功！AI 正在处理，你可以关闭此页面，回复后会变蓝提醒。');
   }
+  writeDraft(localStorage, draftKey(SESSION, currentRound), markSubmitted(loadDraft(), payload.submittedAt));
   setSubmitState(submitStateAfterSuccess(_submitState));
 }
 
@@ -2307,6 +2380,7 @@ async function pollStatus() {
         _latestBlocks = [];
       }
       _latestRound = latest;
+      applyReadonlyState();
     }
     if (FOLLOW_LATEST && shouldAdvance(currentRound, latest)) {
       await advanceToRound(latest);

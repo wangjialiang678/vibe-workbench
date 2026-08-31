@@ -1673,6 +1673,11 @@ body.project-home .content-region {
 }
 
 .participant-opinion-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.participant-opinion-meta {
+  margin: var(--readonly-meta-margin);
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+}
 .participant-opinion-value { margin-top: 3px; font-weight: 600; }
 .participant-opinion-comment { margin-top: 3px; color: var(--color-text-muted); white-space: pre-wrap; }
 .conflict-badge {
@@ -1682,6 +1687,41 @@ body.project-home .content-region {
   color: var(--color-zone-a);
   font-size: var(--fs-2xs);
   font-weight: 700;
+}
+
+/* ===== 历史轮只读回看 / 草稿提交回执 ===== */
+.readonly-banner {
+  padding: var(--readonly-banner-padding);
+  border-bottom: var(--readonly-border-width) solid var(--color-readonly-border);
+  background: var(--color-readonly-bg);
+  color: var(--color-status-warn);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-strong);
+  text-align: center;
+}
+.readonly-banner[hidden] { display: none; }
+[data-readonly] iframe,
+[data-readonly] svg.proto-overlay { pointer-events: none; }
+.history-session-comments {
+  display: grid;
+  gap: var(--readonly-card-gap);
+  max-width: var(--content-max);
+  margin: var(--readonly-section-margin);
+  padding: var(--readonly-section-padding);
+  border: var(--readonly-border-width) solid var(--color-readonly-border);
+  border-radius: var(--radius);
+  background: var(--color-readonly-bg);
+}
+.history-session-comment p { white-space: pre-wrap; }
+.submitted-draft-notice {
+  max-width: var(--content-max);
+  margin: var(--readonly-notice-margin);
+  padding: var(--readonly-notice-padding);
+  border: var(--readonly-border-width) solid var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 /* 叙述/图表内容区（AI 的思考）：可见、克制、不折叠 */

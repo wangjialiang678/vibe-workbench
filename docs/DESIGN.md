@@ -83,6 +83,7 @@ storage 的关键不变量如下。
 
 - `createRound` 以目录创建占位，同一 session/round 永不覆盖；冲突返回 `ROUND_EXISTS`。
 - `appendFeedback` 先写带时间戳的历史件，再写主反馈和 status，因此反馈不因后一次提交而丢失。
+- `feedback-history/` 是一轮内全部提交的只读审计源；历史视图只信任 JSON 内的 `submittedBy` / `selfReportedBy`，不从可能含中文 slug 的文件名反推身份。
 - 反馈驱动认领使用 rename 竞争；两个 worker 同时处理一轮时只有一个赢家。
 - inbox 任务同样使用临时文件和 rename 维护租约，是独立队列状态机的原子写范本。
 - 存储错误保留真实 errno，adapter 再映射为 HTTP 响应，不能伪装成“JSON 无效”。
@@ -105,6 +106,8 @@ HTTP 路由都是精确路径或明确带尾斜杠的前缀；近似路径必须
 ## 6. 浏览器渲染与草稿
 
 `src/render/app.mjs` 负责本轮加载、分区、提交、轮询和交互绑定；`blocks.mjs` 负责 block DOM；`*-view.mjs`、`*-state.mjs` 将局部渲染和纯状态拆出。草稿存于 localStorage，键包含 session 和 round；刷新或前端自动更新不应丢失未提交内容。
+
+显式查看早于 session 最新轮的历史轮时，页面进入只读模式：不绑定反馈交互、不回填本地草稿，并通过 `GET /api/feedback?history=1` 展示该轮历次提交。成功提交的本地草稿保留提交时间标记，恢复时只显示“已于 X 提交”；再次编辑会清除标记并形成新草稿。
 
 页面通过 `assetsVersion` 和版本化 import map 处理长寿命标签页：关键资源更新后页面会刷新到同一版本的 HTML、CSS、模块和本地 mermaid。mermaid 使用脱离隐藏容器的 `mermaid.render`，单图失败时显示真实错误与原文，不把渲染期错误伪装成语法错误。
 
@@ -168,7 +171,7 @@ claimed 超过租约 → pending
 | 接口组 | 关键接口 |
 |---|---|
 | 内容与轮次 | `POST /api/rounds`、`GET /api/content`、`GET /api/status`、`POST /api/retry` |
-| 反馈与对话流 | `POST/GET /api/feedback`、`POST/GET /api/messages`、`POST /api/stream-events` |
+| 反馈与对话流 | `POST/GET /api/feedback`（`history=1` 读取历次提交；旧轮 POST 返回 `ROUND_READONLY`）、`POST/GET /api/messages`、`POST /api/stream-events` |
 | 身份与项目 | `GET/POST/DELETE /api/participants`、`GET /api/sessions`、`GET /api/projects` |
 | 文件与页面 | `POST /api/attachments`、`GET /api/assets`、`GET /render/` |
 | 执行面 | `POST /api/worker-heartbeat`、`/api/inbox/*`、`GET /api/control-tower` |

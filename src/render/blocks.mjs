@@ -350,8 +350,18 @@ function feedbackValueText(block, item) {
   }).filter(Boolean).join('、');
 }
 
+function feedbackSubmissionMetaHtml(entry) {
+  const submittedBy = entry?.submittedBy || entry?.feedback?.submittedBy;
+  const selfReportedBy = entry?.selfReportedBy || entry?.feedback?.selfReportedBy;
+  const parts = [];
+  if (submittedBy?.name || submittedBy?.id) parts.push(`提交人：${escHtml(submittedBy.name || submittedBy.id)}`);
+  if (selfReportedBy?.name || selfReportedBy?.id) parts.push(`自报人：${escHtml(selfReportedBy.name || selfReportedBy.id)}`);
+  if (entry?.submittedAt) parts.push(`提交时间：<time datetime="${escHtml(entry.submittedAt)}">${escHtml(entry.submittedAt)}</time>`);
+  return parts.length ? `<div class="participant-opinion-meta">${parts.join('｜')}</div>` : '';
+}
+
 /** 把已提交反馈渲染成块下只读意见；不包含任何可编辑控件。 */
-export function participantFeedbackHtml(block, byParticipant = [], conflicts = []) {
+export function participantFeedbackHtml(block, byParticipant = [], conflicts = [], { showSubmissionMeta = false } = {}) {
   const conflict = conflicts.some((item) => item?.blockId === block?.id);
   const opinions = byParticipant.flatMap((entry) => {
     const items = (entry?.feedback?.items || []).filter((item) => item?.blockId === block?.id);
@@ -366,6 +376,7 @@ export function participantFeedbackHtml(block, byParticipant = [], conflicts = [
     }).join('');
     return [`<article class="participant-opinion" data-participant-id="${escHtml(entry.id || '')}">
   <div class="participant-opinion-head"><strong>${escHtml(entry.name || entry.id || '参与者')} 的意见</strong>${conflict ? '<span class="conflict-badge">意见分歧</span>' : ''}</div>
+  ${showSubmissionMeta ? feedbackSubmissionMetaHtml(entry) : ''}
   ${details}
 </article>`];
   });

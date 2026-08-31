@@ -11,7 +11,7 @@
 | `feedback-submitted` | 工作台（评审门户） | 「X 提交了第 N 轮反馈」+ 分诊指引 |
 | `message-posted` | 工作台 | 「X 发来一条消息」；`author.role == 'ai'` 的跳过（不自我提醒） |
 | `round-presented` | 工作台 | 「第 N 轮内容已发布」 |
-| `feedback-created` + `source: "tms-demo"` | TMS 演示系统（`TMS_FEEDBACK_WEBHOOK`） | 分类/页面/联系方式/内容预览 + 分诊指引 |
+| `feedback-created` + `source: "tms-demo"` | TMS 演示系统（`TMS_FEEDBACK_WEBHOOK`） | 分类/页面/联系方式/内容预览 + 分诊指引；支持 `reporterRole`、`reporterIdentity`、`pageRoute`、`anchorText`、`buildVersion` |
 | 其他（含 `{text}` 手工 POST） | curl 测试等 | 透传文本 |
 
 ## 部署（东京机现行）
@@ -29,4 +29,8 @@
 # 服务器本机执行；成功 = {"ok": true} 且飞书收到一条【思锐评审门户】前缀消息
 curl -s -X POST http://127.0.0.1:8125/ -H 'content-type: application/json' \
   -d '{"text":"中继 e2e 测试，请忽略"}'
+
+# TMS 全字段 e2e；成功 = 飞书消息含提交人、完整页面路由、定位和构建版本
+curl -s -X POST http://127.0.0.1:8125/ -H 'content-type: application/json' \
+  -d '{"event":"feedback-created","source":"tms-demo","category":"BUG","reporterRole":"调度员","reporterIdentity":"王师傅","pageRoute":{"page":"/orders/detail","query":"id=42&tab=route"},"anchorText":"订单详情页的保存按钮","buildVersion":"tms-2026.08.31","page":"/orders","contact":"wang@example.com","contentPreview":"希望保存后保留当前标签页"}'
 ```

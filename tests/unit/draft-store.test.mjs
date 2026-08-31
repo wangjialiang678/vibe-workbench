@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { draftKey, mergeDraft, readDraft, writeDraft } from '../../src/render/draft-store.mjs';
+import { draftKey, isSubmitted, markSubmitted, mergeDraft, readDraft, submittedAt, writeDraft } from '../../src/render/draft-store.mjs';
 
 test('draftKey 保持会话、轮次与反馈命名空间', () => {
   assert.equal(draftKey('design/demo', 3), 'wb:design/demo:3:fb');
@@ -20,4 +20,17 @@ test('readDraft/writeDraft 通过注入 storage 存取，并容错畸形 JSON', 
   values.set('bad', '{');
   assert.deepEqual(readDraft(storage, 'bad'), {});
   assert.deepEqual(readDraft(storage, 'missing'), {});
+});
+
+test('markSubmitted/isSubmitted 保存提交时间，后续编辑自动回到未提交草稿', () => {
+  const draft = { blockA: { text: '已交内容' } };
+  const marked = markSubmitted(draft, '2026-08-31T08:00:00.000Z');
+  assert.notEqual(marked, draft);
+  assert.equal(isSubmitted(draft), false);
+  assert.equal(isSubmitted(marked), true);
+  assert.equal(submittedAt(marked), '2026-08-31T08:00:00.000Z');
+
+  mergeDraft(marked, { blockA: { text: '新修改' } });
+  assert.equal(isSubmitted(marked), false);
+  assert.equal(submittedAt(marked), null);
 });

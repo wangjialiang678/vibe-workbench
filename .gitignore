@@ -5,3 +5,4 @@ version.json
 *.log
 config/participants.json
 .claude/workflow/archive_*/
+__pycache__/

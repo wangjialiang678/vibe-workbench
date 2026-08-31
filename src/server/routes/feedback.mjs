@@ -1,5 +1,5 @@
 import { validateFeedback } from '../../protocol/schema.mjs';
-import { appendJournal, paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
+import { appendJournal, latestRound, paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
 import { appendStreamEntry } from '../../stream.mjs';
 import { dispatchExecutorEvent } from '../notify.mjs';
 import { AI_IDENTITY } from '../limits.mjs';
@@ -19,14 +19,15 @@ function feedbackToMd(fb) {
 export function feedbackGet(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
   if (urlPath === '/api/feedback' && method === 'GET') {
-    const { session, round } = parseQuery(rawUrl);
+    const { session, round, history } = parseQuery(rawUrl);
     const parsedRound = validRoundQuery(round);
     if (!isValidSessionName(session) || parsedRound == null) {
       json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
       return;
     }
-    const view = feedbackView(session, parsedRound, identity);
-    if (!view.feedback) {
+    const includeHistory = history === '1';
+    const view = feedbackView(session, parsedRound, identity, { history: includeHistory });
+    if (!view.feedback && (!includeHistory || view.submissions.length === 0)) {
       json(res, 200, { ok: false, pending: true });
       return;
     }
@@ -50,6 +51,10 @@ export function feedbackPost(ctx) {
       // 与 GET 侧一致的防御深度：session/round 先过白名单再进任何路径拼接
       if (!isValidSessionName(session) || !Number.isInteger(round) || round < 1) {
         json(res, 400, { ok: false, error: 'session 或 round 参数无效' });
+        return;
+      }
+      if (round < latestRound(session, { exactSession: true })) {
+        json(res, 409, { error: 'ROUND_READONLY' });
         return;
       }
       let selfReportedBy;

@@ -58,7 +58,31 @@ function detectFeedbackConflicts(ownerFeedback, byParticipant) {
   }
   return [...byBlock].flatMap(([blockId, choices]) => new Set(choices.map(({ value }) => JSON.stringify(value))).size > 1 ? [{ blockId, choices }] : []);
 }
-export function feedbackView(session, round, identity = OWNER_IDENTITY) {
+function feedbackHistoryEntries(session, round, visibility) {
+  const dir = paths.feedbackHistoryDir(session, round, { exactSession: true });
+  let filenames;
+  try { filenames = disk.readdirSync(dir).filter((name) => name.endsWith('.json')); } catch { return []; }
+  return filenames.flatMap((filename, index) => {
+    const raw = readJSON(path.join(dir, filename), null);
+    const feedback = filterFeedbackForIdentity(raw, visibility);
+    if (!feedback) return [];
+    const submittedAt = typeof feedback.submittedAt === 'string' ? feedback.submittedAt : null;
+    return [{
+      submittedAt,
+      submittedBy: feedback.submittedBy ?? null,
+      selfReportedBy: feedback.selfReportedBy ?? null,
+      items: Array.isArray(feedback.items) ? feedback.items : [],
+      sessionComment: typeof feedback.sessionComment === 'string' ? feedback.sessionComment : '',
+      _sortTime: Date.parse(submittedAt || ''),
+      _sortIndex: index,
+    }];
+  }).sort((a, b) => {
+    const aTime = Number.isFinite(a._sortTime) ? a._sortTime : 0;
+    const bTime = Number.isFinite(b._sortTime) ? b._sortTime : 0;
+    return aTime - bTime || a._sortIndex - b._sortIndex;
+  }).map(({ _sortTime, _sortIndex, ...entry }) => entry);
+}
+export function feedbackView(session, round, identity = OWNER_IDENTITY, { history = false } = {}) {
   const visibility = feedbackVisibilityForIdentity(session, round, identity); const primary = filterFeedbackForIdentity(readJSON(paths.feedback(session, round, { exactSession: true }), null), visibility); const byParticipant = participantFeedbackEntries(session, round).map((entry) => ({ ...entry, feedback: filterFeedbackForIdentity(entry.feedback, visibility) })); const ownerFeedback = primary && (!primary.submittedBy || primary.submittedBy.id === 'owner') ? primary : null; const primaryParticipant = primary?.submittedBy?.id ? byParticipant.find((entry) => entry.id === primary.submittedBy.id)?.feedback : null;
-  return { feedback: ownerFeedback || primaryParticipant || byParticipant[0]?.feedback || primary, byParticipant, conflicts: detectFeedbackConflicts(ownerFeedback, byParticipant) };
+  return { feedback: ownerFeedback || primaryParticipant || byParticipant[0]?.feedback || primary, byParticipant, conflicts: detectFeedbackConflicts(ownerFeedback, byParticipant), ...(history ? { submissions: feedbackHistoryEntries(session, round, visibility) } : {}) };
 }
