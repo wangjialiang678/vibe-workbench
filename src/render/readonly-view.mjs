@@ -11,6 +11,82 @@ export function isRoundReadonly(currentRound, latestRound) {
   return Number.isInteger(current) && Number.isInteger(latest) && current > 0 && latest > current;
 }
 
+function positiveRound(value) {
+  const round = Number(value);
+  return Number.isInteger(round) && round > 0 ? round : null;
+}
+
+// 首屏渲染和 /api/status 是两条异步链：任一条后到，都要把同一份只读状态补到 DOM。
+// latestRound 只允许前进，避免启动期并发请求乱序时旧响应把历史轮错误解锁。
+export function createReadonlyRoundSync({ currentRound, latestRound, apply }) {
+  if (typeof apply !== 'function') throw new TypeError('apply must be a function');
+
+  let current = positiveRound(currentRound);
+  let latest = positiveRound(latestRound);
+  let hasRendered = false;
+  let lastAppliedReadonly = null;
+
+  function state() {
+    return {
+      readonly: isRoundReadonly(current, latest),
+      currentRound: current,
+      latestRound: latest,
+    };
+  }
+
+  function sync({ force = false } = {}) {
+    const next = state();
+    if (hasRendered && (force || next.readonly !== lastAppliedReadonly)) {
+      apply(next);
+      lastAppliedReadonly = next.readonly;
+    }
+    return next;
+  }
+
+  return {
+    statusArrived(round) {
+      const candidate = positiveRound(round);
+      if (candidate != null && (latest == null || candidate > latest)) latest = candidate;
+      return sync();
+    },
+    roundChanged(round) {
+      current = positiveRound(round);
+      return sync();
+    },
+    rendered() {
+      hasRendered = true;
+      return sync({ force: true });
+    },
+    refresh() {
+      return sync({ force: true });
+    },
+  };
+}
+
+export function applyReadonlyDomState({
+  readonly,
+  currentRound,
+  zones,
+  banner,
+  sessionCommentSection,
+  updateSubmitVisibility,
+}) {
+  zones?.toggleAttribute('data-readonly', readonly);
+  if (banner) {
+    banner.hidden = !readonly;
+    banner.textContent = readonly ? readonlyBannerText(currentRound) : '';
+  }
+  if (sessionCommentSection) sessionCommentSection.hidden = readonly;
+  if (readonly) {
+    zones?.querySelectorAll('input, textarea, select, button:not(.tab)').forEach((control) => {
+      control.disabled = true;
+    });
+    zones?.querySelectorAll('iframe').forEach((frame) => frame.setAttribute('tabindex', '-1'));
+  }
+  updateSubmitVisibility?.(readonly);
+  return readonly;
+}
+
 export function readonlyBannerText(round) {
   return `历史轮（第 ${Number(round)} 轮）只读回看——如需变更请在最新轮提出`;
 }

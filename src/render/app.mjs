@@ -4,9 +4,10 @@
 import { renderZones } from './attention-view.mjs';
 import { participantFeedbackHtml } from './blocks.mjs';
 import {
+  applyReadonlyDomState,
+  createReadonlyRoundSync,
   historySessionCommentsHtml,
   isRoundReadonly,
-  readonlyBannerText,
   readonlyBlockFeedbackHtml,
   submittedDraftNoticeHtml,
 } from './readonly-view.mjs';
@@ -62,6 +63,11 @@ let _latestRound = currentRound;
 // URL 未带 round = "跟随最新轮"模式（bootstrap 解析最新 + 轮询自动推进）；
 // 带了 round=N = 用户锁定该轮，绝不自动跳走。
 const FOLLOW_LATEST = URL_ROUND === '';
+const readonlyRoundSync = createReadonlyRoundSync({
+  currentRound,
+  latestRound: _latestRound,
+  apply: ({ readonly }) => applyReadonlyState(readonly),
+});
 
 // ── 元素引用 ─────────────────────────────────────────────
 const $zones        = document.getElementById('zones-mount');
@@ -302,10 +308,10 @@ function isViewingHistory() {
   return isRoundReadonly(currentRound, _latestRound);
 }
 
-function updateSubmitVisibility() {
+function updateSubmitVisibility(readonly = isViewingHistory()) {
   if (!$submitBtn) return;
   const contentView = _activeView === 'documents' ? 'documents' : 'decision';
-  $submitBtn.hidden = isViewingHistory()
+  $submitBtn.hidden = readonly
     || (isNarrowScreen() ? _activeView !== 'decision' : contentView !== 'decision');
 }
 
@@ -634,22 +640,15 @@ let _documentsCacheKey = '';
 let _documentsViewModel = null;
 let _historyRoundsCacheKey = '';
 
-function applyReadonlyState() {
-  const readonly = isViewingHistory();
-  $zones?.toggleAttribute('data-readonly', readonly);
-  if ($readonlyBanner) {
-    $readonlyBanner.hidden = !readonly;
-    $readonlyBanner.textContent = readonly ? readonlyBannerText(currentRound) : '';
-  }
-  if ($sessionCommentSection) $sessionCommentSection.hidden = readonly;
-  if (readonly) {
-    $zones?.querySelectorAll('input, textarea, select, button:not(.tab)').forEach((control) => {
-      control.disabled = true;
-    });
-    $zones?.querySelectorAll('iframe').forEach((frame) => frame.setAttribute('tabindex', '-1'));
-  }
-  updateSubmitVisibility();
-  return readonly;
+function applyReadonlyState(readonly = isViewingHistory()) {
+  return applyReadonlyDomState({
+    readonly,
+    currentRound,
+    zones: $zones,
+    banner: $readonlyBanner,
+    sessionCommentSection: $sessionCommentSection,
+    updateSubmitVisibility,
+  });
 }
 
 async function loadAndRender() {
@@ -677,7 +676,7 @@ async function loadAndRender() {
     element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
   });
   $zones.replaceChildren(rendered.content);
-  const readonly = applyReadonlyState();
+  const readonly = readonlyRoundSync.rendered().readonly;
 
   // 议题重组提示（DESIGN §5 + §13 P1）：服务端注入 sanity.suspect 时顶部横幅（前端消费）
   if (data.sanity && data.sanity.suspect) {
@@ -2242,8 +2241,8 @@ async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfRe
     try { errorCode = (await resp.json())?.error || ''; } catch { /* 忽略 */ }
     if (errorCode === 'ROUND_READONLY') {
       const latest = await resolveLatestRound();
-      if (latest != null) _latestRound = latest;
-      applyReadonlyState();
+      if (latest != null) _latestRound = readonlyRoundSync.statusArrived(latest).latestRound;
+      readonlyRoundSync.refresh();
       alert('该轮已成为历史轮，只能回看；如需变更请在最新轮提出。');
     } else {
       alert('该轮 AI 正在读取上一版反馈。你的补充已保留，请稍后再点“再次提交”。');
@@ -2308,6 +2307,8 @@ async function resolveLatestRound() {
 async function advanceToRound(newRound) {
   currentRound = newRound;
   _latestRound = Math.max(Number(_latestRound) || 0, newRound);
+  readonlyRoundSync.statusArrived(_latestRound);
+  readonlyRoundSync.roundChanged(currentRound);
   _historyRoundsCacheKey = '';
   setSubmitState('ready');
   updateSessionLabel();
@@ -2326,9 +2327,10 @@ async function bootstrap() {
     return;
   }
   const resolvedLatest = await resolveLatestRound();
-  if (resolvedLatest != null) _latestRound = resolvedLatest;
+  if (resolvedLatest != null) _latestRound = readonlyRoundSync.statusArrived(resolvedLatest).latestRound;
   if (currentRound == null) {
-    currentRound = pickRound('', resolvedLatest);
+    currentRound = pickRound('', _latestRound);
+    readonlyRoundSync.roundChanged(currentRound);
     updateSessionLabel();
   }
   await loadAndRender();
@@ -2372,18 +2374,19 @@ async function pollStatus() {
 
     // 自动推进：仅在"跟随最新轮"模式（URL 未锁定 round）下，服务端出现更高轮次才就地载入
     const latest = status?.status?.round;
-    const latestChanged = Number.isInteger(latest) && latest !== _latestRound;
-    if (Number.isInteger(latest)) {
+    const previousLatest = _latestRound;
+    const synced = readonlyRoundSync.statusArrived(latest);
+    const latestChanged = synced.latestRound !== previousLatest;
+    if (synced.latestRound != null) {
       if (latestChanged) {
         _documentsCacheKey = '';
         _historyRoundsCacheKey = '';
         _latestBlocks = [];
       }
-      _latestRound = latest;
-      applyReadonlyState();
+      _latestRound = synced.latestRound;
     }
-    if (FOLLOW_LATEST && shouldAdvance(currentRound, latest)) {
-      await advanceToRound(latest);
+    if (FOLLOW_LATEST && shouldAdvance(currentRound, _latestRound)) {
+      await advanceToRound(_latestRound);
       return;
     }
     if (latestChanged) {
