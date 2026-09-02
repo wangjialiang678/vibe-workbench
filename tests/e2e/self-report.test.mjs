@@ -5,6 +5,11 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { batchSelectionGroups, batchSelectionPatchFromAction } from '../../src/render/batch-select.mjs';
+import { mergeDraft } from '../../src/render/draft-store.mjs';
+import { renderZones } from '../../src/render/attention-view.mjs';
+import { submitPayload } from '../../src/render/submit-payload.mjs';
+
 const OWNER_TOKEN = 'self-report-owner-token';
 const PARTICIPANTS = [
   {
@@ -189,6 +194,98 @@ test('GET /api/participants-public：owner 与 participant 均可读且绝不泄
       assert.equal(JSON.stringify(body).includes(participant.token), false);
     }
   }
+});
+
+test('本地无 token 且名册为空：决策人默认显示 Michael，提交按 owner/Michael 落盘且不创建名册', async () => {
+  const emptyParticipantsFile = path.join(tmpDir, 'empty-roster', 'participants.json');
+  const localServer = startServer(0, 'localhost', {
+    participantsFile: emptyParticipantsFile,
+    env: { ...process.env, WORKBENCH_TOKEN: '' },
+  });
+  await new Promise((resolve) => localServer.once('listening', resolve));
+  const localBase = `http://localhost:${localServer.address().port}`;
+
+  try {
+    const rosterResponse = await fetch(`${localBase}/api/participants-public?session=local-empty-roster`);
+    assert.equal(rosterResponse.status, 200);
+    assert.deepEqual(await rosterResponse.json(), [
+      { id: 'owner', name: 'Michael', role: 'owner' },
+    ]);
+    assert.equal(fs.existsSync(emptyParticipantsFile), false, '展示兜底不得创建 participants.json');
+
+    const session = 'local-empty-roster';
+    seedRound(session);
+    const feedbackResponse = await fetch(`${localBase}/api/feedback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session,
+        round: 1,
+        items: [],
+        selfReport: { id: 'owner', name: 'Michael' },
+      }),
+    });
+    assert.equal(feedbackResponse.status, 200);
+    const saved = readJSON(paths.feedback(session, 1, { exactSession: true }));
+    assert.deepEqual(saved.submittedBy, { id: 'owner', name: '管理员' });
+    assert.deepEqual(saved.selfReportedBy, { id: 'owner', name: 'Michael' });
+    assert.equal(fs.existsSync(emptyParticipantsFile), false, '提交兜底不得创建 participants.json');
+  } finally {
+    await new Promise((resolve) => localServer.close(resolve));
+  }
+});
+
+test('批量按钮点选后 feedback payload 与逐条点选等价，且不覆盖先前手动选择', async () => {
+  const session = 'batch-choice-feedback';
+  const options = [
+    { id: 'approve', label: '赞成' },
+    { id: 'reject', label: '反对' },
+  ];
+  const blocks = ['c1', 'c2', 'c3'].map((id) => ({
+    id,
+    type: 'choice',
+    needsDecision: true,
+    _change: 'new',
+    options,
+  }));
+  writeJSON(paths.content(session, 1, { exactSession: true }), {
+    session,
+    round: 1,
+    title: '同构选择批量测试',
+    blocks,
+  });
+  writeStatus(session, { state: 'rendered', round: 1 }, undefined, { exactSession: true });
+
+  const rendered = renderZones(blocks, { round: 1 });
+  assert.match(rendered, /data-batch-group="choice:c1"[^>]*data-batch-value="approve"/);
+
+  // 模拟点击“全部选〈赞成〉”：c1 已逐条选反对，因此只补 c2/c3。
+  const groups = batchSelectionGroups(blocks);
+  const batchDraft = { c1: { select: 'reject' } };
+  mergeDraft(batchDraft, batchSelectionPatchFromAction(groups, {
+    batchGroup: 'choice:c1',
+    batchValue: 'approve',
+  }, batchDraft));
+  const manualDraft = {
+    c1: { select: 'reject' },
+    c2: { select: 'approve' },
+    c3: { select: 'approve' },
+  };
+  const common = {
+    session,
+    round: 1,
+    submittedAt: '2026-09-02T12:00:00.000Z',
+    unanswered: [],
+    sessionComment: '',
+  };
+  const batchPayload = submitPayload({ ...common, draft: batchDraft });
+  const manualPayload = submitPayload({ ...common, draft: manualDraft });
+  assert.deepEqual(batchPayload, manualPayload);
+
+  const response = await post('/api/feedback', batchPayload);
+  assert.equal(response.status, 200);
+  const saved = readJSON(paths.feedback(session, 1, { exactSession: true }));
+  assert.deepEqual(saved.items, JSON.parse(JSON.stringify(manualPayload.items)));
 });
 
 test('留言自报身份独立于 author；未知 id 被丢弃且 participant 夹带字段仍忽略', async () => {

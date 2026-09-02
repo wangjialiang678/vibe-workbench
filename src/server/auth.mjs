@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { findParticipantByToken, listParticipants } from '../participants.mjs';
+import { DEFAULT_DECISION_MAKER } from '../protocol/decision-makers.mjs';
 
 export const OWNER_IDENTITY = Object.freeze({ id: 'owner', name: '管理员', role: 'owner' });
 const PUBLIC_STATIC_EXTENSIONS = new Set(['.mjs', '.js', '.css', '.svg', '.ico', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.woff', '.woff2', '.ttf']);
@@ -35,7 +36,11 @@ export function acceptedSelfReport(value, identity, participantsFile) {
     const error = new Error('selfReport.name 必填且须为 1~40 个字符'); error.code = 'INVALID_SELF_REPORT'; throw error;
   }
   const accepted = { name: value.name };
-  if (typeof value.id === 'string' && listParticipants(participantsFile).some((participant) => participant.id === value.id)) accepted.id = value.id;
+  if (value.id === DEFAULT_DECISION_MAKER.id && value.name === DEFAULT_DECISION_MAKER.name) {
+    accepted.id = DEFAULT_DECISION_MAKER.id;
+  } else if (typeof value.id === 'string' && listParticipants(participantsFile).some((participant) => participant.id === value.id)) {
+    accepted.id = value.id;
+  }
   return accepted;
 }
 export function selfReportSlug(name) { return String(name || '').replace(/[^\p{Script=Han}A-Za-z0-9]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 20) || '-'; }

@@ -58,13 +58,16 @@ test('历史轮只读锁同步覆盖 status 晚到、先到、轮询切换与乱
   const attributes = new Set();
   const controls = [{ disabled: false }];
   const frames = [{ tabindex: null, setAttribute(name, value) { this[name] = value; } }];
+  const batchBars = [{ hidden: false }];
   const zones = {
     toggleAttribute(name, enabled) {
       if (enabled) attributes.add(name);
       else attributes.delete(name);
     },
     querySelectorAll(selector) {
-      return selector === 'iframe' ? frames : controls;
+      if (selector === 'iframe') return frames;
+      if (selector === '.batch-select-bar') return batchBars;
+      return controls;
     },
   };
   const banner = { hidden: true, textContent: '' };
@@ -99,6 +102,7 @@ test('历史轮只读锁同步覆盖 status 晚到、先到、轮询切换与乱
   assert.equal(submitButton.hidden, true);
   assert.equal(controls[0].disabled, true);
   assert.equal(frames[0].tabindex, '-1');
+  assert.equal(batchBars[0].hidden, true);
 
   // 已知较新轮次后，即使旧请求晚到，也不能把最新轮倒退后解锁。
   const appliedCount = applied.length;
@@ -111,6 +115,7 @@ test('历史轮只读锁同步覆盖 status 晚到、先到、轮询切换与乱
   assert.equal(attributes.has('data-readonly'), false);
   assert.equal(banner.hidden, true);
   assert.equal(submitButton.hidden, false);
+  assert.equal(batchBars[0].hidden, false);
   sync.rendered();
   assert.deepEqual(applied.at(-1), { readonly: false, currentRound: 2, latestRound: 2 });
 

@@ -38,6 +38,8 @@ import {
   submitStateAfterSuccess,
 } from './submit-state.mjs';
 import { resolveSelfReportSelection } from './self-report-state.mjs';
+import { decisionMakerSelectionValue, resolveDecisionMakers } from '../protocol/decision-makers.mjs';
+import { batchSelectionGroups, batchSelectionPatchFromAction } from './batch-select.mjs';
 import { draftKey, isSubmitted, markSubmitted, mergeDraft, readDraft, submittedAt, writeDraft } from './draft-store.mjs';
 import { nextRoundTitle, pickRound, shouldAdvance } from './round-nav.mjs';
 import { containerPinPopoverPosition, pinFromPointer, visibleBoundsInContainer } from './pin-geometry.mjs';
@@ -140,9 +142,9 @@ function currentSelfReportSelection() {
 
 function persistCurrentSelfReportSelection() {
   const selected = $selfReportSelect?.value || '';
-  if (selected.startsWith('participant:')) {
-    const report = currentSelfReportSelection().report;
-    saveSelfReportSelection(report ? { mode: 'participant', ...report } : null);
+  if (selected.startsWith('participant:') || selected.startsWith('owner:')) {
+    const selection = currentSelfReportSelection();
+    saveSelfReportSelection(selection.report ? { mode: selection.mode, ...selection.report } : null);
   } else if (selected === 'other') {
     saveSelfReportSelection({ mode: 'other', name: $selfReportOther?.value || '' });
   } else if (selected === 'anonymous') {
@@ -179,28 +181,32 @@ async function initializeSelfReport(identity) {
     if (!response.ok) return;
     const participants = await response.json();
     if (!Array.isArray(participants)) return;
-    _selfReportParticipants = participants.filter((item) => (
+    _selfReportParticipants = resolveDecisionMakers(participants.filter((item) => (
       item && typeof item.id === 'string' && typeof item.name === 'string'
-    ));
+    )));
 
     $selfReportSelect.replaceChildren(new Option('请选择', ''));
     for (const participant of _selfReportParticipants) {
-      $selfReportSelect.add(new Option(participant.name, `participant:${participant.id}`));
+      $selfReportSelect.add(new Option(participant.name, decisionMakerSelectionValue(participant)));
     }
     $selfReportSelect.add(new Option('其他…', 'other'));
     $selfReportSelect.add(new Option('匿名提交', 'anonymous'));
 
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(selfReportKey()) || 'null'); } catch { /* 忽略 */ }
-    if (saved?.mode === 'participant'
+    if ((saved?.mode === 'participant' || saved?.mode === 'owner')
       && _selfReportParticipants.some((item) => item.id === saved.id)) {
-      $selfReportSelect.value = `participant:${saved.id}`;
+      const savedDecisionMaker = _selfReportParticipants.find((item) => item.id === saved.id);
+      $selfReportSelect.value = decisionMakerSelectionValue(savedDecisionMaker);
     } else if (saved?.mode === 'other') {
       $selfReportSelect.value = 'other';
       $selfReportOther.value = typeof saved.name === 'string' ? saved.name.slice(0, 40) : '';
       $selfReportOther.hidden = false;
     } else if (saved?.mode === 'anonymous') {
       $selfReportSelect.value = 'anonymous';
+    } else {
+      const defaultOwner = _selfReportParticipants.find((item) => item.role === 'owner');
+      if (defaultOwner) $selfReportSelect.value = decisionMakerSelectionValue(defaultOwner);
     }
     _selfReportEnabled = true;
     $selfReportControl.hidden = false;
@@ -633,6 +639,7 @@ function saveDraft(patch) {
 
 // ── 渲染 ─────────────────────────────────────────────────
 let _blocks = [];        // 当前轮 blocks（带 _change）
+let _batchSelectionGroups = []; // 当前轮可批量选择的同构组；历史轮恒为空
 let _latestBlocks = [];  // 最新轮 blocks；锁定历史轮时供流内决策芯片独立计数
 let _sectionData = null; // content.sections（tab 分面类目顺序，可空）
 let _currentContent = null;
@@ -664,13 +671,18 @@ async function loadAndRender() {
 
   _currentContent = data;
   _blocks = data.blocks ?? [];
+  _batchSelectionGroups = isViewingHistory() ? [] : batchSelectionGroups(_blocks);
   if (Number(currentRound) === Number(_latestRound)) _latestBlocks = _blocks;
   _sectionData = data.sections ?? null;
   _documentsCacheKey = '';
   updateDocsLink(data.meta?.docsUrl);
   // template 中先给受保护资源补 token，再挂进 DOM，避免首次加载就被门禁拒绝。
   const rendered = document.createElement('template');
-  rendered.innerHTML = renderZones(_blocks, { round: currentRound, sections: _sectionData });
+  rendered.innerHTML = renderZones(_blocks, {
+    round: currentRound,
+    sections: _sectionData,
+    readonly: isViewingHistory(),
+  });
   rendered.content.querySelectorAll('iframe[src^="/api/"], [src^="/assets/"], [href^="/assets/"]').forEach((element) => {
     const attribute = element.hasAttribute('src') ? 'src' : 'href';
     element.setAttribute(attribute, apiUrl(element.getAttribute(attribute)));
@@ -1750,6 +1762,29 @@ document.addEventListener('mousedown', (e) => {
 // ── 事件绑定 ─────────────────────────────────────────────
 function bindInteractions() {
   if (isViewingHistory()) return;
+  // 同构组选项批量填充：只补未作答项，已有逐条选择绝不覆盖。
+  $zones.querySelectorAll('[data-batch-group][data-batch-value]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const draft = loadDraft();
+      const patch = batchSelectionPatchFromAction(_batchSelectionGroups, btn.dataset, draft);
+      if (Object.keys(patch).length === 0) return;
+      saveDraft(patch);
+      Object.entries(patch).forEach(([blockId, item]) => {
+        if (item.select != null) {
+          $zones.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach((input) => {
+            if (input.name === `choice-${blockId}` && input.value === item.select) input.checked = true;
+          });
+        }
+        if (item.checklistItems) {
+          Object.entries(item.checklistItems).forEach(([itemId, label]) => {
+            restoreChecklistItem(blockId, itemId, label);
+          });
+        }
+      });
+      updateDecisionProgress();
+    });
+  });
+
   // verdict 按钮
   $zones.querySelectorAll('.verdict-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2045,8 +2080,9 @@ function syncConfirmSelfReportState() {
 
 function applyConfirmDialogSelfReportSelection(selection) {
   if (!_selfReportEnabled || !selection.explicit) return;
-  if (selection.mode === 'participant') {
-    $selfReportSelect.value = `participant:${selection.report.id}`;
+  if (selection.mode === 'participant' || selection.mode === 'owner') {
+    const decisionMaker = _selfReportParticipants.find((item) => item.id === selection.report.id);
+    $selfReportSelect.value = decisionMakerSelectionValue(decisionMaker);
     $selfReportOther.value = '';
     $selfReportOther.hidden = true;
   } else if (selection.mode === 'other') {
@@ -2065,15 +2101,15 @@ function applyConfirmDialogSelfReportSelection(selection) {
 function confirmSelfReportHtml() {
   if (!_selfReportEnabled) return '';
   const selection = currentSelfReportSelection();
-  const selectedValue = selection.mode === 'participant'
-    ? `participant:${selection.report.id}`
+  const selectedValue = selection.mode === 'participant' || selection.mode === 'owner'
+    ? decisionMakerSelectionValue(_selfReportParticipants.find((item) => item.id === selection.report.id))
     : selection.mode;
   const option = (label, value) => (
     `<option value="${escapeAttr(value)}"${selectedValue === value ? ' selected' : ''}>${escapeHtml(label)}</option>`
   );
   const options = [option('请选择', '')]
     .concat(_selfReportParticipants.map((participant) => (
-      option(participant.name, `participant:${participant.id}`)
+      option(participant.name, decisionMakerSelectionValue(participant))
     )))
     .concat([option('其他…', 'other'), option('匿名提交', 'anonymous')])
     .join('');

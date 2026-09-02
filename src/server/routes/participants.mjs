@@ -1,6 +1,7 @@
 import { isValidSessionName } from '../../workspace.mjs';
 import { addParticipant, listParticipants, revokeParticipant } from '../../participants.mjs';
 import { publicParticipant, participantInviteUrl } from '../auth.mjs';
+import { resolveDecisionMakers } from '../../protocol/decision-makers.mjs';
 
 export function participantsPublic(ctx) {
   const { req, res, expectedToken, eventWebhook, participantsFile, runtimeState, method, rawUrl, requestUrl, urlPath, identity, requestToken, json, readBody, readRawBody, readRawBodyLimited, parseQuery, cors, noReferrer } = ctx;
@@ -11,7 +12,8 @@ export function participantsPublic(ctx) {
       return;
     }
     try {
-      json(res, 200, listParticipants(participantsFile).map(({ id, name }) => ({ id, name })));
+      const participants = listParticipants(participantsFile).map(({ id, name }) => ({ id, name }));
+      json(res, 200, resolveDecisionMakers(participants));
     } catch (error) {
       console.error('[workbench:participants] 公开名册读取失败：', error.message);
       json(res, 500, { ok: false, error: '参与者名册无法读取' });

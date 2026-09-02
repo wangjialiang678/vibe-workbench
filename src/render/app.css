@@ -1379,6 +1379,33 @@ body.project-home .content-region {
 .comment-btn:hover { border-color: var(--color-focus); }
 
 /* ===== Choice ===== */
+.batch-select-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--batch-bar-gap);
+  margin: var(--batch-bar-margin);
+  padding: var(--batch-bar-padding);
+  border: var(--batch-bar-border-width) dashed var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+}
+
+.batch-select-label { white-space: nowrap; }
+.batch-select-actions { display: flex; flex-wrap: wrap; gap: var(--batch-action-gap); }
+.batch-select-btn {
+  padding: var(--batch-button-padding);
+  border: var(--batch-bar-border-width) solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.batch-select-btn:hover { border-color: var(--color-focus); color: var(--color-focus); }
+
 .choice-group { display: flex; flex-direction: column; gap: 8px; }
 
 .choice-option {

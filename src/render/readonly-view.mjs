@@ -77,6 +77,7 @@ export function applyReadonlyDomState({
     banner.textContent = readonly ? readonlyBannerText(currentRound) : '';
   }
   if (sessionCommentSection) sessionCommentSection.hidden = readonly;
+  zones?.querySelectorAll('.batch-select-bar').forEach((bar) => { bar.hidden = readonly; });
   if (readonly) {
     zones?.querySelectorAll('input, textarea, select, button:not(.tab)').forEach((control) => {
       control.disabled = true;

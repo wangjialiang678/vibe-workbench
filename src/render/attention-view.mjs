@@ -2,9 +2,14 @@
 // 使用 routeBlocks / decisionStats（protocol/attention.mjs）分四区渲染。
 import { routeBlocks, decisionStats, roundDeltaStats, pendingDecisionBlocks, hasSections, groupBySection, sectionPendingStats } from '../protocol/attention.mjs';
 import { blockHtml } from './blocks.mjs';
+import { batchSelectionGroups } from './batch-select.mjs';
 
 function escHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escAttr(str) {
+  return escHtml(str).replace(/"/g, '&quot;');
 }
 
 // 顶部状态条：决策进度（改动 B，DESIGN §4）
@@ -56,8 +61,22 @@ function statusBar(stats, blocks, opts = {}) {
 }
 
 // 渲染单个分区的 blocks 列表
-function renderBlockList(blocks) {
-  return blocks.map((b) => blockHtml(b)).join('\n');
+function batchBarHtml(group) {
+  if (!group) return '';
+  const buttons = group.options.map((option) => (
+    `<button type="button" class="batch-select-btn" data-batch-group="${escAttr(group.id)}" data-batch-value="${escAttr(option.value)}">全部选〈${escHtml(option.label)}〉</button>`
+  )).join('');
+  return `<div class="batch-select-bar" role="group" aria-label="批量选择">
+  <span class="batch-select-label">批量（仅填未作答）</span>
+  <div class="batch-select-actions">${buttons}</div>
+</div>`;
+}
+
+function renderBlockList(blocks, batchGroups = []) {
+  return blocks.map((block) => {
+    const group = batchGroups.find((candidate) => candidate.anchorBlockId === block.id);
+    return `${batchBarHtml(group)}${blockHtml(block)}`;
+  }).join('\n');
 }
 
 // zoneCFyi 标题摘要：列出各 block 的 "标题: 默认值"（已 HTML 转义，直接内插）
@@ -73,14 +92,14 @@ function fyiSummary(blocks) {
 
 // 渲染一组 blocks 的四区正文（不含全局状态条）——整页或单个 tab 面复用。
 // sfx：id 后缀，tab 模式下各面用 -f<i> 避免 zone-a 等 id 重复；整页模式 sfx='' 保持原 id（向后兼容）。
-function renderZoneBody(blocks, sfx = '') {
+function renderZoneBody(blocks, sfx = '', batchGroups = []) {
   const zones = routeBlocks(blocks || []);
   const parts = [];
 
   // 叙述/图表内容（AI 的思考）= 设计方案：顶部可见，绝不折叠
   if (zones.zoneContext && zones.zoneContext.length > 0) {
     parts.push(`<section class="zone zone-context" aria-label="AI 的思考">
-  <div class="zone-blocks">${renderBlockList(zones.zoneContext)}</div>
+  <div class="zone-blocks">${renderBlockList(zones.zoneContext, batchGroups)}</div>
 </section>`);
   }
 
@@ -91,7 +110,7 @@ function renderZoneBody(blocks, sfx = '') {
     <span class="zone-icon" aria-hidden="true">◆</span>
     <h2 class="zone-title">需你定·无预设</h2>
   </header>
-  <div class="zone-blocks">${renderBlockList(zones.zoneA)}</div>
+  <div class="zone-blocks">${renderBlockList(zones.zoneA, batchGroups)}</div>
 </section>`);
   }
 
@@ -102,7 +121,7 @@ function renderZoneBody(blocks, sfx = '') {
     <span class="zone-icon" aria-hidden="true">◇</span>
     <h2 class="zone-title">需你定·有推荐</h2>
   </header>
-  <div class="zone-blocks">${renderBlockList(zones.zoneB)}</div>
+  <div class="zone-blocks">${renderBlockList(zones.zoneB, batchGroups)}</div>
 </section>`);
   }
 
@@ -112,7 +131,8 @@ function renderZoneBody(blocks, sfx = '') {
       const defPreview = b.default != null
         ? `<div class="default-preview">默认值：<code>${escHtml(String(b.default))}</code></div>`
         : '';
-      return `${blockHtml(b)}\n${defPreview}`;
+      const group = batchGroups.find((candidate) => candidate.anchorBlockId === b.id);
+      return `${batchBarHtml(group)}${blockHtml(b)}\n${defPreview}`;
     }).join('\n');
     parts.push(`<section id="zone-c-review${sfx}" class="zone zone-c-review" aria-label="默认采用·建议过目">
   <header class="zone-header">
@@ -128,7 +148,7 @@ function renderZoneBody(blocks, sfx = '') {
     const summary = fyiSummary(zones.zoneCFyi);
     parts.push(`<details id="zone-c-fyi${sfx}" class="zone zone-c-fyi">
   <summary class="zone-fyi-summary">已为你设好默认（${zones.zoneCFyi.length} 项）· ${summary}</summary>
-  <div class="zone-blocks">${renderBlockList(zones.zoneCFyi)}</div>
+  <div class="zone-blocks">${renderBlockList(zones.zoneCFyi, batchGroups)}</div>
 </details>`);
   }
 
@@ -142,7 +162,7 @@ function renderZoneBody(blocks, sfx = '') {
     const summaryText = summaryParts.join(' · ') + '（点开查看）';
     parts.push(`<details id="zone-settled${sfx}" class="zone zone-settled">
   <summary class="zone-settled-summary">${escHtml(summaryText)}</summary>
-  <div class="zone-blocks">${renderBlockList(zones.zoneSettled)}</div>
+  <div class="zone-blocks">${renderBlockList(zones.zoneSettled, batchGroups)}</div>
 </details>`);
   }
 
@@ -183,12 +203,13 @@ export function renderZones(diffedBlocks, opts = {}) {
   const blocks = diffedBlocks ?? [];
   const stats = decisionStats(blocks);
   const faceted = hasSections(blocks, opts.sections);
+  const batchGroups = opts.readonly ? [] : batchSelectionGroups(blocks);
 
   const parts = [];
   parts.push(statusBar(stats, blocks, { ...opts, faceted }));
 
   if (!faceted) {
-    parts.push(renderZoneBody(blocks, ''));
+    parts.push(renderZoneBody(blocks, '', batchGroups));
     return parts.join('\n');
   }
 
@@ -198,7 +219,7 @@ export function renderZones(diffedBlocks, opts = {}) {
   parts.push(tabBar(groups, active));
   groups.forEach((g, i) => {
     const body = g.blocks.length
-      ? renderZoneBody(g.blocks, `-f${i}`)
+      ? renderZoneBody(g.blocks, `-f${i}`, batchGroups)
       : '<p class="facet-empty">本类目本轮暂无内容</p>';
     parts.push(`<section class="facet" role="tabpanel" data-facet="${i}" id="facet-${i}"${i === active ? '' : ' hidden'}>
   <div class="facet-body">${body}</div>

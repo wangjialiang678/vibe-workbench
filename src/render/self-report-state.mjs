@@ -1,12 +1,14 @@
+import { decisionMakerSelectionValue } from '../protocol/decision-makers.mjs';
+
 export function resolveSelfReportSelection(selected, otherName, participants = []) {
   const value = String(selected || '');
-  if (value.startsWith('participant:')) {
-    const id = value.slice('participant:'.length);
+  if (value.startsWith('participant:') || value.startsWith('owner:')) {
+    const [selectedRole, id] = value.split(':', 2);
     const participant = participants.find((item) => item?.id === id);
-    if (participant) {
+    if (participant && decisionMakerSelectionValue(participant) === value) {
       return {
         explicit: true,
-        mode: 'participant',
+        mode: selectedRole,
         label: participant.name,
         report: { id: participant.id, name: participant.name },
       };

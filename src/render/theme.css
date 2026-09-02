@@ -116,6 +116,14 @@
   --readonly-meta-margin: 3px 0;
   --readonly-notice-margin: 0 auto 18px;
   --readonly-notice-padding: 8px 12px;
+
+  /* 同构决策批量条：保持次级，不抢单项决策卡的注意力 */
+  --batch-bar-gap: 8px;
+  --batch-bar-margin: 10px 0 2px;
+  --batch-bar-padding: 6px 8px;
+  --batch-bar-border-width: 1px;
+  --batch-action-gap: 6px;
+  --batch-button-padding: 3px 8px;
 }
 
 /* ── 8. 字体渲染：按屏幕像素密度分开处理 ───────────────────────────────────
