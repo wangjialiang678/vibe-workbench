@@ -654,6 +654,30 @@ test('blockHtml: choice non-recommended options do NOT have data-recommended', (
   assert.equal(matches ? matches.length : 0, 1, `expected exactly 1 data-recommended in: ${out}`);
 });
 
+test('choice 缺省 quick 渲染与显式 quick 逐字节一致', () => {
+  const block = {
+    id: 'choice-quick', type: 'choice', _change: 'new', hasRecommendation: true, recommendation: 'a',
+    options: [{ id: 'a', label: '采用', pros: ['快'], cons: ['有风险'] }],
+  };
+  assert.equal(blockHtml(block), blockHtml({ ...block, mode: 'quick' }));
+});
+
+test('choice blind 提交前不渲染推荐、预选，并收集预测和前提', () => {
+  const out = blockHtml({
+    id: 'choice-blind', type: 'choice', mode: 'blind', hasRecommendation: true, recommendation: 'a',
+    judgmentKind: 'preference', recommendReason: 'AI 推荐理由',
+    options: [{ id: 'a', label: '采用', pros: ['快'], cons: ['有风险'] }],
+  });
+  assert.doesNotMatch(out, /rec-label|data-recommended|data-default-check|推荐及理由/);
+  assert.match(out, /data-choice-prediction="choice-blind"/);
+  assert.match(out, /data-choice-premises="choice-blind"/);
+});
+
+test('choice fact 渲染外部确认提示条', () => {
+  const out = blockHtml({ id: 'choice-fact', type: 'choice', mode: 'blind', judgmentKind: 'fact', options: [{ id: 'a', label: '确认' }] });
+  assert.ok(out.includes('这是事实类问题，宜转外部信源/客户确认'));
+});
+
 test('blockHtml: verdict renders three buttons', () => {
   const block = { id: 'b4', type: 'verdict', _change: 'unchanged' };
   const out = blockHtml(block);

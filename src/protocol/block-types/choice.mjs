@@ -3,6 +3,9 @@ export default {
   hashFields: [],
   validate(block) {
     const errors = [];
+    if (block.mode != null && !['quick', 'blind'].includes(block.mode)) errors.push('choice.mode must be quick or blind');
+    if (block.judgmentKind != null && !['fact', 'preference', 'prediction'].includes(block.judgmentKind)) errors.push('choice.judgmentKind invalid');
+    if (block.supersedes != null && (typeof block.supersedes !== 'string' || !block.supersedes.trim())) errors.push('choice.supersedes must be non-empty string');
     if (!Array.isArray(block.options) || block.options.length === 0) errors.push('choice requires non-empty options[]');
     else block.options.forEach((option, index) => {
       if (!option || !option.id) errors.push(`choice option[${index}] requires id`);
@@ -22,16 +25,23 @@ export default {
     ]);
   },
   lint(block, { isDecision, isNonEmptyArray }) {
-    if (!isDecision) return [];
     const options = Array.isArray(block.options) ? block.options : [];
     const incomplete = options.filter((option) => !isNonEmptyArray(option?.pros) || !isNonEmptyArray(option?.cons));
-    return incomplete.length ? [{
+    const warnings = isDecision && incomplete.length ? [{
       rule: 'missing-proscons',
       message: `${incomplete.length}/${options.length} 个选项缺非空 pros/cons：选项只讲机制不讲后果，用户无法判断"选了会发生什么、能不能反悔"（病例 1）`,
     }] : [];
+    if ((block.supersedes || /D\d+/.test(block.background ?? ''))
+      && !['现行', '本次改', '不动'].every((keyword) => String(block.background ?? '').includes(keyword))) {
+      warnings.push({ rule: 'missing-supersede-frame', message: '涉及既有决策但 background 缺 D36 三段式「现行／本次改／不动」；用户无法判断改动边界（warn，不阻断）' });
+    }
+    return warnings;
   },
   render(block, { escHtml }) {
-    const options = block.options ?? [];
+    const blind = block.mode === 'blind';
+    const options = block.judgmentKind === 'fact' && !(block.options ?? []).some((option) => option?.id === 'defer')
+      ? [...(block.options ?? []), { id: 'defer', label: '转外部确认', desc: '暂不判断，转外部信源或客户确认' }]
+      : (block.options ?? []);
     const recommendation = block.recommendation;
     const inputType = (block.multi ?? false) ? 'checkbox' : 'radio';
     const name = `choice-${escHtml(block.id)}`;
@@ -45,8 +55,16 @@ ${pros.length ? `<ul class="opt-pros" aria-label="好处">${items(pros, 'pro')}<
 ${cons.length ? `<ul class="opt-cons" aria-label="代价 / 风险">${items(cons, 'con')}</ul>` : ''}
 </div>`;
     };
-    return `<div class="choice-group" role="group">${options.map((option) => {
-      const isRec = option.id === recommendation;
+    const factHint = block.judgmentKind === 'fact'
+      ? '<aside class="choice-fact-hint" role="note">这是事实类问题，宜转外部信源/客户确认</aside>\n'
+      : '';
+    const capture = blind ? `
+<div class="choice-blind-capture">
+  <textarea data-choice-prediction="${escHtml(block.id)}" rows="2" placeholder="你预计这样选之后会发生什么？"></textarea>
+  <textarea data-choice-premises="${escHtml(block.id)}" rows="2" placeholder="什么情况变了，这个决定要重新议？"></textarea>
+</div>` : '';
+    return `${factHint}<div class="choice-group" role="group">${options.map((option) => {
+      const isRec = !blind && option.id === recommendation;
       const recAttr = isRec ? ' data-recommended="true"' : '';
       const recLabel = isRec ? ' <span class="rec-label">推荐</span>' : '';
       const desc = option.desc ? `<span class="opt-desc">${escHtml(option.desc)}</span>` : '';
@@ -57,6 +75,6 @@ ${cons.length ? `<ul class="opt-cons" aria-label="代价 / 风险">${items(cons,
 </label>
 ${prosConsHtml(option)}
 </div>`;
-    }).join('\n')}</div>`;
+    }).join('\n')}</div>${capture}`;
   },
 };

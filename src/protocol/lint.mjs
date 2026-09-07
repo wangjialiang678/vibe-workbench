@@ -108,7 +108,13 @@ export function lintBlock(block) {
 
 export function lintContent(content) {
   const blocks = content?.blocks ?? [];
-  return blocks.flatMap((b) => lintBlock(b ?? {}));
+  const warnings = blocks.flatMap((b) => lintBlock(b ?? {}));
+  const blind = blocks.filter((block) => block?.type === 'choice' && block?.mode === 'blind');
+  if (blind.length > 5) warnings.push({
+    level: 'warn', blockId: 'content', rule: 'too-many-blind-cards',
+    message: `本轮有 ${blind.length} 张 blind 决策卡，超过 5 张会造成决策疲劳（warn，不阻断）`,
+  });
+  return warnings;
 }
 
 // 终端友好输出（present 时打到 stderr，不污染 stdout 的 JSON）

@@ -111,6 +111,7 @@ type 与字段：
 ```
 
 - **选项讲后果，不讲机制**。✗"两套并存会互相合并冲突" ✓ cons:["会互相制造合并冲突、你要看两套待批准队列"]
+- `choice.mode` 缺省 `quick`（推荐预选）；不可逆/高后果决定用 `blind`，提交前隐藏推荐、采集 prediction/premises，但 background/why/pros/cons 完整度不变（D36）。
 - **术语首次出现必须一句话解释**"这是什么、跟我有什么关系、不办会怎样"。同一概念全程同名。
 - **一块一问**：别把三个问题塞进一个 freetext。
 - **确认场景用 `verdict`，别用 `editable`**（实测 editable 连续两轮无人应答；改 verdict 后当轮通过）。

@@ -1,5 +1,6 @@
 import { validateFeedback } from '../../protocol/schema.mjs';
-import { appendJournal, latestRound, paths, readJSON, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
+import { appendJournal, latestRound, paths, readJSON, readRound, writeJSON, writeText, readStatus, writeStatus, isValidSessionName } from '../../workspace.mjs';
+import { cardMetricsForFeedback } from '../card-metrics.mjs';
 import { appendStreamEntry } from '../../stream.mjs';
 import { dispatchExecutorEvent } from '../notify.mjs';
 import { AI_IDENTITY } from '../limits.mjs';
@@ -117,6 +118,12 @@ export function feedbackPost(ctx) {
         submittedBy,
         ...(selfReportedBy ? { selfReportedBy } : {}),
       };
+      const metricsPath = paths.cardMetrics(session, round, pathOptions);
+      const existingMetrics = readJSON(metricsPath, []);
+      writeJSON(metricsPath, [
+        ...(Array.isArray(existingMetrics) ? existingMetrics : []),
+        ...cardMetricsForFeedback(readRound(session, round, pathOptions), saved),
+      ]);
       // 每笔提交无条件先落历史件：共享 owner 链接多人先后提交曾互相覆盖，
       // 2026-08-19 思锐门户因此永久丢失两笔客户反馈——主文件仍保持"最新一笔"语义，历史件保证零丢失。
       writeJSON(paths.feedbackHistory(

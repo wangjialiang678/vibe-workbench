@@ -28,9 +28,19 @@ const importRootModule = (relativePath) => import(new URL(relativePath, ROOT_URL
 const {
   paths,
   readJSON,
+  listRounds,
   writeStatus,
   exists,
 } = await importRootModule('src/workspace.mjs');
+
+const { summarizeCardMetrics } = await importRootModule('src/server/card-metrics.mjs');
+
+export function cmdCardMetrics(session, { sinceDays } = {}) {
+  const sinceMs = Number.isFinite(sinceDays) ? Date.now() - sinceDays * 86400000 : null;
+  const metrics = listRounds(session).flatMap((round) => readJSON(paths.cardMetrics(session, round), []) || [])
+    .filter((metric) => sinceMs == null || Date.parse(metric.submittedAt) >= sinceMs);
+  return { session, metrics: summarizeCardMetrics(metrics) };
+}
 
 const { presentRound } = await importRootModule('src/core/present.mjs');
 
@@ -510,6 +520,7 @@ vibecoding workbench — CLI 编排
   workbench wait <session> <round> [--timeout 秒] [--events]  监听反馈；events 模式也监听新消息
   workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标题]  发布或更新文档
   workbench stream-migrate <session>            把历史 feedback.sessionComment 幂等迁入会话流
+  workbench card-metrics <session> [--since 30d] 按卡型汇总盲判试点度量
   workbench render <session> <content.json|->   仅渲染一轮内容（- 表示从 stdin 读取）
   workbench participant add <id> <name>         新增参与者并输出个人邀请链接
   workbench participant list                    列出参与者（不显示 token）
@@ -685,6 +696,16 @@ async function main() {
       const session = rest[0];
       if (!session) { console.error('用法: workbench stream-migrate <session>'); process.exit(1); }
       console.log(JSON.stringify(migrateSessionComments(session)));
+      break;
+    }
+
+    case 'card-metrics': {
+      const session = rest[0];
+      const sinceIndex = rest.indexOf('--since');
+      const rawSince = sinceIndex >= 0 ? rest[sinceIndex + 1] : null;
+      const sinceDays = rawSince ? Number(String(rawSince).replace(/d$/, '')) : undefined;
+      if (!session || (rawSince && (!Number.isFinite(sinceDays) || sinceDays < 0))) { console.error('用法: workbench card-metrics <session> [--since 30d]'); process.exit(1); }
+      console.log(JSON.stringify(cmdCardMetrics(session, { sinceDays })));
       break;
     }
 

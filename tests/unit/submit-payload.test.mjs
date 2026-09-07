@@ -25,3 +25,9 @@ test('submitPayload 只接收数据并规范化 round、会话留言和 selfRepo
   }), { session: 'demo', round: 2, submittedAt: '2026-08-22T00:00:00.000Z', items: [], unanswered: ['b1'], sessionComment: '留言', selfReport: { name: '小艾' } });
   assert.equal(submitPayload({ session: 'demo', round: 1, submittedAt: 'now', draft: {}, unanswered: [], sessionComment: '' }).sessionComment, null);
 });
+
+test('blind choice 的 prediction 与 premises 原样进入 select 载荷', () => {
+  assert.deepEqual(feedbackItems({
+    blind: { select: 'b', prediction: '会降低返工', premises: '客户目标未变' },
+  }), [{ blockId: 'blind', type: 'select', value: 'b', comment: undefined, prediction: '会降低返工', premises: '客户目标未变' }]);
+});
