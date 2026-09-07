@@ -180,3 +180,6 @@ $WB/workspace/<session>/round-<N>/feedback.json
 用哪个 AI 由环境变量 `WORKBENCH_AGENT` 决定（`claude` | `workbuddy` | `codex`），不设则自动探测。详见 `integrations/README.md`。
 
 > ⚠️ 用订阅跑长时间无人值守自动化可能触及各家服务条款，请自行确认。交互式协作（你在场、手动续跑）不受影响。
+
+- 度量：`node bin/workbench.mjs card-metrics <session> [--since 30d]`（按 choice.mode 汇总改选率/预测采集率；②判据来源）
+- 部署：客户/顾问面向的实例设 `WB_AUDIENCE=external`（状态栏中性文案、无重试/技术详情）；内部实例不设

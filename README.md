@@ -32,6 +32,17 @@ open "http://127.0.0.1:8099/control?token=<WORKBENCH_TOKEN>"   # 仅管理员口
 
 提交反馈后，`watch` 的 listener 会自动认领并唤醒你的 AI 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。用哪个 AI 由 `WORKBENCH_AGENT` 决定（`claude` / `workbuddy` / `codex`），不设则自动探测——详见 [integrations/README.md](integrations/README.md)。
 
+## 2026-09-07 新增能力（判断系统配套）
+
+| 能力 | 用法 | 说明 |
+|---|---|---|
+| **叙事页块 `richpage`** | content.json 里 `{"type":"richpage","summary":…,"sections":[{id,heading,items:[md/table/pills/kpi/callout/lane/steps/bars/diagram]}],"sources":[…]}` | 长文可视化页面，决策卡的"完整上下文之家"；**不放行原始 HTML**（全走转义渲染）；节级+选区级批注。作者指南见 docs/authoring-guide.md「叙事页」 |
+| **决策卡两型 `choice.mode`** | `"mode":"blind"`（不可逆决定：提交前不显示推荐/不预选，采集"预测"与"前提"）／`"quick"`（缺省，现状） | 两型上下文密度相同（D36）；`judgmentKind: fact` 出"转外部确认"提示；`supersedes:"D33"` 或 background 提及既有决策时须写 现行/本次改/不动 三段（lint 提醒） |
+| **卡片度量 `card-metrics`** | `node bin/workbench.mjs card-metrics <session> [--since 30d]` | 按 mode 汇总改选率/预测采集率/前提采集率/停留时长；数据在 `workspace/<session>/round-N/card-metrics.json`，是三件先试②的判据来源 |
+| **受众开关 `WB_AUDIENCE`** | 环境变量 `external`（客户/顾问实例）｜`internal`（缺省） | external 下状态栏只显示"提交已收到…"类中性文案，不展示 AI 在线/离线、重试、技术详情 |
+
+三件先试的日历与判据见 user-vibeloop 仓 docs/22。
+
 ## 架构与调试安全网
 
 运行时代码按 `protocol → storage → core → adapters → render` 五层组织：protocol 是无 I/O 的共享规则，storage 是工作区唯一事实源，core 收敛跨入口用例，server/CLI/loop 是适配器，render 只消费 protocol。反馈自动续跑与 inbox 任务队列是两套独立状态机；`WB_CLOUD_AI` 默认关闭，开启方式见 [上线与启用云端 AI](docs/design/2026-08-30-架构重设计/05-上线与启用云端AI.md)。
