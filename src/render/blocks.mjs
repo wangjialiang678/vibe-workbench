@@ -338,6 +338,7 @@ function decisionMarkdown(markdown) {
 }
 
 function recommendReasonHtml(block) {
+  if (block.type === 'choice' && block.mode === 'blind') return '';
   if (!block.recommendReason) return '';
   return `<section class="decision-seg decision-rec">
   <h4 class="decision-h">推荐及理由</h4>

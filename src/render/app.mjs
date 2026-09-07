@@ -62,6 +62,8 @@ function apiUrl(input) {
 // 当前展示的轮次；为 null 时在 bootstrap 里解析为服务端最新一轮，并可随新轮自动推进
 let currentRound = URL_ROUND !== '' ? Number(URL_ROUND) : null;
 let _latestRound = currentRound;
+const _blindOpenedAt = {};
+let _blindCaptureReminderShown = false;
 // URL 未带 round = "跟随最新轮"模式（bootstrap 解析最新 + 轮询自动推进）；
 // 带了 round=N = 用户锁定该轮，绝不自动跳走。
 const FOLLOW_LATEST = URL_ROUND === '';
@@ -671,6 +673,9 @@ async function loadAndRender() {
 
   _currentContent = data;
   _blocks = data.blocks ?? [];
+  if (!isViewingHistory()) _blocks.filter((block) => block.type === 'choice' && block.mode === 'blind').forEach((block) => {
+    _blindOpenedAt[block.id] ??= new Date().toISOString();
+  });
   _batchSelectionGroups = isViewingHistory() ? [] : batchSelectionGroups(_blocks);
   if (Number(currentRound) === Number(_latestRound)) _latestBlocks = _blocks;
   _sectionData = data.sections ?? null;
@@ -726,6 +731,7 @@ async function loadAndRender() {
 
   // 绑定互动事件
   bindInteractions();
+  if (readonly) revealBlindAnalysis();
   await loadParticipantFeedback();
   updateMobileBadges();
 }
@@ -1266,6 +1272,14 @@ function restoreDraftUI(draft) {
     if (item.select != null) {
       const inp = $zones.querySelector(`input[name="choice-${blockId}"][value="${item.select}"]`);
       if (inp) inp.checked = true;
+    }
+    if (item.prediction != null) {
+      const ta = $zones.querySelector(`textarea[data-choice-prediction="${blockId}"]`);
+      if (ta) ta.value = item.prediction;
+    }
+    if (item.premises != null) {
+      const ta = $zones.querySelector(`textarea[data-choice-premises="${blockId}"]`);
+      if (ta) ta.value = item.premises;
     }
     // editable「保持原样即确认」：还原确认态（P2）
     if (item.confirmed === true) {
@@ -1903,6 +1917,12 @@ function bindInteractions() {
     });
   });
 
+  $zones.querySelectorAll('textarea[data-choice-prediction], textarea[data-choice-premises]').forEach((ta) => {
+    const bId = ta.dataset.choicePrediction ?? ta.dataset.choicePremises;
+    const field = ta.dataset.choicePrediction != null ? 'prediction' : 'premises';
+    ta.addEventListener('input', () => saveDraft({ [bId]: { ...loadDraft()[bId], [field]: ta.value } }));
+  });
+
   // embed iframe load → 绑定选区交互
   $zones.querySelectorAll('.embed-iframe[data-embed-iframe]').forEach((iframe) => {
     const blockId = iframe.dataset.embedIframe;
@@ -2107,6 +2127,12 @@ function bindInteractions() {
 $submitBtn.addEventListener('click', () => {
   if (isViewingHistory()) return;
   const draft = loadDraft();
+  const emptyBlind = _blocks.some((block) => block.type === 'choice' && block.mode === 'blind'
+    && !String(draft[block.id]?.prediction ?? '').trim() && !String(draft[block.id]?.premises ?? '').trim());
+  if (emptyBlind && !_blindCaptureReminderShown) {
+    _blindCaptureReminderShown = true;
+    showToast('盲判卡的预测与前提都还没写；这次仍可提交。');
+  }
   const answeredIds = Object.keys(draft);
   const unanswered = unansweredDecisions(_blocks, answeredIds);
   const model = confirmModel(_blocks, answeredIds);
@@ -2348,6 +2374,7 @@ async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfRe
     unanswered,                                                    // = 需决策但"没看/未操作"（不含"看了不改"）
     sessionComment: $sessionComment?.value ?? '',                  // 会话级留言（P1 · 病例 6）
     selfReport: decision.report,
+    openedAt: _blindOpenedAt,
   });
 
   const previousSubmitState = _submitState;
@@ -2396,7 +2423,25 @@ async function doSubmit(draft, answeredIds, unanswered, decision = currentSelfRe
     showToast('提交成功！AI 正在处理，你可以关闭此页面，回复后会变蓝提醒。');
   }
   writeDraft(localStorage, draftKey(SESSION, currentRound), markSubmitted(loadDraft(), payload.submittedAt));
+  revealBlindAnalysis();
   setSubmitState(submitStateAfterSuccess(_submitState));
+}
+
+function revealBlindAnalysis() {
+  _blocks.filter((block) => block.type === 'choice' && block.mode === 'blind' && block.recommendReason).forEach((block) => {
+    const host = $zones.querySelector(`[data-block-id="${block.id}"]`);
+    if (!host || host.querySelector('.blind-ai-analysis')) return;
+    const section = document.createElement('section');
+    section.className = 'decision-seg decision-rec blind-ai-analysis';
+    const heading = document.createElement('h4');
+    heading.className = 'decision-h';
+    heading.textContent = 'AI 分析（提交后可见）';
+    const body = document.createElement('div');
+    body.className = 'decision-text';
+    body.textContent = block.recommendReason;
+    section.append(heading, body);
+    host.querySelector('.comment-area')?.before(section);
+  });
 }
 
 function downloadFallback(payload) {

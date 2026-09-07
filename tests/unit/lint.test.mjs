@@ -141,3 +141,13 @@ test('ascii-art：普通中文与少量特殊字符不误报', () => {
   const block = { id: 'b-ok', type: 'markdown', body: '正常段落——含破折号、引号"和"箭头→，不是字符画' };
   assert.equal(rules(block).includes('ascii-art'), false);
 });
+
+test('blind 覆盖既有决策但无 D36 三段式时告警', () => {
+  const r = rules({ id: 'supersede', type: 'choice', mode: 'blind', supersedes: 'D33', background: '只说现状', options: [{ id: 'a' }] });
+  assert.ok(r.includes('missing-supersede-frame'));
+});
+
+test('同轮超过五张 blind 卡时告警', () => {
+  const warnings = lintContent({ blocks: Array.from({ length: 6 }, (_, index) => ({ id: `blind-${index}`, type: 'choice', mode: 'blind', options: [{ id: 'a' }] })) });
+  assert.ok(warnings.some((warning) => warning.rule === 'too-many-blind-cards'));
+});

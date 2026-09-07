@@ -308,6 +308,19 @@ test('POST /api/feedback writes feedback.json and sets status=submitted', async 
   assert.equal(st.state, 'submitted');
 });
 
+test('POST /api/feedback 同时写 card-metrics.json 并正确记录改选', async () => {
+  const s = 'ses_metrics01';
+  writeJSON(paths.content(s, 1), { session: s, round: 1, blocks: [{ id: 'blind', type: 'choice', mode: 'blind', recommendation: 'a', options: [{ id: 'a' }, { id: 'b' }] }] });
+  writeStatus(s, { state: 'rendered', round: 1 });
+  const response = await fetch(url('/api/feedback'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    session: s, round: 1, items: [{ blockId: 'blind', type: 'select', value: 'b', prediction: '结果', premises: '' }],
+  }) });
+  assert.equal(response.status, 200);
+  const [metric] = JSON.parse(fs.readFileSync(paths.cardMetrics(s, 1), 'utf8'));
+  assert.equal(metric.changedFromRecommendation, true);
+  assert.equal(metric.predictionProvided, true);
+});
+
 // ---- POST feedback: 409 when status=claimed ----
 test('POST /api/feedback returns 409 when status=claimed', async () => {
   const s = 'ses_claimed01';

@@ -1,10 +1,14 @@
 // 反馈提交载荷的纯组装逻辑。
 
-export function feedbackItems(draft = {}) {
+export function feedbackItems(draft = {}, { openedAt = {} } = {}) {
   return Object.entries(draft).map(([blockId, item]) => {
     const entries = [];
     if (item.verdict) entries.push({ blockId, type: 'verdict', value: item.verdict, comment: item.comment });
-    else if (item.select) entries.push({ blockId, type: 'select', value: item.select, comment: item.comment });
+    else if (item.select) entries.push({ blockId, type: 'select', value: item.select, comment: item.comment,
+      ...(item.prediction != null ? { prediction: item.prediction } : {}),
+      ...(item.premises != null ? { premises: item.premises } : {}),
+      ...(openedAt[blockId] ? { openedAt: openedAt[blockId] } : {}),
+    });
     else if (item.text) entries.push({ blockId, type: 'text', value: item.text, comment: item.comment });
     // 看了但不改（P2 · 病例 5）：与"没看"(unanswered) 语义区分
     else if (item.confirmed === true) entries.push({ blockId, type: 'confirm', value: '保持原样', comment: item.comment });
@@ -46,12 +50,12 @@ export function feedbackItems(draft = {}) {
   }).flat();
 }
 
-export function submitPayload({ session, round, submittedAt, draft, unanswered, sessionComment, selfReport }) {
+export function submitPayload({ session, round, submittedAt, draft, unanswered, sessionComment, selfReport, openedAt }) {
   return {
     session,
     round: Number(round),
     submittedAt,
-    items: feedbackItems(draft),
+    items: feedbackItems(draft, { openedAt }),
     unanswered,
     sessionComment: String(sessionComment ?? '').trim() || null,
     ...(selfReport ? { selfReport } : {}),

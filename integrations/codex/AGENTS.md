@@ -62,6 +62,7 @@ cat "$WB/workspace/<session>/round-<N>/feedback.json"
 1. **决策块不写背景 = 产出伪决策**。人看不懂照样会点推荐项，你不敢采信，白费一轮。`background` / `why` / 每个选项的 `pros`+`cons` / `recommendReason` 四件套必须给齐，`present` 会 lint 并警告。
 2. **选项讲后果，不讲机制**。✗"两套并存会互相合并冲突" ✓ `cons: ["会互相制造合并冲突、你要看两套待批准队列"]`。术语首次出现必须一句话解释"这是什么、跟我有什么关系、不办会怎样"。
 3. **跨轮同议题必须复用同一个 block id**，否则轮次 diff（新增/改了什么）会失效。
+4. **不可逆/高后果决定用 `choice.mode:"blind"`**：提交前不显示推荐，需采集 prediction/premises；两型上下文都必须完整（D36）。
 
 ## 被反馈自动唤醒（可选）
 
