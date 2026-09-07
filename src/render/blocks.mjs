@@ -318,23 +318,30 @@ function decisionContextHtml(block) {
   if (block.background) {
     parts.push(`<section class="decision-seg decision-bg">
   <h4 class="decision-h">背景</h4>
-  <div class="decision-text">${mdToHtml(block.background)}</div>
+  <div class="decision-text">${decisionMarkdown(block.background)}</div>
 </section>`);
   }
   if (block.why) {
     parts.push(`<section class="decision-seg decision-why">
   <h4 class="decision-h">为什么需要你定</h4>
-  <div class="decision-text">${mdToHtml(block.why)}</div>
+  <div class="decision-text">${decisionMarkdown(block.why)}</div>
 </section>`);
   }
   return parts.length ? `<div class="decision-context">${parts.join('\n')}</div>` : '';
+}
+
+function decisionMarkdown(markdown) {
+  return mdToHtml(markdown).replace(
+    /\[\[#([a-z0-9][a-z0-9-]{0,40})\]\]/g,
+    '<a href="#$1" data-rp-section-ref="$1">$1</a>',
+  );
 }
 
 function recommendReasonHtml(block) {
   if (!block.recommendReason) return '';
   return `<section class="decision-seg decision-rec">
   <h4 class="decision-h">推荐及理由</h4>
-  <div class="decision-text">${mdToHtml(block.recommendReason)}</div>
+  <div class="decision-text">${decisionMarkdown(block.recommendReason)}</div>
 </section>`;
 }
 

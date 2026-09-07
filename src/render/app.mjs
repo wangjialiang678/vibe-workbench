@@ -1561,9 +1561,13 @@ function appendRailCard(blockId, comment, editMode) {
   const quoteHtml = comment.quote
     ? `<blockquote class="rail-quote">${escapeHtml(comment.quote)}</blockquote>`
     : '';
+  const sectionHtml = comment.sectionId
+    ? `<div class="rail-section">本节：${escapeHtml(comment.sectionId)}</div>`
+    : '';
 
   card.innerHTML = `
     <div class="rail-card-edit" ${editMode ? '' : 'hidden'}>
+      ${sectionHtml}
       ${quoteHtml}
       <textarea class="rail-comment-input" rows="3" placeholder="写下评论…">${escapeHtml(comment.text || '')}</textarea>
       <div class="rail-card-actions">
@@ -1572,6 +1576,7 @@ function appendRailCard(blockId, comment, editMode) {
       </div>
     </div>
     <div class="rail-card-read" ${editMode ? 'hidden' : ''}>
+      ${sectionHtml}
       ${quoteHtml}
       <div class="rail-card-text">${escapeHtml(comment.text || '')}</div>
       <div class="rail-card-actions">
@@ -1591,7 +1596,9 @@ function appendRailCard(blockId, comment, editMode) {
     if (list && !list.querySelector('.rail-card')) {
       const emp = document.createElement('div');
       emp.className = 'rail-empty';
-      emp.textContent = '选中页面里的文字，点浮出的「💬 评论」添加；也可点「+ 新增批注」写整体意见。';
+      emp.textContent = comment.sectionId
+        ? '选中文字后点「评论」，或点节标题旁的「批注本节」。'
+        : '选中页面里的文字，点浮出的「💬 评论」添加；也可点「+ 新增批注」写整体意见。';
       list.appendChild(emp);
     }
     updatePinCount(blockId, savedCount(blockId));
@@ -1628,6 +1635,13 @@ function appendRailCard(blockId, comment, editMode) {
   // 点读态正文 → best-effort 跳到 iframe 内原文
   card.querySelector('.rail-card-read').addEventListener('click', (e) => {
     if (e.target.closest('button')) return; // 不触发跳转
+    if (comment.sectionId) {
+      const section = findRichpageSection(blockId, comment.sectionId);
+      if (!section) return;
+      section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (comment.quote) highlightQuoteInElement(section, comment.quote);
+      return;
+    }
     if (!comment.quote) return;
     try {
       const iframe = $zones.querySelector(`.embed-iframe[data-embed-iframe="${blockId}"]`);
@@ -1648,6 +1662,10 @@ function appendRailCard(blockId, comment, editMode) {
 
   railList.appendChild(card);
 
+  if (!editMode && comment.sectionId && comment.quote) {
+    highlightQuoteInElement(findRichpageSection(blockId, comment.sectionId), comment.quote);
+  }
+
   if (editMode) {
     card.querySelector('.rail-comment-input')?.focus();
   }
@@ -1663,28 +1681,90 @@ function savedCount(blockId) {
  * 新建一条评论卡片（编辑态）。创建时不落草稿——避免"点了没写"产生空评论；
  * 仅在「保存」且内容非空时才持久化。quote 为 null = 整体意见。
  */
-function addEmbedComment(blockId, quote) {
+function addEmbedComment(blockId, quote, sectionId = null) {
   const id = `c-${blockId}-n${_commentSeq++}`;
-  const comment = { id, quote: quote || null, text: '', done: false };
+  const comment = {
+    id,
+    quote: quote || null,
+    ...(sectionId ? { sectionId } : {}),
+    text: '',
+    done: false,
+  };
   appendRailCard(blockId, comment, /* editMode= */ true);
   return comment;
 }
 
-// best-effort 高亮：用 CSS Custom Highlight API 在 iframe 文档里高亮选区
-function tryHighlightRange(iframeDoc, range, quote) {
+// best-effort 高亮：主文档直接用主题样式，iframe 仍需在子文档内注入样式。
+function tryHighlightRange(targetDoc, range) {
   try {
-    if (!iframeDoc || !range) return;
-    if (typeof iframeDoc.defaultView?.CSS?.highlights === 'undefined') return;
-    const hl = new iframeDoc.defaultView.Highlight(range);
-    iframeDoc.defaultView.CSS.highlights.set('wb-hl', hl);
-    // 注入高亮 CSS（幂等）
-    if (!iframeDoc.getElementById('wb-hl-style')) {
-      const s = iframeDoc.createElement('style');
+    if (!targetDoc || !range) return;
+    const targetWindow = targetDoc.defaultView;
+    if (typeof targetWindow?.CSS?.highlights === 'undefined' || typeof targetWindow.Highlight !== 'function') return;
+    const current = targetWindow.CSS.highlights.get('wb-hl');
+    if (current && typeof current.add === 'function') current.add(range);
+    else targetWindow.CSS.highlights.set('wb-hl', new targetWindow.Highlight(range));
+    if (targetDoc !== document && !targetDoc.getElementById('wb-hl-style')) {
+      const s = targetDoc.createElement('style');
       s.id = 'wb-hl-style';
       s.textContent = '::highlight(wb-hl){ background: rgba(250,204,21,.45); }';
-      iframeDoc.head?.appendChild(s);
+      targetDoc.head?.appendChild(s);
     }
   } catch { /* best-effort，失败静默 */ }
+}
+
+function findRichpageSection(blockId, sectionId) {
+  return Array.from($zones.querySelectorAll('.richpage[data-richpage] .rp-section[data-section-id]')).find((section) => (
+    section.dataset.sectionId === sectionId
+    && section.closest('.richpage')?.dataset.richpage === blockId
+  ));
+}
+
+// 选区刷新后 Range 会失效；回显时按纯文本重新定位首个匹配并交给 CSS Highlight API。
+function highlightQuoteInElement(element, quote) {
+  try {
+    if (!element || !quote) return;
+    const doc = element.ownerDocument;
+    const walker = doc.createTreeWalker(element, doc.defaultView.NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let fullText = '';
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      nodes.push({ node, start: fullText.length });
+      fullText += node.nodeValue ?? '';
+    }
+    const start = fullText.indexOf(quote);
+    if (start < 0) return;
+    const end = start + quote.length;
+    const startEntry = nodes.find((entry) => start >= entry.start && start <= entry.start + (entry.node.nodeValue?.length ?? 0));
+    const endEntry = nodes.find((entry) => end >= entry.start && end <= entry.start + (entry.node.nodeValue?.length ?? 0));
+    if (!startEntry || !endEntry) return;
+    const range = doc.createRange();
+    range.setStart(startEntry.node, start - startEntry.start);
+    range.setEnd(endEntry.node, end - endEntry.start);
+    tryHighlightRange(doc, range);
+  } catch { /* best-effort */ }
+}
+
+function bindRichpageSelection(article) {
+  article.addEventListener('mouseup', () => {
+    try {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+        hideFab();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      const common = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+      const section = common?.closest?.('.rp-section[data-section-id]');
+      if (!section || !article.contains(section) || !section.closest('.rp-main')) {
+        hideFab();
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      showFab(rect.right, rect.top, article.dataset.richpage, selection.toString().trim(), document, range, section.dataset.sectionId);
+    } catch { hideFab(); }
+  });
 }
 
 /**
@@ -1721,7 +1801,7 @@ function bindEmbedIframe(blockId, iframe) {
 
 // ── 浮动评论按钮（FAB）──────────────────────────────────
 let _fab = null;
-let _pendingComment = null; // { blockId, quote, iframeDoc, range }
+let _pendingComment = null; // { blockId, sectionId?, quote, iframeDoc, range }
 
 function ensureFab() {
   if (_fab) return _fab;
@@ -1732,21 +1812,21 @@ function ensureFab() {
   _fab.hidden = true;
   _fab.addEventListener('click', () => {
     if (!_pendingComment) return;
-    const { blockId, quote, iframeDoc, range } = _pendingComment;
-    const comment = addEmbedComment(blockId, quote);
-    tryHighlightRange(iframeDoc, range, quote);
+    const { blockId, sectionId, quote, iframeDoc, range } = _pendingComment;
+    const comment = addEmbedComment(blockId, quote, sectionId);
+    tryHighlightRange(iframeDoc, range);
     hideFab();
   });
   document.body.appendChild(_fab);
   return _fab;
 }
 
-function showFab(x, y, blockId, quote, iframeDoc, range) {
+function showFab(x, y, blockId, quote, iframeDoc, range, sectionId = null) {
   const fab = ensureFab();
   fab.style.left = `${x}px`;
   fab.style.top  = `${y}px`;
   fab.hidden = false;
-  _pendingComment = { blockId, quote, iframeDoc, range };
+  _pendingComment = { blockId, sectionId, quote, iframeDoc, range };
 }
 
 function hideFab() {
@@ -1833,6 +1913,21 @@ function bindInteractions() {
       doBindIframe();
     }
     iframe.addEventListener('load', doBindIframe);
+  });
+
+  // richpage 主文档选区与节级批注共用 embed 的评论 rail 数据结构。
+  $zones.querySelectorAll('.richpage[data-richpage]').forEach(bindRichpageSelection);
+  $zones.querySelectorAll('[data-richpage-add][data-section-id]').forEach((btn) => {
+    btn.addEventListener('click', () => addEmbedComment(btn.dataset.richpageAdd, null, btn.dataset.sectionId));
+  });
+  $zones.querySelectorAll('[data-rp-section-ref]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      const section = Array.from($zones.querySelectorAll('.rp-section[data-section-id]'))
+        .find((candidate) => candidate.dataset.sectionId === link.dataset.rpSectionRef);
+      if (!section) return;
+      event.preventDefault();
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
 
   // embed rail "+ 新增批注"按钮

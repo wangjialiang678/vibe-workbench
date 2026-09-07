@@ -103,6 +103,34 @@ lint 规则 `unexplained-jargon` 会揪出正文里出现、但 `background`/`wh
 
 `meta` 必须是对象，`docsUrl` 必须是字符串。相对地址会按工作台同源解析并安全透传当前 token；外站只打开原 URL，不携带工作台口令。
 
+## 10. 叙事页（`richpage`）
+
+需要把较多上下文组织成一整页时使用 `richpage`。它默认是 `needsDecision:false` 的上下文块；正式表态仍用同轮相邻的 `choice`、`verdict` 或 `checklist`。写作时遵守：
+
+- `summary` 结论先行，写“看完这页你应该知道的三件事”；缺少时 lint 会提示。
+- 一节回答一个问题；节标题用人话陈述，不用内部代号。跨轮同议题复用相同的 block id 和 section id。
+- 对比用 `table`，状态用 `pills`，2–4 个关键数字用 `kpi`，警告或待拍板用 `callout`（`tone:"wait"`），分阶段路线用 `lane`，流程用 `steps` 或 `diagram`。
+- 面向决策者一律大白话；术语首次出现就解释“这是什么、跟我有什么关系、不办会怎样”，案例先交代背景。
+- 正文不放 URL，来源集中写进 `sources`；段落保持 3–5 句，每节可用一段“本节小结”收尾。
+- 节标题旁可添加节级批注；在正文选中文字可添加选区批注。决策块可在 `background`/`why` 中写 `[[#section-id]]` 跳回本轮叙事页对应小节。
+
+最小形状：
+
+```jsonc
+{
+  "id": "b-panorama", "type": "richpage", "title": "全景与路线",
+  "summary": "看完这页你应该知道的三件事……",
+  "sections": [
+    { "id": "built", "heading": "已经建成什么", "kicker": "平台底座",
+      "items": [
+        { "kind": "md", "body": "markdown 正文" },
+        { "kind": "table", "columns": ["能力", "状态"], "rows": [["闭环", "运行"]] }
+      ] }
+  ],
+  "sources": [{ "n": 1, "text": "来源说明", "url": "https://example.com" }]
+}
+```
+
 ---
 
 ## lint 规则速查

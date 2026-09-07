@@ -15,7 +15,10 @@ export function feedbackItems(draft = {}) {
     if (Array.isArray(item.comments)) {
       item.comments.forEach((comment) => {
         if (comment && comment.text) {
-          entries.push({ blockId, type: 'pin', value: { quote: comment.quote }, comment: comment.text });
+          const value = comment.sectionId
+            ? { sectionId: comment.sectionId, ...(comment.quote ? { quote: comment.quote } : {}) }
+            : { quote: comment.quote };
+          entries.push({ blockId, type: 'pin', value, comment: comment.text });
         }
       });
     }
