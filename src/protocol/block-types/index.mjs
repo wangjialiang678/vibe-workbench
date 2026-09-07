@@ -9,6 +9,7 @@ import code from './code.mjs';
 import embed from './embed.mjs';
 import prototype from './prototype.mjs';
 import checklist from './checklist.mjs';
+import richpage from './richpage.mjs';
 
 const registry = new Map();
 export const BLOCK_TYPES = [];
@@ -36,5 +37,5 @@ export function getBlockType(type) {
 }
 
 [
-  markdown, diagram, choice, verdict, freetext, editable, table, code, embed, prototype, checklist,
+  markdown, diagram, choice, verdict, freetext, editable, table, code, embed, prototype, checklist, richpage,
 ].forEach(registerBlockType);

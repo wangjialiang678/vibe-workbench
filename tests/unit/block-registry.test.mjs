@@ -5,6 +5,11 @@ import { lintBlock } from '../../src/protocol/lint.mjs';
 import { BLOCK_TYPES, getBlockType, registerBlockType, unregisterBlockType } from '../../src/protocol/block-types/index.mjs';
 import { blockHtml } from '../../src/render/blocks.mjs';
 
+test('内置块注册表包含 12 种块', () => {
+  assert.equal(BLOCK_TYPES.length, 12);
+  assert.ok(BLOCK_TYPES.includes('richpage'));
+});
+
 test('虚构 block 类型只注册一个清单即可走校验、渲染与内容哈希', () => {
   const type = 'virtual-registry-proof';
   const definition = {

@@ -1,5 +1,6 @@
 // 轮次 diff（DESIGN §5 + §13 P1）。零依赖。
 import { blockFingerprint } from './schema.mjs';
+import { getBlockType } from './block-types/index.mjs';
 
 const DIFF_FIELDS = ['type', 'title', 'body', 'options', 'recommendation', 'default', 'value'];
 
@@ -20,8 +21,9 @@ export function computeDiff(curBlocks, prevBlocks = []) {
     const prev = prevById.get(b.id);
     if (!prev) return { ...b, _change: 'new' };
     if (blockFingerprint(b) === blockFingerprint(prev)) return { ...b, _change: 'unchanged' };
-    const changedFields = DIFF_FIELDS.filter((f) => fieldHash(b[f]) !== fieldHash(prev[f]));
-    return { ...b, _change: 'changed', _changedFields: changedFields, _prev: pick(prev, DIFF_FIELDS) };
+    const fields = [...new Set([...DIFF_FIELDS, ...(getBlockType(b.type)?.hashFields ?? [])])];
+    const changedFields = fields.filter((f) => fieldHash(b[f]) !== fieldHash(prev[f]));
+    return { ...b, _change: 'changed', _changedFields: changedFields, _prev: pick(prev, fields) };
   });
 }
 

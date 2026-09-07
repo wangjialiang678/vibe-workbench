@@ -70,6 +70,7 @@ type 与字段：
 - `markdown` body=md ｜ `diagram` lang:"mermaid",body=源 ｜ `choice` options:[{id,label,desc?}],multi?,recommendation ｜ `verdict`（✓赞成/✗异议/?疑问）｜ `freetext` ｜ `editable` value=md（就地可改）｜ `table` columns,rows ｜ `code` lang,body ｜ `embed` url,height?（**嵌真实网页产物，就地落点批注**）
 - `prototype` mode:"wireframe"|"image"|"iframe" —— 线框/截图/高保真原型，SVG 定位批注（在图上点选落 pin 写意见）。wireframe→`screen:{id,name,widgets[]}` ｜ image→`imageUrl` ｜ iframe→`src`
 - `checklist` items:[{id,label}], verdictLabels:[] —— 逐条三态清单
+- `richpage` summary?,toc?,sections:[{id,heading,kicker?,items:[md/table/pills/kpi/callout/lane/steps/bars/diagram]}],sources? —— 结构化叙事长页；节级与文字选区批注；不接受原始 HTML
 
 **呈现位置由元数据决定**（工作台的核心"注意力编排"）：
 
