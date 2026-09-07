@@ -11,7 +11,7 @@
 | `feedback-submitted` | 工作台（评审门户） | 「X 提交了第 N 轮反馈」+ 分诊指引 |
 | `message-posted` | 工作台 | 「X 发来一条消息」；`author.role == 'ai'` 的跳过（不自我提醒） |
 | `round-presented` | 工作台 | 「第 N 轮内容已发布」 |
-| `feedback-created` + `source: "tms-demo"` | TMS 演示系统（`TMS_FEEDBACK_WEBHOOK`） | 分类/页面/联系方式/内容预览 + 分诊指引；支持 `reporterRole`、`reporterIdentity`、`pageRoute`、`anchorText`、`buildVersion` |
+| `feedback-created` + `source: "tms-demo"` | TMS 演示系统（`TMS_FEEDBACK_WEBHOOK`） | 分类/页面/联系方式/内容预览 + 分诊指引；支持 `reporterRole`、`reporterIdentity`、`pageRoute`、`anchorText`、`buildVersion`、`attachmentCount` / `attachmentPaths` |
 | 其他（含 `{text}` 手工 POST） | curl 测试等 | 透传文本 |
 
 ## 部署（东京机现行）

@@ -78,6 +78,20 @@ def format_event(payload):
         if anchor_text:
             lines.append("定位：" + anchor_text + "\n")
         lines.append("内容：" + str(preview) + "\n")
+        attachment_count = payload.get("attachmentCount")
+        attachment_paths = payload.get("attachmentPaths")
+        valid_attachments = (
+            type(attachment_count) is int
+            and isinstance(attachment_paths, list)
+            and all(isinstance(path, str) for path in attachment_paths)
+        )
+        if valid_attachments and attachment_count > 0:
+            lines.append(f"截图：{attachment_count} 张\n")
+            for path in attachment_paths[:6]:
+                url = "https://demo.ai-opc.studio" + path if path.startswith("/") else path
+                lines.append(url + "\n")
+            if attachment_count > 6:
+                lines.append(f"…另 {attachment_count - 6} 张\n")
         triage = "→ 全文：demo /api/feedback?status=NEW；按运行手册 §三 分诊"
         if build_version:
             triage += "｜版本：" + build_version

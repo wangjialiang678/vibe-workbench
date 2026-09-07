@@ -66,6 +66,52 @@ class RelayFormatTest(unittest.TestCase):
             with self.subTest(payload=payload):
                 self.assertIsInstance(format_event(payload), str)
 
+    def test_tms_attachments_render_count_and_full_urls(self):
+        text = format_event({
+            "event": "feedback-created",
+            "source": "tms-demo",
+            "contentPreview": "有截图的反馈",
+            "attachmentCount": 2,
+            "attachmentPaths": [
+                "/api/feedback/attachments/first",
+                "/api/feedback/attachments/second",
+            ],
+        })
+        self.assertIn("截图：2 张", text)
+        self.assertIn("https://demo.ai-opc.studio/api/feedback/attachments/first", text)
+        self.assertIn("https://demo.ai-opc.studio/api/feedback/attachments/second", text)
+        self.assertLess(text.index("内容："), text.index("截图："))
+        self.assertLess(text.index("截图："), text.index("→ 全文："))
+
+    def test_tms_attachments_missing_fields_keeps_legacy_output(self):
+        text = format_event({
+            "event": "feedback-created",
+            "source": "tms-demo",
+            "contentPreview": "没有截图字段",
+        })
+        self.assertNotIn("截图：", text)
+
+    def test_tms_attachments_limit_urls_and_report_remainder(self):
+        paths = [f"/api/feedback/attachments/{number}" for number in range(8)]
+        text = format_event({
+            "event": "feedback-created",
+            "source": "tms-demo",
+            "attachmentCount": 8,
+            "attachmentPaths": paths,
+        })
+        self.assertEqual(text.count("https://demo.ai-opc.studio/api/feedback/attachments/"), 6)
+        self.assertIn("…另 2 张", text)
+        self.assertNotIn("https://demo.ai-opc.studio/api/feedback/attachments/6", text)
+
+    def test_tms_attachment_paths_string_is_ignored_without_raising(self):
+        text = format_event({
+            "event": "feedback-created",
+            "source": "tms-demo",
+            "attachmentCount": 1,
+            "attachmentPaths": "/api/feedback/attachments/not-a-list",
+        })
+        self.assertNotIn("截图：", text)
+
 
 if __name__ == "__main__":
     unittest.main()
