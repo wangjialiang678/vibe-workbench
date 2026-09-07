@@ -132,11 +132,13 @@ export function status(ctx) {
     const { session } = parseQuery(rawUrl);
     const status = session ? readStatus(session) : null;
     const worker = workerPresence(runtimeState);
+    const audience = process.env.WB_AUDIENCE === 'external' ? 'external' : 'internal';
     if (!status) {
       json(res, 200, {
         ok: true,
         status: null,
         display: 'unknown',
+        audience,
         assetsVersion: assetsVersion(),
         ...worker,
       });
@@ -155,6 +157,7 @@ export function status(ctx) {
       ok: true,
       status: responseStatus,
       display,
+      audience,
       stale,
       assetsVersion: assetsVersion(),
       ...worker,
