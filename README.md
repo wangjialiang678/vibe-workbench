@@ -102,6 +102,10 @@ workbench doc-publish <session> <category> <slug> <md文件路径> [--title 标�
 
 worker 每 30 秒用管理员口令向 `POST /api/worker-heartbeat` 上报一次存活状态；`GET /api/status` 返回 `workerOnline` 和 `workerLabel`，超过 90 秒未收到心跳才视为云端 AI 离线。同一轮反馈使用 `round@submittedAt` 去重，因此重新提交不会被旧轮次游标吞掉。
 
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `WB_AUDIENCE` | `internal` | 设为 `external` 时，状态栏使用面向客户/顾问的中性进度文案，不展示 AI 在线状态、重试入口或技术错误详情。 |
+
 Codex 超时或非零退出后，worker 只检查本次项目路由的仓库根目录。若存在未提交改动，会创建 `codex-timeout-<UTC时间戳>` 分支，用包含 session/中断原因的中文提交保存全部改动，再切回原分支并确认干净；回执给出切换快照分支的续跑命令。非 Git 目录、工作台 `workspace/` 数据目录一律跳过；任一 Git 操作失败都会停止后续清理并在回执中说明，保留现场供人工处理。
 
 ## Hybrid 驱动与 SDK 托底标注

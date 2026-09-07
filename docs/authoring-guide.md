@@ -4,6 +4,8 @@
 > `workbench present` 会跑 [作者侧 lint](../src/protocol/lint.mjs)：决策块四段完整性是**硬校验**，不满足就拒绝渲染；其余规则仍只 warning。
 > 仅在确需临时放行时使用 `--allow-incomplete-decisions`。此时仍输出 warning，成功 JSON 会带 `lintBypassed:true`，便于调用方识别绕过状态。
 
+客户或顾问面向的工作台实例应设置 `WB_AUDIENCE=external`，让状态栏只呈现安心的提交进度，不暴露内部 AI 运行状态。
+
 ## 0. 默认受众：不了解实现的决策者
 
 创始人原话（2026-07-13 总体评价）：

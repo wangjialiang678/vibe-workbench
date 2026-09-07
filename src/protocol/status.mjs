@@ -34,6 +34,19 @@ export function badgeFor(displ, opts = {}) {
   }
 }
 
+// 对外实例不暴露 worker、SDK 或错误诊断；展示态仍由同一套状态机判定。
+export function externalBadgeFor(displ) {
+  switch (displ) {
+    case 'worker-online': return { icon: '✓', text: '已连接，提交会即时送达项目组', retry: false };
+    case 'submitted':
+    case 'offline': return { icon: '✓', text: '提交已收到，项目组会在工作时间内处理', retry: false };
+    case 'processing': return { icon: '✓', text: '提交已收到，正在处理', retry: false };
+    case 'error':
+    case 'dead': return { icon: '✓', text: '提交已安全保存，项目组已收到通知', retry: false };
+    default: return badgeFor(displ);
+  }
+}
+
 // error.kind → 是否提供「重试」（driver 配置类错误重试无用，不误导）
 export function errorRetryable(kind) {
   return kind === 'timeout' || kind === 'api' || kind === 'unknown';
