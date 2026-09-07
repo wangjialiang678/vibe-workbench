@@ -8,7 +8,14 @@ export function draftKey(session, round) {
 
 export function mergeDraft(previous, patch) {
   delete previous[SUBMITTED_KEY];
-  return Object.assign(previous, patch);
+  for (const [blockId, nextItem] of Object.entries(patch)) {
+    const currentItem = previous[blockId];
+    previous[blockId] = currentItem && typeof currentItem === 'object' && !Array.isArray(currentItem)
+      && nextItem && typeof nextItem === 'object' && !Array.isArray(nextItem)
+      ? { ...currentItem, ...nextItem }
+      : nextItem;
+  }
+  return previous;
 }
 
 export function markSubmitted(draft, submittedAt) {

@@ -560,7 +560,7 @@ function saveMove(bid, wid, geo) {
 
 function resetMoves(bid) {
   const cur = { ...(loadDraft()[bid] ?? {}) };
-  delete cur.moves;
+  cur.moves = undefined;
   saveDraft({ [bid]: cur });
   loadAndRender();                                        // 重渲染回原位
 }
@@ -2079,7 +2079,7 @@ function bindInteractions() {
     btn.addEventListener('click', () => {
       const draft = loadDraft();
       const item = { ...draft[bId] };
-      delete item.comment;
+      item.comment = undefined;
       saveDraft({ [bId]: item });
       // 重置 UI
       const ta     = $zones.querySelector(`.comment-input[data-comment-for="${bId}"]`);

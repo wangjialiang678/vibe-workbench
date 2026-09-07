@@ -12,6 +12,17 @@ test('mergeDraft 原地合并草稿 patch', () => {
   assert.deepEqual(draft, { blockA: { verdict: '赞成' }, blockB: { text: '补充' } });
 });
 
+test('mergeDraft 合并同一 block 的最新字段，不让陈旧回答覆盖批注', () => {
+  const draft = {};
+  const renderedItem = { text: '第一次回答' };
+
+  mergeDraft(draft, { answer: renderedItem });
+  mergeDraft(draft, { answer: { comment: '补充批注' } });
+  mergeDraft(draft, { answer: { ...renderedItem, text: '修改后的回答' } });
+
+  assert.deepEqual(draft, { answer: { text: '修改后的回答', comment: '补充批注' } });
+});
+
 test('readDraft/writeDraft 通过注入 storage 存取，并容错畸形 JSON', () => {
   const values = new Map();
   const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };

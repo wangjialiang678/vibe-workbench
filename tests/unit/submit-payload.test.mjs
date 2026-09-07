@@ -31,3 +31,13 @@ test('blind choice 的 prediction 与 premises 原样进入 select 载荷', () =
     blind: { select: 'b', prediction: '会降低返工', premises: '客户目标未变' },
   }), [{ blockId: 'blind', type: 'select', value: 'b', comment: undefined, prediction: '会降低返工', premises: '客户目标未变' }]);
 });
+
+test('submitPayload 同时保留 text 回答与 inline comment', () => {
+  const payload = submitPayload({
+    session: 'demo', round: 1, submittedAt: 'now', unanswered: [], sessionComment: '',
+    draft: { answer: { text: '修改后的回答', comment: '补充批注' } },
+  });
+  assert.deepEqual(payload.items, [
+    { blockId: 'answer', type: 'text', value: '修改后的回答', comment: '补充批注' },
+  ]);
+});
