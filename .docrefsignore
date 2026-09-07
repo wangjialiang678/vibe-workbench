@@ -1,0 +1,54 @@
+# 私密参与者名册是本机运行态数据，含 token，按设计不得入库。
+config/participants.json
+# 运行时项目注册表由部署环境维护，不纳入版本控制。
+workspace/projects.json
+# 历史 UI 方案的反馈回执是运行态数据，不纳入版本控制。
+workspace/wb-redesign/round-1/feedback.json
+# 导入演示会话内容是运行态数据，不纳入版本控制。
+workspace/imported-demo/round-1/content.json
+# 历史 MVP 计划中列出的前端目录从未实施，保留计划而不补无用实物。
+public/index.html
+# 历史 MVP 计划中列出的前端目录从未实施，保留计划而不补无用实物。
+public/app.js
+# 历史 MVP 计划中列出的前端目录从未实施，保留计划而不补无用实物。
+public/app.css
+# 历史 MVP 计划中的协议 Markdown 产物从未实施。
+protocol/schema.md
+# 历史 MVP 计划中的协议示例产物从未实施。
+protocol/example.content.json
+# PRD 指向外部 control-plane 仓库的评估样板，不属于本仓。
+eval/run.mjs
+# 历史解耦方案中计划拆分的模块未落地，保留设计记录。
+src/loop/agent-messages.mjs
+# 历史架构方案中计划新增的守卫未落地，保留设计记录。
+tests/guards/no-deps.test.mjs
+# 历史架构方案中计划新增的用例模块未落地，保留设计记录。
+core/submit.mjs
+# 历史架构方案中计划采用的适配器目录未落地，保留设计记录。
+adapters/server/static.mjs
+# 历史评审按旧 server 目录布局记录的相对路径。
+../server.mjs
+# 历史评审按旧 routes 目录布局记录的相对路径。
+routes/index.mjs
+# 历史评审中并列描述的运行态回执文件，不是仓库实物路径。
+ack.json/response.md/status.json
+# 历史评审按旧 routes 目录布局记录的相对路径。
+routes/README.md
+# 历史评审中的部署检查脚本计划未落地。
+scripts/check-deploys.mjs
+# 历史评审按旧 server 目录布局记录的相对路径。
+routes/feedback.mjs
+# richpage 设计允许但未采用的独立渲染文件，实现在 blocks.mjs 内。
+src/render/richpage.mjs
+# user-vibeloop 是另一仓库，研究文档只保留其相对指针。
+.claude/memory-bank/research/workbench-feedback-log.md
+# user-vibeloop 是另一仓库，研究文档只保留其相对指针。
+../user-vibeloop/docs/09-platform-vision-and-scenarios.md
+# 本机 Claude 权限配置不入库。
+.claude/settings.json
+# 历史安全评审描述的测试夹具私密文件，不应作为仓库实物提交。
+private/external-collision.txt
+# 历史安全评审描述的测试夹具私密文件，不应作为仓库实物提交。
+private/secret.txt
+# 历史安全评审描述的测试夹具私密文件，不应作为仓库实物提交。
+private/secret.html

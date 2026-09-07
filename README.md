@@ -32,6 +32,10 @@ open "http://127.0.0.1:8099/control?token=<WORKBENCH_TOKEN>"   # 仅管理员口
 
 提交反馈后，`watch` 的 listener 会自动认领并唤醒你的 AI 续跑，结果写回 `workspace/<session>/`，网页状态徽章变「已回复」。用哪个 AI 由 `WORKBENCH_AGENT` 决定（`claude` / `workbuddy` / `codex`），不设则自动探测——详见 [integrations/README.md](integrations/README.md)。
 
+### 开发验证：文档引用完整性
+
+`npm run check:docrefs`（或 `python3 tools/check_doc_refs.py`）检查 Markdown 提到的仓库内文件、脚本和目录是否真实存在，防止文档引用只留在某台机器上。它已随 `npm test` 运行。运行态数据、他仓指针或计划中的文件可写进仓库根 `.docrefsignore`：每条 glob 前必须紧挨一行以 `#` 开头的忽略理由；不能用它掩盖本应提交的实物。
+
 ## 2026-09-07 新增能力（判断系统配套）
 
 | 能力 | 用法 | 说明 |

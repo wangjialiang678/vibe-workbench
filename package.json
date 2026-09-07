@@ -11,6 +11,7 @@
     "server": "node src/server/server.mjs",
     "listen": "node src/loop/listener.mjs",
     "test": "node --test",
+    "check:docrefs": "python3 tools/check_doc_refs.py",
     "test:unit": "node --test tests/unit/*.test.mjs",
     "test:e2e": "node --test tests/e2e/*.test.mjs"
   }

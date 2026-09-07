@@ -61,8 +61,8 @@ PRD Review Studio 是"六面写死 + LocalStorage 轮次"的专用工作台；Vi
 | ① PRD 评审 (prd) | sections[].items[]（cid/title/body/ac/defaultVerdict/important） | 每条 item → 1 个 `verdict` block；`important` → `importance:'high'`；`defaultVerdict` → `default` | `dev-review.mjs` 的 `prdItems`（已有，`templates/dev-review.mjs:28`） | 否 |
 | ② 交互原型 (proto) | screens[].widgets[]（x/y/w/h/cls/text/goto）+ 三模式(preview/edit/annotate) | 低保真原型渲染 + 定位批注。**wireframe 编辑（interact.js 拖拽）判定为可弃用**（见 §1.6），保留 preview + annotate | **新增 `prototype` block**（mode:`wireframe|iframe|image`）+ Annotorious 定位批注 | **是** |
 | ③ UI 设计 (ui) | screens[].src（iframe 高保真）+ preview/annotate + 定位钉子 | `prototype` block（mode:`iframe`）；批注复用 embed 已有的 iframe 代理 + 定位批注浮层 | 同上 `prototype` block；文字锚定用现有 embed rail | 复用为主 |
-| ④ 架构 (arch) | diagrams[](mermaid/rationale) + assertions[] + alternatives[] | 每图 → `diagram` block（已有 rationale 字段，`dev-review.mjs:42`）；assertion → `verdict` block；alternatives → `choice` block（options + recommendation=chosen） | `dev-review.mjs` 扩展 `archAssertions` / `archAlternatives` | 模板小改 |
-| ⑤ 测试 (test) | scenarios[](name/expect/impact) + cases[](gherkin) | scenario → `verdict` block（body 用叙事，见 §5）；case/gherkin → `code` block(lang:'gherkin') 或折进 scenario 的 body | `dev-review.mjs` 的 `testScenarios`（已有）+ 可选 `testCases` | 模板小改 |
+| ④ 架构 (arch) | diagrams（含 rationale）+ assertions[] + alternatives[] | 每图 → `diagram` block（已有 rationale 字段，`dev-review.mjs:42`）；assertion → `verdict` block；alternatives → `choice` block（options + recommendation=chosen） | `dev-review.mjs` 扩展 `archAssertions` / `archAlternatives` | 模板小改 |
+| ⑤ 测试 (test) | scenarios（name / expect / impact）+ cases（gherkin） | scenario → `verdict` block（body 用叙事，见 §5）；case/gherkin → `code` block(lang:'gherkin') 或折进 scenario 的 body | `dev-review.mjs` 的 `testScenarios`（已有）+ 可选 `testCases` | 模板小改 |
 | ⑥ 完整性自查 (completeness) | journey/frSlots/wildFeatures/reconcile（各自 verdictCtlCustom 自定义按钮） | 结构化检查清单，每项三态自定义标签 | **新增 `checklist` block**（items[] 带自定义 verdict 标签组） | **是** |
 
 净新增：`prototype` block、`checklist` block、统一 `annotations[]` 模型（§3）。其余全部由现有 block + 模板扩展承载。
